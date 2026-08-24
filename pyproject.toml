@@ -1,0 +1,41 @@
+[project]
+name = "agent-ops-kit"
+version = "0.1.0"
+description = "Task-centered operations toolkit for agent-friendly software repositories."
+readme = "README.md"
+authors = [
+    { name = "Josh Shavers", email = "shaversj@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.19.1",
+    "fastapi>=0.141.1",
+    "rich>=15.0.0",
+    "sqlmodel>=0.0.39",
+    "typer>=0.27.1",
+    "uvicorn>=0.52.4",
+]
+
+[project.scripts]
+agent-ops = "agent_ops_kit.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.10.12,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["agent_ops_kit"]
