@@ -17,7 +17,7 @@ V1 focuses on a small, useful loop:
 ## Setup
 
 ```bash
-uv sync
+make install
 ```
 
 ## Usage
@@ -25,7 +25,7 @@ uv sync
 Run a read-only readiness sweep:
 
 ```bash
-uv run agent-ops sweep /path/to/repo
+make sweep REPO=/path/to/repo
 ```
 
 The sweep writes local output inside the inspected repository:
@@ -39,15 +39,14 @@ The sweep writes local output inside the inspected repository:
 Start the API during development:
 
 ```bash
-uv run fastapi dev src/agent_ops_kit/api.py
+make dev
 ```
 
 ## Validation
 
 ```bash
-uv run pytest
-uv run ruff check .
-uv run mypy
+make format
+make check
 ```
 
 ## Database Migrations
