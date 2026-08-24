@@ -3,7 +3,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from agent_ops_kit.logging import configure_logging
 from agent_ops_kit.sweep import run_readiness_sweep
+
+configure_logging()
 
 app = FastAPI(
     title="Agent Ops Kit",

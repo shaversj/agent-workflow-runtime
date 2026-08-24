@@ -34,4 +34,5 @@ def _alembic_config(database_url: str) -> Config:
     config = Config(project_root / "alembic.ini")
     config.set_main_option("script_location", str(project_root / "migrations"))
     config.attributes["database_url"] = database_url
+    config.attributes["skip_logging_config"] = True
     return config

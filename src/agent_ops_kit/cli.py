@@ -3,6 +3,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from agent_ops_kit.logging import configure_logging
 from agent_ops_kit.sweep import run_readiness_sweep
 
 app = typer.Typer(help="Agent readiness and operations tools.")
@@ -12,6 +13,7 @@ console = Console()
 @app.callback()
 def main() -> None:
     """Agent readiness and operations tools."""
+    configure_logging()
 
 
 @app.command()

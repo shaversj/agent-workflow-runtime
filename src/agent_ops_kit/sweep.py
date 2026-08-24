@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import structlog
 from sqlmodel import Session, select
 
 from agent_ops_kit.checks import CheckFinding, run_readiness_checks
@@ -9,6 +10,8 @@ from agent_ops_kit.db import ensure_database, session_scope, sqlite_url_for
 from agent_ops_kit.models import Artifact, Finding, Repository, Run, Task
 from agent_ops_kit.reports import write_sweep_report
 from agent_ops_kit.repository import default_branch, remote_url, repo_name
+
+logger = structlog.stdlib.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,8 +25,14 @@ class SweepResult:
 
 def run_readiness_sweep(repo_path: Path) -> SweepResult:
     repo_path = repo_path.resolve()
+    structlog.contextvars.clear_contextvars()
     if not repo_path.exists() or not repo_path.is_dir():
+        logger.error("readiness_sweep.invalid_repo_path", repo_path=str(repo_path))
         raise ValueError(f"Repository path does not exist: {repo_path}")
+
+    name = repo_name(repo_path)
+    structlog.contextvars.bind_contextvars(repo_path=str(repo_path), repo_name=name)
+    logger.info("readiness_sweep.started")
 
     database_url = sqlite_url_for(repo_path)
     ensure_database(database_url)
@@ -40,6 +49,11 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
         session.add(run)
         session.commit()
         session.refresh(run)
+        structlog.contextvars.bind_contextvars(
+            repository_id=_require_id(repository),
+            task_id=_require_id(task),
+            run_id=_require_id(run),
+        )
 
         for item in findings:
             session.add(
@@ -73,6 +87,11 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
             )
         )
         session.commit()
+        logger.info(
+            "readiness_sweep.completed",
+            finding_count=len(findings),
+            report_path=str(report_path),
+        )
 
         return SweepResult(
             repo_path=repo_path,
