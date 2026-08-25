@@ -18,6 +18,14 @@ Sweeps are read-only by default:
 - do not edit source files, commit, push, or open pull requests unless the user
   explicitly asks for that behavior
 
+Prefer Makefile entry points for common sweep modes:
+
+```bash
+make sweep REPO=/path/to/repo
+make sweep REPO=/path/to/repo INTERPRET=1
+make sweep REPO=/path/to/repo INTERPRET=1 INTERPRET_MODEL=MiniMax-M3
+```
+
 ## Reports
 
 Reports should include enough evidence for a human or future agent to understand

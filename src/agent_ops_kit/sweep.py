@@ -7,6 +7,12 @@ from sqlmodel import Session, select
 
 from agent_ops_kit.checks import CheckFinding, run_readiness_assessment
 from agent_ops_kit.db import ensure_database, session_scope, sqlite_url_for
+from agent_ops_kit.interpretation import (
+    DEFAULT_INTERPRETATION_MODEL,
+    SweepInterpretation,
+    SweepInterpreter,
+    run_pydantic_interpretation,
+)
 from agent_ops_kit.models import Artifact, Finding, Repository, Run, Task
 from agent_ops_kit.reports import write_sweep_report
 from agent_ops_kit.repository import default_branch, remote_url, repo_name
@@ -21,9 +27,16 @@ class SweepResult:
     run_id: int
     report_path: Path
     findings: list[CheckFinding]
+    interpretation: SweepInterpretation | None = None
 
 
-def run_readiness_sweep(repo_path: Path) -> SweepResult:
+def run_readiness_sweep(
+    repo_path: Path,
+    *,
+    interpret: bool = False,
+    interpretation_model: str = DEFAULT_INTERPRETATION_MODEL,
+    interpreter: SweepInterpreter | None = None,
+) -> SweepResult:
     repo_path = repo_path.resolve()
     structlog.contextvars.clear_contextvars()
     if not repo_path.exists() or not repo_path.is_dir():
@@ -38,6 +51,10 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
     ensure_database(database_url)
     assessment = run_readiness_assessment(repo_path)
     findings = assessment.findings
+    interpretation = None
+    if interpret:
+        interpretation_runner = interpreter or run_pydantic_interpretation
+        interpretation = interpretation_runner(repo_path, assessment, interpretation_model)
 
     with session_scope(database_url) as session:
         repository = _upsert_repository(session, repo_path)
@@ -83,6 +100,7 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
             findings,
             assessment.passed_signals,
             assessment.informational_notices,
+            interpretation,
         )
         session.add(
             Artifact(
@@ -106,6 +124,7 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
             run_id=_require_id(run),
             report_path=report_path,
             findings=findings,
+            interpretation=interpretation,
         )
 
 

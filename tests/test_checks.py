@@ -7,6 +7,11 @@ from agent_ops_kit.checks import (
     run_readiness_assessment,
     run_readiness_checks,
 )
+from agent_ops_kit.interpretation import (
+    InterpretationOutput,
+    InterpretationUsage,
+    SweepInterpretation,
+)
 from agent_ops_kit.reports import _render_report
 
 
@@ -322,6 +327,59 @@ def test_report_renders_standards_not_found_as_informational(tmp_path: Path) -> 
     assert "These are informational." in report
     assert "| access control standard not found |" in report
     assert "status=not_found" in report
+
+
+def test_report_renders_llm_interpretation_and_usage(tmp_path: Path) -> None:
+    report = _render_report(
+        tmp_path,
+        [],
+        [],
+        [],
+        SweepInterpretation(
+            status="completed",
+            provider="minimax",
+            model="MiniMax-M3",
+            output=InterpretationOutput(
+                overall_judgment="The repo is mostly ready.",
+                required_fixes=["Add logging guidance."],
+                optional_improvements=[],
+                next_step="Document the logging standard.",
+            ),
+            usage=InterpretationUsage(
+                requests=1,
+                input_tokens=123,
+                output_tokens=45,
+                total_tokens=168,
+            ),
+        ),
+    )
+
+    assert "## LLM Interpretation" in report
+    assert "The repo is mostly ready." in report
+    assert "Add logging guidance." in report
+    assert "| Provider | minimax |" in report
+    assert "| Model | MiniMax-M3 |" in report
+    assert "| Total tokens | 168 |" in report
+
+
+def test_report_renders_skipped_interpretation_readably(tmp_path: Path) -> None:
+    report = _render_report(
+        tmp_path,
+        [],
+        [],
+        [],
+        SweepInterpretation(
+            status="skipped",
+            provider="minimax",
+            model="MiniMax-M3",
+            output=None,
+            usage=InterpretationUsage(),
+            error="missing_minimax_api_key",
+        ),
+    )
+
+    assert "Interpretation was requested, but MINIMAX_API_KEY is not set." in report
+    assert "| Error | missing_minimax_api_key |" in report
 
 
 def _standards_findings(repo_path: Path) -> list[CheckFinding]:

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_ops_kit.checks import CheckFinding, CheckNotice, CheckSignal
+from agent_ops_kit.interpretation import SweepInterpretation
 
 
 def write_sweep_report(
@@ -10,6 +11,7 @@ def write_sweep_report(
     findings: list[CheckFinding],
     passed_signals: list[CheckSignal] | None = None,
     informational_notices: list[CheckNotice] | None = None,
+    interpretation: SweepInterpretation | None = None,
 ) -> Path:
     reports_dir = repo_path.resolve() / ".agent-readiness" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -22,6 +24,7 @@ def write_sweep_report(
             findings,
             passed_signals or [],
             informational_notices or [],
+            interpretation,
         ),
         encoding="utf-8",
     )
@@ -33,6 +36,7 @@ def _render_report(
     findings: list[CheckFinding],
     passed_signals: list[CheckSignal] | None = None,
     informational_notices: list[CheckNotice] | None = None,
+    interpretation: SweepInterpretation | None = None,
 ) -> str:
     rows = "\n".join(
         f"| {finding.severity} | {finding.category} | {finding.title} | "
@@ -57,6 +61,8 @@ def _render_report(
     )
     if not standards_not_found_rows:
         standards_not_found_rows = "| No optional standards gaps recorded | - | - |"
+
+    interpretation_section = _render_interpretation(interpretation)
 
     return f"""# Agent Readiness Sweep
 
@@ -84,6 +90,8 @@ These are informational. Missing standards in this section may not be needed for
 | --- | --- | --- |
 {standards_not_found_rows}
 
+{interpretation_section}
+
 ## Next Step
 
 Fix the highest-severity findings first, then rerun:
@@ -92,6 +100,63 @@ Fix the highest-severity findings first, then rerun:
 agent-ops sweep {repo_path.resolve()}
 ```
 """
+
+
+def _render_interpretation(interpretation: SweepInterpretation | None) -> str:
+    if interpretation is None:
+        return ""
+
+    output = interpretation.output
+    if output is None:
+        if interpretation.status == "skipped" and interpretation.error == "missing_minimax_api_key":
+            summary = "Interpretation was requested, but MINIMAX_API_KEY is not set."
+        else:
+            summary = interpretation.error or "No interpretation output was produced."
+    else:
+        required = _format_markdown_list(output.required_fixes)
+        optional = _format_markdown_list(output.optional_improvements)
+        summary = "\n".join(
+            [
+                f"**Overall judgment:** {output.overall_judgment}",
+                "",
+                "**Required fixes:**",
+                required,
+                "",
+                "**Optional improvements:**",
+                optional,
+                "",
+                f"**Next step:** {output.next_step}",
+            ]
+        )
+
+    cost = "-" if interpretation.usage.cost is None else str(interpretation.usage.cost)
+    error_row = ""
+    if interpretation.error:
+        error_row = f"| Error | {_escape_table_cell(interpretation.error)} |\n"
+
+    return f"""## LLM Interpretation
+
+{summary}
+
+### LLM Usage
+
+| Metric | Value |
+| --- | --- |
+| Status | {interpretation.status} |
+| Provider | {interpretation.provider} |
+| Model | {interpretation.model} |
+| Requests | {interpretation.usage.requests} |
+| Input tokens | {interpretation.usage.input_tokens} |
+| Output tokens | {interpretation.usage.output_tokens} |
+| Total tokens | {interpretation.usage.total_tokens} |
+| Cost | {cost} |
+{error_row}"""
+
+
+def _format_markdown_list(items: list[str]) -> str:
+    if not items:
+        return "- None"
+    return "\n".join(f"- {item}" for item in items)
 
 
 def _format_evidence(file_path: str | None, evidence: dict[str, object] | None) -> str:

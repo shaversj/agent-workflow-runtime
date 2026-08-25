@@ -1,6 +1,12 @@
 .PHONY: install format format-check lint test typecheck check dev sweep
 
 REPO ?= .
+INTERPRET ?= 0
+INTERPRET_MODEL ?= MiniMax-M3
+INTERPRET_FLAGS =
+ifeq ($(INTERPRET),1)
+INTERPRET_FLAGS = --interpret --interpret-model "$(INTERPRET_MODEL)"
+endif
 
 install:
 	uv sync
@@ -26,4 +32,4 @@ dev:
 	uv run fastapi dev src/agent_ops_kit/api.py
 
 sweep:
-	uv run agent-ops sweep "$(REPO)"
+	uv run agent-ops sweep "$(REPO)" $(INTERPRET_FLAGS)

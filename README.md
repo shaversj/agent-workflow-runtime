@@ -28,6 +28,15 @@ Run a read-only readiness sweep:
 make sweep REPO=/path/to/repo
 ```
 
+Add an optional Pydantic AI interpretation with MiniMax:
+
+```bash
+export MINIMAX_API_KEY=...
+make sweep REPO=/path/to/repo INTERPRET=1
+```
+
+Interpretation is appended to the Markdown report after deterministic findings, passed signals, and informational standards notices. The sweep still completes without an API key; the report records the interpretation as skipped.
+
 The sweep writes local output inside the inspected repository:
 
 ```text

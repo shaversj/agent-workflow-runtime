@@ -4,6 +4,12 @@ import pytest
 from structlog import contextvars
 from structlog.testing import capture_logs
 
+from agent_ops_kit.checks import ReadinessAssessment
+from agent_ops_kit.interpretation import (
+    InterpretationOutput,
+    InterpretationUsage,
+    SweepInterpretation,
+)
 from agent_ops_kit.logging import configure_logging
 from agent_ops_kit.sweep import run_readiness_sweep
 
@@ -30,6 +36,56 @@ def test_sweep_persists_report_and_database(tmp_path: Path) -> None:
     assert "README.md is present" in report
     assert "Repo-local AGENTS.md is present" in report
     assert (tmp_path / ".agent-readiness" / "agent-ops.db").exists()
+
+
+def test_sweep_can_include_injected_interpretation(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text(
+        "# Demo\n\nPurpose, setup, usage, and test commands are documented.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "AGENTS.md").write_text(
+        "# Agent Instructions\n\nThis repository is read-only for source sweeps.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+
+    def fake_interpreter(
+        repo_path: Path,
+        assessment: ReadinessAssessment,
+        model: str,
+    ) -> SweepInterpretation:
+        return SweepInterpretation(
+            status="completed",
+            provider="test",
+            model=model,
+            output=InterpretationOutput(
+                overall_judgment=f"{repo_path.name} has {len(assessment.findings)} findings.",
+                required_fixes=[],
+                optional_improvements=["Consider tightening standards over time."],
+                next_step="Rerun the sweep after edits.",
+            ),
+            usage=InterpretationUsage(
+                requests=1,
+                input_tokens=10,
+                output_tokens=5,
+                total_tokens=15,
+            ),
+        )
+
+    result = run_readiness_sweep(
+        tmp_path,
+        interpret=True,
+        interpretation_model="test-model",
+        interpreter=fake_interpreter,
+    )
+
+    report = result.report_path.read_text(encoding="utf-8")
+    assert result.interpretation is not None
+    assert result.interpretation.usage.total_tokens == 15
+    assert "## LLM Interpretation" in report
+    assert "Consider tightening standards over time." in report
+    assert "| Total tokens | 15 |" in report
 
 
 def test_sweep_emits_structured_lifecycle_logs(tmp_path: Path) -> None:
