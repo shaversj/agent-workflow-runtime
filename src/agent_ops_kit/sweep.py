@@ -5,7 +5,7 @@ from pathlib import Path
 import structlog
 from sqlmodel import Session, select
 
-from agent_ops_kit.checks import CheckFinding, run_readiness_checks
+from agent_ops_kit.checks import CheckFinding, run_readiness_assessment
 from agent_ops_kit.db import ensure_database, session_scope, sqlite_url_for
 from agent_ops_kit.models import Artifact, Finding, Repository, Run, Task
 from agent_ops_kit.reports import write_sweep_report
@@ -36,7 +36,8 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
 
     database_url = sqlite_url_for(repo_path)
     ensure_database(database_url)
-    findings = run_readiness_checks(repo_path)
+    assessment = run_readiness_assessment(repo_path)
+    findings = assessment.findings
 
     with session_scope(database_url) as session:
         repository = _upsert_repository(session, repo_path)
@@ -76,7 +77,13 @@ def run_readiness_sweep(repo_path: Path) -> SweepResult:
         session.commit()
         session.refresh(run)
 
-        report_path = write_sweep_report(repo_path, _require_id(run), findings)
+        report_path = write_sweep_report(
+            repo_path,
+            _require_id(run),
+            findings,
+            assessment.passed_signals,
+            assessment.informational_notices,
+        )
         session.add(
             Artifact(
                 task_id=_require_id(task),

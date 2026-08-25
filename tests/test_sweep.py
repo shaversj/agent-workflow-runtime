@@ -23,6 +23,12 @@ def test_sweep_persists_report_and_database(tmp_path: Path) -> None:
     result = run_readiness_sweep(tmp_path)
 
     assert result.report_path.exists()
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "## Passed Signals" in report
+    assert "## Standards Not Found" in report
+    assert "may not be needed" in report
+    assert "README.md is present" in report
+    assert "Repo-local AGENTS.md is present" in report
     assert (tmp_path / ".agent-readiness" / "agent-ops.db").exists()
 
 
