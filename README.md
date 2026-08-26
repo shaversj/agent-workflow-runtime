@@ -8,10 +8,10 @@ Make repository work inspectable, repeatable, and approval-friendly before addin
 
 The current workflow is intentionally narrow:
 
-- run a pi-agent-core workflow against a repository
-- expose only explicit read-only tools for repo inspection
-- load a readiness sweep skill for interpretation
-- write a Markdown report through a report-submission tool
+- deterministically collect a compact evidence packet from a repository
+- load a readiness interpretation skill for the LLM
+- ask MiniMax to interpret the collected evidence
+- write a Markdown report
 - persist run metadata in a local SQLite database
 - avoid source edits unless a human explicitly asks
 
@@ -26,7 +26,7 @@ make install
 Run a read-only readiness sweep:
 
 ```bash
-export MINIMAX_API_KEY=...
+# Reads MINIMAX_API_KEY from .env when present.
 make sweep REPO=/path/to/repo
 ```
 
@@ -44,13 +44,14 @@ Sweep output is written inside the inspected repository:
 
 ```text
 src/
+  collection/  deterministic evidence collectors
   db/          Drizzle schema and local SQLite persistence
   skills/      workflow prompts and durable agent instructions
-  tools/       TypeBox tool contracts and pi-agent-core adapters
+  tools/       TypeBox tool contracts and report helpers
   workflows/   orchestration such as the readiness sweep
 ```
 
-Tools are small TypeBox contracts with handlers. Skills are prompts. Workflows connect a model, skill, tools, persistence, and reporting.
+Collection is deterministic. Skills define durable workflow instructions. Workflows connect collection, model interpretation, persistence, and reporting.
 
 ## Validation
 

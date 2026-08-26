@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { loadLocalEnv } from "./env.js";
 import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "./workflows/sweep.js";
+
+loadLocalEnv();
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
