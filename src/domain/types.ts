@@ -24,3 +24,14 @@ export interface WorkflowResult {
   toolCalls: ToolCallRecord[];
   error?: string;
 }
+
+export type WorkflowProgressEvent =
+  | { type: "started"; runId: number; repoPath: string; model: string; timeoutMs: number }
+  | { type: "model_started"; provider: string; model: string }
+  | { type: "turn_started"; turn: number }
+  | { type: "tool_started"; name: string }
+  | { type: "tool_completed"; name: string; isError: boolean }
+  | { type: "synthesis_started" }
+  | { type: "report_submitted"; reportPath: string }
+  | { type: "completed"; status: WorkflowResult["status"]; reportPath: string }
+  | { type: "timeout"; timeoutMs: number };

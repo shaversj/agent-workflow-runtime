@@ -192,4 +192,24 @@ function ensureSchema(sqlite: Database.Database) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  ensureColumn(sqlite, "run", "provider", "TEXT");
+}
+
+function ensureColumn(
+  sqlite: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+) {
+  const columns = sqlite.prepare(`PRAGMA table_info(${quoteIdentifier(tableName)})`).all() as {
+    name: string;
+  }[];
+  if (columns.some((column) => column.name === columnName)) return;
+  sqlite.exec(
+    `ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${definition}`
+  );
+}
+
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
 }

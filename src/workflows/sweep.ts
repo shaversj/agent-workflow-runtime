@@ -2,23 +2,48 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
-import { createModels, type Usage } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  type Api,
+  type Message,
+  type Model,
+  type MutableModels,
+  type Usage
+} from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 
 import { completeWorkflowRun, createWorkflowRun } from "../db/index.js";
-import type { HarnessUsage, ToolCallRecord, WorkflowResult } from "../domain/types.js";
+import type {
+  HarnessUsage,
+  ToolCallRecord,
+  WorkflowProgressEvent,
+  WorkflowResult
+} from "../domain/types.js";
 import { logger } from "../logger.js";
-import { buildReadinessSweepPrompt, readinessSweepSkill } from "../skills/readiness-sweep.js";
+import {
+  buildReadinessSweepPrompt,
+  buildReadinessSynthesisPrompt,
+  readinessSweepSkill
+} from "../skills/readiness-sweep.js";
 import { buildReadinessAgentTools, type ToolContext } from "../tools/index.js";
 import { renderReportEnvelope } from "../tools/report.js";
 
 const DEFAULT_HARNESS_PROVIDER = "pi-agent-core";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
+const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
+const DEFAULT_MAX_TURNS = 4;
+const DEFAULT_MAX_TOOL_CALLS = 14;
 
 export async function runSweepWorkflow(
   repoPath: string,
-  options: { model?: string } = {}
+  options: {
+    model?: string;
+    timeoutMs?: number;
+    maxTurns?: number;
+    maxToolCalls?: number;
+    onProgress?: (event: WorkflowProgressEvent) => void;
+  } = {}
 ): Promise<WorkflowResult> {
   const absoluteRepoPath = path.resolve(repoPath);
   if (!fs.existsSync(absoluteRepoPath) || !fs.statSync(absoluteRepoPath).isDirectory()) {
@@ -26,6 +51,9 @@ export async function runSweepWorkflow(
   }
 
   const modelName = options.model ?? DEFAULT_HARNESS_MODEL;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
+  const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
+  const maxToolCalls = options.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   const runStore = createWorkflowRun(absoluteRepoPath, DEFAULT_HARNESS_PROVIDER, modelName);
   runStore.sqlite.close();
 
@@ -33,6 +61,13 @@ export async function runSweepWorkflow(
   const calls: ToolCallRecord[] = [];
 
   logger.info({ repo_path: absoluteRepoPath, run_id: runStore.run.id }, "readiness_sweep.started");
+  emitProgress(options.onProgress, {
+    type: "started",
+    runId: runStore.run.id,
+    repoPath: absoluteRepoPath,
+    model: modelName,
+    timeoutMs
+  });
 
   if (!process.env[MINIMAX_API_KEY_ENV]) {
     const markdown = renderReportEnvelope(
@@ -72,7 +107,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
   const context: ToolContext = {
     repoPath: absoluteRepoPath,
     reportPath,
-    calls
+    calls,
+    maxToolCalls
   };
   const models = createModels();
   models.setProvider(minimaxProvider());
@@ -81,8 +117,9 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     throw new Error(`MiniMax model is not available through pi-ai: ${modelName}`);
   }
 
-  const messages: AgentMessage[] = [];
+  let messages: AgentMessage[] = [];
   let workflowError: string | undefined;
+  let turnCount = 0;
   const agent = new Agent({
     initialState: {
       systemPrompt: readinessSweepSkill,
@@ -91,25 +128,86 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       tools: buildReadinessAgentTools(context),
       messages
     },
-    streamFn: models.streamSimple.bind(models),
-    toolExecution: "sequential"
+    streamFn: (requestModel, llmContext, streamOptions) =>
+      models.streamSimple(requestModel, llmContext, {
+        ...streamOptions,
+        maxTokens: 2000,
+        timeoutMs: Math.min(timeoutMs, 90_000)
+      }),
+    toolExecution: "sequential",
+    shouldStopAfterTurn: () => fs.existsSync(reportPath) || turnCount >= maxTurns
   });
 
   agent.subscribe((event: AgentEvent) => {
+    if (event.type === "agent_start") {
+      emitProgress(options.onProgress, {
+        type: "model_started",
+        provider: "minimax",
+        model: modelName
+      });
+    }
+    if (event.type === "turn_start") {
+      turnCount += 1;
+      emitProgress(options.onProgress, { type: "turn_started", turn: turnCount });
+    }
+    if (event.type === "tool_execution_start") {
+      emitProgress(options.onProgress, { type: "tool_started", name: event.toolName });
+    }
+    if (event.type === "tool_execution_end") {
+      emitProgress(options.onProgress, {
+        type: "tool_completed",
+        name: event.toolName,
+        isError: event.isError
+      });
+      if (event.toolName === "submit_readiness_report" && !event.isError) {
+        emitProgress(options.onProgress, { type: "report_submitted", reportPath });
+      }
+    }
     if (event.type === "agent_end") {
-      messages.push(...event.messages);
+      messages = event.messages;
     }
   });
 
   try {
-    await agent.prompt(buildReadinessSweepPrompt(absoluteRepoPath));
+    await withWorkflowTimeout(
+      agent.prompt(buildReadinessSweepPrompt(absoluteRepoPath)),
+      timeoutMs,
+      () => {
+        emitProgress(options.onProgress, { type: "timeout", timeoutMs });
+        agent.abort();
+      }
+    );
   } catch (error) {
     workflowError = error instanceof Error ? error.message : String(error);
   }
 
+  if (messages.length === 0) {
+    messages = agent.state.messages;
+  }
+
+  let reportWasWritten = fs.existsSync(reportPath);
+  let synthesisOutput: string | undefined;
+  if (!reportWasWritten && !workflowError) {
+    try {
+      emitProgress(options.onProgress, { type: "synthesis_started" });
+      synthesisOutput = await synthesizeReport({
+        models,
+        model,
+        repoPath: absoluteRepoPath,
+        messages,
+        timeoutMs: Math.min(timeoutMs, 60_000)
+      });
+      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+      fs.writeFileSync(reportPath, renderReportEnvelope(absoluteRepoPath, synthesisOutput), "utf8");
+      reportWasWritten = true;
+      emitProgress(options.onProgress, { type: "report_submitted", reportPath });
+    } catch (error) {
+      workflowError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   const usage = usageFromMessages(messages);
-  const finalOutput = lastAssistantText(messages);
-  const reportWasWritten = fs.existsSync(reportPath);
+  const finalOutput = synthesisOutput ?? lastAssistantText(messages);
   const status = workflowError ? "failed" : reportWasWritten ? "completed" : "failed";
 
   if (!reportWasWritten) {
@@ -145,6 +243,7 @@ ${workflowError ?? "No explicit error was recorded."}`
     { repo_path: absoluteRepoPath, run_id: runStore.run.id, report_path: reportPath, status },
     "readiness_sweep.completed"
   );
+  emitProgress(options.onProgress, { type: "completed", status, reportPath });
 
   return {
     repoPath: absoluteRepoPath,
@@ -157,6 +256,98 @@ ${workflowError ?? "No explicit error was recorded."}`
     toolCalls: calls,
     error: workflowError
   };
+}
+
+async function synthesizeReport(input: {
+  models: MutableModels;
+  model: Model<Api>;
+  repoPath: string;
+  messages: AgentMessage[];
+  timeoutMs: number;
+}): Promise<string> {
+  const synthesis = await withWorkflowTimeout(
+    input.models.completeSimple(
+      input.model,
+      {
+        systemPrompt: `${readinessSweepSkill}
+
+You are now in final synthesis mode. Tools are unavailable. Write the report directly as Markdown.`,
+        messages: [
+          ...toLlmMessages(input.messages),
+          {
+            role: "user",
+            content: buildReadinessSynthesisPrompt(input.repoPath),
+            timestamp: Date.now()
+          }
+        ],
+        tools: []
+      },
+      {
+        toolChoice: "none",
+        reasoning: "low",
+        maxTokens: 3000,
+        timeoutMs: input.timeoutMs
+      }
+    ),
+    input.timeoutMs,
+    () => undefined
+  );
+  const text = assistantText(synthesis);
+  if (!text) {
+    throw new Error("synthesis_returned_no_text");
+  }
+  return text;
+}
+
+function toLlmMessages(messages: AgentMessage[]): Message[] {
+  return messages.filter((message): message is Message => {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "role" in message &&
+      (message.role === "user" || message.role === "assistant" || message.role === "toolResult")
+    );
+  });
+}
+
+async function withWorkflowTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => void
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          onTimeout();
+          reject(new Error(`workflow_timeout:${timeoutMs}`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function emitProgress(
+  onProgress: ((event: WorkflowProgressEvent) => void) | undefined,
+  event: WorkflowProgressEvent
+) {
+  onProgress?.(event);
+  if (event.type === "tool_started") {
+    logger.info({ tool_name: event.name }, "readiness_sweep.tool_started");
+  } else if (event.type === "tool_completed") {
+    logger.info(
+      { tool_name: event.name, is_error: event.isError },
+      "readiness_sweep.tool_completed"
+    );
+  } else if (event.type === "turn_started") {
+    logger.info({ turn: event.turn }, "readiness_sweep.turn_started");
+  } else if (event.type === "timeout") {
+    logger.warn({ timeout_ms: event.timeoutMs }, "readiness_sweep.timeout");
+  }
 }
 
 function reportPathFor(repoPath: string, runId: number): string {
@@ -209,11 +400,15 @@ function lastAssistantText(messages: AgentMessage[]): string {
   for (const message of messages.toReversed()) {
     if (!(typeof message === "object" && message !== null && "role" in message)) continue;
     if (message.role !== "assistant") continue;
-    return message.content
-      .filter((item) => item.type === "text")
-      .map((item) => item.text)
-      .join("\n")
-      .trim();
+    return assistantText(message);
   }
   return "";
+}
+
+function assistantText(message: AgentMessage & { role: "assistant" }): string {
+  return message.content
+    .filter((item) => item.type === "text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
 }

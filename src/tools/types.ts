@@ -7,6 +7,7 @@ export interface ToolContext {
   repoPath: string;
   reportPath: string;
   calls: ToolCallRecord[];
+  maxToolCalls?: number;
 }
 
 export interface WorkflowTool<TParameters extends TSchema, TResult> {
@@ -37,6 +38,18 @@ export function toAgentTool<TParameters extends TSchema, TResult>(
     description: tool.description,
     parameters: tool.parameters,
     execute: async (_toolCallId, params, signal): Promise<AgentToolResult<TResult>> => {
+      if (context.maxToolCalls !== undefined && context.calls.length >= context.maxToolCalls) {
+        const result = {
+          error: `Tool budget exhausted after ${context.maxToolCalls} calls. Use observed evidence to produce the report.`
+        };
+        context.calls.push({
+          name: tool.name,
+          args: params,
+          isError: true,
+          result
+        });
+        throw new Error(result.error);
+      }
       try {
         const output = await tool.execute(params, context, signal);
         context.calls.push({

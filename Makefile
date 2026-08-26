@@ -2,7 +2,11 @@
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
+TIMEOUT_MS ?=
 HARNESS_FLAGS = --harness-model "$(HARNESS_MODEL)"
+ifneq ($(strip $(TIMEOUT_MS)),)
+HARNESS_FLAGS += --timeout-ms "$(TIMEOUT_MS)"
+endif
 
 install:
 	pnpm install
