@@ -12,6 +12,7 @@ V1 focuses on a small, useful loop:
 - identify missing agent-readiness signals
 - store the run in a local SQLite database
 - write a Markdown report
+- run a mini-swe-agent harness that can call the sweep as a tool
 - avoid source edits unless a human explicitly asks
 
 ## Setup
@@ -28,14 +29,16 @@ Run a read-only readiness sweep:
 make sweep REPO=/path/to/repo
 ```
 
-Add an optional Pydantic AI interpretation with MiniMax:
+By default, the sweep uses the mini-swe-agent harness with MiniMax:
 
 ```bash
 export MINIMAX_API_KEY=...
-make sweep REPO=/path/to/repo INTERPRET=1
+make sweep REPO=/path/to/repo
 ```
 
-Interpretation is appended to the Markdown report after deterministic findings, passed signals, and informational standards notices. The sweep still completes without an API key; the report records the interpretation as skipped.
+Harness output is appended to the Markdown report after deterministic findings, passed signals, and informational standards notices. The harness exposes the deterministic sweep as a read-only `agent_ops_sweep` tool and asks MiniMax to reason over only that evidence. The sweep still completes without an API key; the report records the harness as skipped.
+
+Harness tool families live in `src/agent_ops_kit/harness_tools/` and are loaded by profile. Each tool declares its schema, permissions, examples, and handler. The mini-swe-agent adapter lives in `src/agent_ops_kit/harness.py`, and generic harness result handling lives in `src/agent_ops_kit/harness_result.py`.
 
 The sweep writes local output inside the inspected repository:
 

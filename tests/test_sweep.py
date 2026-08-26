@@ -5,16 +5,16 @@ from structlog import contextvars
 from structlog.testing import capture_logs
 
 from agent_ops_kit.checks import ReadinessAssessment
-from agent_ops_kit.interpretation import (
-    InterpretationOutput,
-    InterpretationUsage,
-    SweepInterpretation,
-)
+from agent_ops_kit.harness_result import HarnessResult, HarnessUsage
 from agent_ops_kit.logging import configure_logging
 from agent_ops_kit.sweep import run_readiness_sweep
 
 
-def test_sweep_persists_report_and_database(tmp_path: Path) -> None:
+def test_sweep_persists_report_and_database_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     (tmp_path / "README.md").write_text(
         "# Demo\n\nPurpose, setup, usage, and test commands are documented.\n",
         encoding="utf-8",
@@ -35,10 +35,12 @@ def test_sweep_persists_report_and_database(tmp_path: Path) -> None:
     assert "may not be needed" in report
     assert "README.md is present" in report
     assert "Repo-local AGENTS.md is present" in report
+    assert result.harness_result.status == "skipped"
+    assert "## Harness Result" in report
     assert (tmp_path / ".agent-readiness" / "agent-ops.db").exists()
 
 
-def test_sweep_can_include_injected_interpretation(tmp_path: Path) -> None:
+def test_sweep_can_include_injected_harness_result(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text(
         "# Demo\n\nPurpose, setup, usage, and test commands are documented.\n",
         encoding="utf-8",
@@ -50,45 +52,49 @@ def test_sweep_can_include_injected_interpretation(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
     (tmp_path / "tests").mkdir()
 
-    def fake_interpreter(
+    def fake_harness_runner(
         repo_path: Path,
         assessment: ReadinessAssessment,
         model: str,
-    ) -> SweepInterpretation:
-        return SweepInterpretation(
+    ) -> HarnessResult:
+        return HarnessResult(
             status="completed",
             provider="test",
             model=model,
-            output=InterpretationOutput(
-                overall_judgment=f"{repo_path.name} has {len(assessment.findings)} findings.",
-                required_fixes=[],
-                optional_improvements=["Consider tightening standards over time."],
-                next_step="Rerun the sweep after edits.",
+            final_output=(
+                f"Overall judgment: {repo_path.name} has {len(assessment.findings)} findings.\n"
+                "Required fixes: None\n"
+                "Optional improvements:\n"
+                "- Consider tightening standards over time.\n"
+                "Next step: Rerun the sweep after edits."
             ),
-            usage=InterpretationUsage(
+            usage=HarnessUsage(
                 requests=1,
                 input_tokens=10,
                 output_tokens=5,
                 total_tokens=15,
             ),
+            tool_calls=[],
         )
 
     result = run_readiness_sweep(
         tmp_path,
-        interpret=True,
-        interpretation_model="test-model",
-        interpreter=fake_interpreter,
+        harness_model="test-model",
+        harness_runner=fake_harness_runner,
     )
 
     report = result.report_path.read_text(encoding="utf-8")
-    assert result.interpretation is not None
-    assert result.interpretation.usage.total_tokens == 15
-    assert "## LLM Interpretation" in report
+    assert result.harness_result.usage.total_tokens == 15
+    assert "## Harness Result" in report
     assert "Consider tightening standards over time." in report
     assert "| Total tokens | 15 |" in report
 
 
-def test_sweep_emits_structured_lifecycle_logs(tmp_path: Path) -> None:
+def test_sweep_emits_structured_lifecycle_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     (tmp_path / "README.md").write_text(
         "# Demo\n\nPurpose, setup, usage, and test commands are documented.\n",
         encoding="utf-8",
@@ -117,7 +123,9 @@ def test_sweep_emits_structured_lifecycle_logs(tmp_path: Path) -> None:
 def test_configured_logging_survives_database_migration(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     (tmp_path / "README.md").write_text(
         "# Demo\n\nPurpose, setup, usage, and test commands are documented.\n",
         encoding="utf-8",

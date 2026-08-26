@@ -4,13 +4,21 @@ from agent_ops_kit.checks import (
     CheckFinding,
     CheckNotice,
     CheckSignal,
+    ReadinessAssessment,
     run_readiness_assessment,
     run_readiness_checks,
 )
-from agent_ops_kit.interpretation import (
-    InterpretationOutput,
-    InterpretationUsage,
-    SweepInterpretation,
+from agent_ops_kit.harness_result import HarnessResult, HarnessUsage
+from agent_ops_kit.harness_tools import (
+    HarnessToolCall,
+    HarnessToolContext,
+    default_harness_tool_registry,
+    harness_tool_registry,
+)
+from agent_ops_kit.harness_tools.readiness import (
+    ReadinessSweepInput,
+    ReadinessSweepOutput,
+    readiness_sweep_tool,
 )
 from agent_ops_kit.reports import _render_report
 
@@ -329,57 +337,161 @@ def test_report_renders_standards_not_found_as_informational(tmp_path: Path) -> 
     assert "status=not_found" in report
 
 
-def test_report_renders_llm_interpretation_and_usage(tmp_path: Path) -> None:
+def test_report_renders_harness_result_and_usage(tmp_path: Path) -> None:
     report = _render_report(
         tmp_path,
         [],
         [],
         [],
-        SweepInterpretation(
+        HarnessResult(
             status="completed",
-            provider="minimax",
+            provider="mini-swe-agent",
             model="MiniMax-M3",
-            output=InterpretationOutput(
-                overall_judgment="The repo is mostly ready.",
-                required_fixes=["Add logging guidance."],
-                optional_improvements=[],
-                next_step="Document the logging standard.",
+            final_output=(
+                "Overall judgment: The repo is mostly ready.\n"
+                "Required fixes:\n"
+                "- Add logging guidance.\n"
+                "Optional improvements: None\n"
+                "Next step: Document the logging standard."
             ),
-            usage=InterpretationUsage(
+            usage=HarnessUsage(
                 requests=1,
                 input_tokens=123,
                 output_tokens=45,
                 total_tokens=168,
             ),
+            tool_calls=[
+                HarnessToolCall(
+                    name="agent_ops_sweep",
+                    command="agent_ops_sweep",
+                    returncode=0,
+                )
+            ],
         ),
     )
 
-    assert "## LLM Interpretation" in report
+    assert "## Harness Result" in report
     assert "The repo is mostly ready." in report
     assert "Add logging guidance." in report
-    assert "| Provider | minimax |" in report
+    assert "| Provider | mini-swe-agent |" in report
     assert "| Model | MiniMax-M3 |" in report
+    assert "### Harness Tool Calls" in report
+    assert "| agent_ops_sweep | agent_ops_sweep | 0 | - |" in report
     assert "| Total tokens | 168 |" in report
 
 
-def test_report_renders_skipped_interpretation_readably(tmp_path: Path) -> None:
+def test_report_renders_skipped_harness_readably(tmp_path: Path) -> None:
     report = _render_report(
         tmp_path,
         [],
         [],
         [],
-        SweepInterpretation(
+        HarnessResult(
             status="skipped",
-            provider="minimax",
+            provider="mini-swe-agent",
             model="MiniMax-M3",
-            output=None,
-            usage=InterpretationUsage(),
+            final_output=None,
+            usage=HarnessUsage(),
+            tool_calls=[],
             error="missing_minimax_api_key",
         ),
     )
 
-    assert "Interpretation was requested, but MINIMAX_API_KEY is not set." in report
+    assert "Harness could not run because MINIMAX_API_KEY is not set." in report
     assert "| Error | missing_minimax_api_key |" in report
+
+
+def test_sweep_tool_returns_deterministic_payload(tmp_path: Path) -> None:
+    assessment = ReadinessAssessment(
+        findings=[
+            CheckFinding(
+                category="standards",
+                severity="medium",
+                title="Standards coverage is incomplete",
+                recommendation="Add logging guidance.",
+                file_path="AGENTS.md",
+                evidence={"missing_domains": ["logging"]},
+            )
+        ],
+        passed_signals=[
+            CheckSignal(
+                category="documentation",
+                title="README.md is present",
+                file_path="README.md",
+            )
+        ],
+        informational_notices=[
+            CheckNotice(
+                category="standards",
+                title="database standard not found",
+                note="May not be needed unless the repo persists data.",
+                evidence={"status": "not_found"},
+            )
+        ],
+    )
+
+    registry = default_harness_tool_registry()
+    context = HarnessToolContext(repo_path=tmp_path, assessment=assessment)
+
+    result = registry.execute("agent_ops_sweep", context)
+
+    assert result["returncode"] == 0
+    assert '"finding_count": 1' in result["output"]
+    assert '"passed_signal_count": 1' in result["output"]
+    assert '"standards_not_found"' in result["output"]
+    assert "May not be needed" in result["output"]
+
+
+def test_sweep_tool_rejects_other_repo_paths(tmp_path: Path) -> None:
+    assessment = ReadinessAssessment(findings=[], passed_signals=[], informational_notices=[])
+    registry = default_harness_tool_registry()
+    context = HarnessToolContext(repo_path=tmp_path, assessment=assessment)
+
+    result = registry.execute("agent_ops_sweep /tmp/other-repo", context)
+
+    assert result["returncode"] == 2
+    assert "can only inspect" in result["output"]
+
+
+def test_harness_tool_registry_lists_available_tools() -> None:
+    registry = default_harness_tool_registry()
+
+    instructions = registry.instructions()
+
+    assert "`agent_ops_sweep [repo_path]`" in instructions
+    assert "deterministic readiness findings" in instructions
+    assert "Input schema:" in instructions
+    assert "Permissions:" in instructions
+
+
+def test_harness_tool_schemas_are_generated_from_pydantic_models() -> None:
+    tool = readiness_sweep_tool()
+
+    assert tool.input_model is ReadinessSweepInput
+    assert tool.output_model is ReadinessSweepOutput
+    assert "repo_path" in tool.input_schema["properties"]
+    assert tool.input_schema["additionalProperties"] is False
+    assert tool.output_schema["properties"]["findings"]["type"] == "array"
+
+
+def test_harness_tool_registry_rejects_unregistered_commands(tmp_path: Path) -> None:
+    assessment = ReadinessAssessment(findings=[], passed_signals=[], informational_notices=[])
+    registry = default_harness_tool_registry()
+    context = HarnessToolContext(repo_path=tmp_path, assessment=assessment)
+
+    result = registry.execute("ls -la", context)
+
+    assert result["returncode"] == 2
+    assert "Unknown harness tool: ls" in result["output"]
+
+
+def test_harness_tool_profiles_reject_unknown_profiles() -> None:
+    try:
+        harness_tool_registry("unknown")
+    except ValueError as exc:
+        assert "Unknown harness tool profile: unknown" in str(exc)
+    else:
+        raise AssertionError("unknown harness tool profile should fail")
 
 
 def _standards_findings(repo_path: Path) -> list[CheckFinding]:

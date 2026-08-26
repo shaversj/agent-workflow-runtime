@@ -1,8 +1,19 @@
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_ops_kit.checks import CheckFinding, CheckNotice, CheckSignal
-from agent_ops_kit.interpretation import SweepInterpretation
+from agent_ops_kit.harness_result import HarnessResult
+from agent_ops_kit.harness_tools import HarnessToolCall
+
+
+@dataclass(frozen=True)
+class ReadinessHarnessSummary:
+    overall_judgment: str
+    required_fixes: list[str]
+    optional_improvements: list[str]
+    next_step: str
 
 
 def write_sweep_report(
@@ -11,7 +22,7 @@ def write_sweep_report(
     findings: list[CheckFinding],
     passed_signals: list[CheckSignal] | None = None,
     informational_notices: list[CheckNotice] | None = None,
-    interpretation: SweepInterpretation | None = None,
+    harness_result: HarnessResult | None = None,
 ) -> Path:
     reports_dir = repo_path.resolve() / ".agent-readiness" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -24,7 +35,7 @@ def write_sweep_report(
             findings,
             passed_signals or [],
             informational_notices or [],
-            interpretation,
+            harness_result,
         ),
         encoding="utf-8",
     )
@@ -36,7 +47,7 @@ def _render_report(
     findings: list[CheckFinding],
     passed_signals: list[CheckSignal] | None = None,
     informational_notices: list[CheckNotice] | None = None,
-    interpretation: SweepInterpretation | None = None,
+    harness_result: HarnessResult | None = None,
 ) -> str:
     rows = "\n".join(
         f"| {finding.severity} | {finding.category} | {finding.title} | "
@@ -62,7 +73,7 @@ def _render_report(
     if not standards_not_found_rows:
         standards_not_found_rows = "| No optional standards gaps recorded | - | - |"
 
-    interpretation_section = _render_interpretation(interpretation)
+    harness_section = _render_harness_result(harness_result)
 
     return f"""# Agent Readiness Sweep
 
@@ -90,7 +101,7 @@ These are informational. Missing standards in this section may not be needed for
 | --- | --- | --- |
 {standards_not_found_rows}
 
-{interpretation_section}
+{harness_section}
 
 ## Next Step
 
@@ -102,17 +113,17 @@ agent-ops sweep {repo_path.resolve()}
 """
 
 
-def _render_interpretation(interpretation: SweepInterpretation | None) -> str:
-    if interpretation is None:
+def _render_harness_result(harness_result: HarnessResult | None) -> str:
+    if harness_result is None:
         return ""
 
-    output = interpretation.output
-    if output is None:
-        if interpretation.status == "skipped" and interpretation.error == "missing_minimax_api_key":
-            summary = "Interpretation was requested, but MINIMAX_API_KEY is not set."
+    if harness_result.final_output is None:
+        if harness_result.status == "skipped" and harness_result.error == "missing_minimax_api_key":
+            summary = "Harness could not run because MINIMAX_API_KEY is not set."
         else:
-            summary = interpretation.error or "No interpretation output was produced."
+            summary = harness_result.error or "No harness output was produced."
     else:
+        output = _parse_readiness_harness_summary(harness_result.final_output)
         required = _format_markdown_list(output.required_fixes)
         optional = _format_markdown_list(output.optional_improvements)
         summary = "\n".join(
@@ -129,28 +140,100 @@ def _render_interpretation(interpretation: SweepInterpretation | None) -> str:
             ]
         )
 
-    cost = "-" if interpretation.usage.cost is None else str(interpretation.usage.cost)
+    cost = "-" if harness_result.usage.cost is None else str(harness_result.usage.cost)
     error_row = ""
-    if interpretation.error:
-        error_row = f"| Error | {_escape_table_cell(interpretation.error)} |\n"
+    if harness_result.error:
+        error_row = f"| Error | {_escape_table_cell(harness_result.error)} |\n"
 
-    return f"""## LLM Interpretation
+    tool_calls = _render_tool_calls(harness_result.tool_calls)
+
+    return f"""## Harness Result
 
 {summary}
 
-### LLM Usage
+{tool_calls}
+
+### Harness Usage
 
 | Metric | Value |
 | --- | --- |
-| Status | {interpretation.status} |
-| Provider | {interpretation.provider} |
-| Model | {interpretation.model} |
-| Requests | {interpretation.usage.requests} |
-| Input tokens | {interpretation.usage.input_tokens} |
-| Output tokens | {interpretation.usage.output_tokens} |
-| Total tokens | {interpretation.usage.total_tokens} |
+| Status | {harness_result.status} |
+| Provider | {harness_result.provider} |
+| Model | {harness_result.model} |
+| Requests | {harness_result.usage.requests} |
+| Input tokens | {harness_result.usage.input_tokens} |
+| Output tokens | {harness_result.usage.output_tokens} |
+| Total tokens | {harness_result.usage.total_tokens} |
 | Cost | {cost} |
 {error_row}"""
+
+
+def _render_tool_calls(tool_calls: list[HarnessToolCall]) -> str:
+    if not tool_calls:
+        return "### Harness Tool Calls\n\nNo tool calls recorded."
+
+    rows = "\n".join(
+        f"| {call.name or '-'} | {_escape_table_cell(call.command)} | "
+        f"{call.returncode} | {_escape_table_cell(call.error or '-')} |"
+        for call in tool_calls
+    )
+    return f"""### Harness Tool Calls
+
+| Tool | Command | Return code | Error |
+| --- | --- | --- | --- |
+{rows}"""
+
+
+def _parse_readiness_harness_summary(text: str) -> ReadinessHarnessSummary:
+    cleaned = text.strip()
+    if not cleaned:
+        cleaned = "The harness completed without returning written output."
+
+    sections = _parse_labeled_sections(cleaned)
+    overall = sections.get("overall judgment") or cleaned
+    required = _parse_list_section(sections.get("required fixes", ""))
+    optional = _parse_list_section(sections.get("optional improvements", ""))
+    next_step = (
+        sections.get("next step")
+        or "Review the deterministic findings and rerun the sweep after edits."
+    )
+
+    return ReadinessHarnessSummary(
+        overall_judgment=overall,
+        required_fixes=required,
+        optional_improvements=optional,
+        next_step=next_step,
+    )
+
+
+def _parse_labeled_sections(text: str) -> dict[str, str]:
+    labels = ("overall judgment", "required fixes", "optional improvements", "next step")
+    pattern = re.compile(
+        r"(?im)^\s*(?:#{1,4}\s*)?(?:\*\*)?"
+        r"(overall judgment|required fixes|optional improvements|next step)"
+        r"(?:\*\*)?\s*:\s*"
+    )
+    matches = list(pattern.finditer(text))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        label = match.group(1).lower()
+        if label in labels:
+            sections[label] = text[start:end].strip()
+    return sections
+
+
+def _parse_list_section(text: str) -> list[str]:
+    if not text or text.lower() in {"none", "- none"}:
+        return []
+
+    items: list[str] = []
+    for line in text.splitlines():
+        item = re.sub(r"^\s*(?:[-*]|\d+\.)\s*", "", line).strip()
+        if item and item.lower() != "none":
+            items.append(item)
+    return items or [text.strip()]
 
 
 def _format_markdown_list(items: list[str]) -> str:
