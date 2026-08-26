@@ -27,11 +27,12 @@ export interface WorkflowResult {
 
 export type WorkflowProgressEvent =
   | { type: "started"; runId: number; repoPath: string; model: string; timeoutMs: number }
+  | { type: "collection_started" }
+  | { type: "collection_completed"; fileCount: number }
   | { type: "model_started"; provider: string; model: string }
   | { type: "turn_started"; turn: number }
   | { type: "tool_started"; name: string }
   | { type: "tool_completed"; name: string; isError: boolean }
-  | { type: "synthesis_started" }
   | { type: "report_submitted"; reportPath: string }
   | { type: "completed"; status: WorkflowResult["status"]; reportPath: string }
   | { type: "timeout"; timeoutMs: number };

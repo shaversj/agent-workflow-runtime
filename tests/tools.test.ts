@@ -46,6 +46,10 @@ describe("repo tools", () => {
     const summary = await repoSummaryTool.execute({}, testContext(repoPath));
 
     expect(summary.result.key_files).toContain("README.md");
+    expect(summary.result.collection_skill).toBe("repo-summary-tool");
+    expect(summary.result.standard_expectations.map((standard) => standard.category)).toContain(
+      "testing"
+    );
     expect(summary.result.standards).toContain("docs/standards/testing.md");
     expect(summary.result.ci).toContain(".github/workflows/ci.yml");
     expect(summary.result.tests).toContain("tests/demo.test.ts");

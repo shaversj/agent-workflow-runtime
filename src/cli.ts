@@ -16,6 +16,10 @@ async function main() {
     onProgress: (event) => {
       if (event.type === "started") {
         console.error(`Started sweep run ${event.runId} with ${event.model}`);
+      } else if (event.type === "collection_started") {
+        console.error("Collecting repository evidence...");
+      } else if (event.type === "collection_completed") {
+        console.error(`Collected evidence from ${event.fileCount} files`);
       } else if (event.type === "model_started") {
         console.error(`Waiting for ${event.provider}/${event.model}...`);
       } else if (event.type === "turn_started") {
@@ -24,8 +28,6 @@ async function main() {
         console.error(`Tool started: ${event.name}`);
       } else if (event.type === "tool_completed") {
         console.error(`Tool completed: ${event.name}${event.isError ? " (error)" : ""}`);
-      } else if (event.type === "synthesis_started") {
-        console.error("Synthesizing final report...");
       } else if (event.type === "report_submitted") {
         console.error(`Report submitted: ${event.reportPath}`);
       } else if (event.type === "timeout") {

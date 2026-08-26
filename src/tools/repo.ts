@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { Type, type Static } from "typebox";
 
+import { collectReadinessEvidence, type ReadinessEvidence } from "../collection/readiness.js";
+import { readinessCollectionSkill } from "../skills/readiness-collection.js";
 import type { ToolContext, WorkflowTool } from "./types.js";
 
 const ignoredDirs = new Set([
@@ -42,43 +44,18 @@ type ReadFileParamsType = Static<typeof ReadFileParams>;
 type SearchFilesParamsType = Static<typeof SearchFilesParams>;
 type RepoSummaryParamsType = Static<typeof RepoSummaryParams>;
 
-interface RepoSummaryFile {
-  path: string;
-  excerpt: string;
-  truncated: boolean;
-}
-
-interface RepoSummary {
-  key_files: string[];
-  docs: string[];
-  standards: string[];
-  tests: string[];
-  ci: string[];
-  package_managers: string[];
-  likely_entrypoints: string[];
-  excerpts: RepoSummaryFile[];
-}
-
-export const repoSummaryTool: WorkflowTool<typeof RepoSummaryParams, RepoSummary> = {
+export const repoSummaryTool: WorkflowTool<typeof RepoSummaryParams, ReadinessEvidence> = {
   name: "repo_summary",
   label: "Repo summary",
   description:
     "Return a compact evidence packet for readiness interpretation: key files, docs, standards, tests, CI, package files, and excerpts from the most important text files.",
   parameters: RepoSummaryParams,
   execute(params: RepoSummaryParamsType, context: ToolContext) {
-    const files = walkFiles(context.repoPath);
-    const excerptLimit = params.max_excerpt_bytes ?? 3000;
-    const excerptPaths = selectExcerptPaths(files);
-    const result: RepoSummary = {
-      key_files: files.filter(isKeyFile).slice(0, 80),
-      docs: files.filter(isDocFile).slice(0, 80),
-      standards: files.filter(isStandardsFile).slice(0, 80),
-      tests: files.filter(isTestFile).slice(0, 80),
-      ci: files.filter(isCiFile).slice(0, 80),
-      package_managers: files.filter(isPackageManagerFile),
-      likely_entrypoints: files.filter(isLikelyEntrypoint).slice(0, 80),
-      excerpts: excerptPaths.map((file) => readExcerpt(context.repoPath, file, excerptLimit))
-    };
+    const result = collectReadinessEvidence(context.repoPath, {
+      ...readinessCollectionSkill,
+      name: "repo-summary-tool",
+      maxExcerptBytes: params.max_excerpt_bytes ?? readinessCollectionSkill.maxExcerptBytes
+    });
     return {
       result,
       text: JSON.stringify(result, null, 2)
@@ -213,97 +190,4 @@ function matchesPattern(filePath: string, pattern: string): boolean {
     .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
     .join(".*");
   return new RegExp(`^${escaped}$`).test(filePath);
-}
-
-function selectExcerptPaths(files: string[]): string[] {
-  const preferred = [
-    "README.md",
-    "AGENTS.md",
-    "CONTRIBUTING.md",
-    "package.json",
-    "pyproject.toml",
-    "Makefile",
-    ".github/workflows/ci.yml",
-    "docs/standards/README.md",
-    "docs/standards/testing.md",
-    "docs/standards/database.md",
-    "docs/standards/logging.md",
-    "docs/standards/security-and-privacy.md",
-    "docs/standards/dependency-management.md"
-  ];
-  const selected = preferred.filter((file) => files.includes(file));
-  if (selected.length >= 8) return selected.slice(0, 12);
-  const markdownDocs = files.filter(isDocFile).slice(0, 12 - selected.length);
-  return [...new Set([...selected, ...markdownDocs])].slice(0, 12);
-}
-
-function readExcerpt(repoPath: string, file: string, maxBytes: number): RepoSummaryFile {
-  const raw = fs.readFileSync(path.join(repoPath, file));
-  const truncated = raw.byteLength > maxBytes;
-  return {
-    path: file,
-    excerpt: raw.subarray(0, maxBytes).toString("utf8"),
-    truncated
-  };
-}
-
-function isKeyFile(file: string): boolean {
-  return [
-    "README.md",
-    "AGENTS.md",
-    "CONTRIBUTING.md",
-    "Makefile",
-    "package.json",
-    "pyproject.toml",
-    "pnpm-lock.yaml",
-    "uv.lock",
-    "tsconfig.json",
-    "drizzle.config.ts"
-  ].includes(file);
-}
-
-function isDocFile(file: string): boolean {
-  return file.endsWith(".md") && (file.startsWith("docs/") || isKeyFile(file));
-}
-
-function isStandardsFile(file: string): boolean {
-  return file.startsWith("docs/standards/") || file.startsWith("standards/");
-}
-
-function isTestFile(file: string): boolean {
-  return (
-    file.startsWith("tests/") ||
-    file.includes("/tests/") ||
-    file.endsWith(".test.ts") ||
-    file.endsWith(".spec.ts") ||
-    file.endsWith("_test.py")
-  );
-}
-
-function isCiFile(file: string): boolean {
-  return file.startsWith(".github/workflows/") || file.startsWith(".gitlab-ci");
-}
-
-function isPackageManagerFile(file: string): boolean {
-  return [
-    "package.json",
-    "pnpm-lock.yaml",
-    "package-lock.json",
-    "yarn.lock",
-    "pyproject.toml",
-    "uv.lock",
-    "requirements.txt"
-  ].includes(file);
-}
-
-function isLikelyEntrypoint(file: string): boolean {
-  return (
-    file.startsWith("src/") &&
-    (file.endsWith("/cli.ts") ||
-      file.endsWith("/index.ts") ||
-      file.endsWith("/main.ts") ||
-      file.endsWith("/app.ts") ||
-      file.endsWith("/cli.py") ||
-      file.endsWith("/__main__.py"))
-  );
 }

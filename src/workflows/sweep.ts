@@ -1,17 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+  type AssistantMessage,
   createModels,
   type Api,
-  type Message,
   type Model,
-  type MutableModels,
-  type Usage
+  type MutableModels
 } from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 
+import { collectReadinessEvidence } from "../collection/readiness.js";
 import { completeWorkflowRun, createWorkflowRun } from "../db/index.js";
 import type {
   HarnessUsage,
@@ -21,27 +20,21 @@ import type {
 } from "../domain/types.js";
 import { logger } from "../logger.js";
 import {
-  buildReadinessSweepPrompt,
-  buildReadinessSynthesisPrompt,
+  buildReadinessInterpretationPrompt,
   readinessSweepSkill
 } from "../skills/readiness-sweep.js";
-import { buildReadinessAgentTools, type ToolContext } from "../tools/index.js";
 import { renderReportEnvelope } from "../tools/report.js";
 
-const DEFAULT_HARNESS_PROVIDER = "pi-agent-core";
+const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_TURNS = 4;
-const DEFAULT_MAX_TOOL_CALLS = 14;
 
 export async function runSweepWorkflow(
   repoPath: string,
   options: {
     model?: string;
     timeoutMs?: number;
-    maxTurns?: number;
-    maxToolCalls?: number;
     onProgress?: (event: WorkflowProgressEvent) => void;
   } = {}
 ): Promise<WorkflowResult> {
@@ -52,8 +45,6 @@ export async function runSweepWorkflow(
 
   const modelName = options.model ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
-  const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
-  const maxToolCalls = options.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   const runStore = createWorkflowRun(absoluteRepoPath, DEFAULT_HARNESS_PROVIDER, modelName);
   runStore.sqlite.close();
 
@@ -69,12 +60,25 @@ export async function runSweepWorkflow(
     timeoutMs
   });
 
+  emitProgress(options.onProgress, { type: "collection_started" });
+  const evidence = collectReadinessEvidence(absoluteRepoPath);
+  calls.push({
+    name: "collect_readiness_evidence",
+    args: { skill: evidence.collection_skill },
+    isError: false,
+    result: evidence
+  });
+  emitProgress(options.onProgress, {
+    type: "collection_completed",
+    fileCount: countedEvidenceFiles(evidence)
+  });
+
   if (!process.env[MINIMAX_API_KEY_ENV]) {
     const markdown = renderReportEnvelope(
       absoluteRepoPath,
       `## Overall Judgment
 
-The sweep workflow was skipped because \`${MINIMAX_API_KEY_ENV}\` is not set.
+Repository evidence was collected, but LLM interpretation was skipped because \`${MINIMAX_API_KEY_ENV}\` is not set.
 
 ## Next Step
 
@@ -87,7 +91,7 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       runId: runStore.run.id,
       taskId: runStore.task.id,
       status: "skipped",
-      summary: "Sweep skipped because MiniMax credentials are not configured.",
+      summary: "Sweep interpretation skipped because MiniMax credentials are not configured.",
       reportPath,
       calls
     });
@@ -104,12 +108,6 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     };
   }
 
-  const context: ToolContext = {
-    repoPath: absoluteRepoPath,
-    reportPath,
-    calls,
-    maxToolCalls
-  };
   const models = createModels();
   models.setProvider(minimaxProvider());
   const model = models.getModel("minimax", modelName);
@@ -117,97 +115,43 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     throw new Error(`MiniMax model is not available through pi-ai: ${modelName}`);
   }
 
-  let messages: AgentMessage[] = [];
   let workflowError: string | undefined;
-  let turnCount = 0;
-  const agent = new Agent({
-    initialState: {
-      systemPrompt: readinessSweepSkill,
-      model,
-      thinkingLevel: "low",
-      tools: buildReadinessAgentTools(context),
-      messages
-    },
-    streamFn: (requestModel, llmContext, streamOptions) =>
-      models.streamSimple(requestModel, llmContext, {
-        ...streamOptions,
-        maxTokens: 2000,
-        timeoutMs: Math.min(timeoutMs, 90_000)
-      }),
-    toolExecution: "sequential",
-    shouldStopAfterTurn: () => fs.existsSync(reportPath) || turnCount >= maxTurns
-  });
-
-  agent.subscribe((event: AgentEvent) => {
-    if (event.type === "agent_start") {
-      emitProgress(options.onProgress, {
-        type: "model_started",
-        provider: "minimax",
-        model: modelName
-      });
-    }
-    if (event.type === "turn_start") {
-      turnCount += 1;
-      emitProgress(options.onProgress, { type: "turn_started", turn: turnCount });
-    }
-    if (event.type === "tool_execution_start") {
-      emitProgress(options.onProgress, { type: "tool_started", name: event.toolName });
-    }
-    if (event.type === "tool_execution_end") {
-      emitProgress(options.onProgress, {
-        type: "tool_completed",
-        name: event.toolName,
-        isError: event.isError
-      });
-      if (event.toolName === "submit_readiness_report" && !event.isError) {
-        emitProgress(options.onProgress, { type: "report_submitted", reportPath });
-      }
-    }
-    if (event.type === "agent_end") {
-      messages = event.messages;
-    }
-  });
-
+  let interpretation: AssistantMessage | undefined;
   try {
-    await withWorkflowTimeout(
-      agent.prompt(buildReadinessSweepPrompt(absoluteRepoPath)),
+    emitProgress(options.onProgress, {
+      type: "model_started",
+      provider: "minimax",
+      model: modelName
+    });
+    interpretation = await interpretEvidence({
+      models,
+      model,
+      repoPath: absoluteRepoPath,
+      evidence,
       timeoutMs,
-      () => {
-        emitProgress(options.onProgress, { type: "timeout", timeoutMs });
-        agent.abort();
-      }
-    );
+      onProgress: options.onProgress
+    });
   } catch (error) {
     workflowError = error instanceof Error ? error.message : String(error);
   }
 
-  if (messages.length === 0) {
-    messages = agent.state.messages;
+  const interpretationText = interpretation ? assistantText(interpretation) : "";
+  let reportWasWritten = false;
+  if (interpretationText) {
+    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+    fs.writeFileSync(
+      reportPath,
+      renderReportEnvelope(absoluteRepoPath, interpretationText),
+      "utf8"
+    );
+    reportWasWritten = true;
+    emitProgress(options.onProgress, { type: "report_submitted", reportPath });
+  } else if (!workflowError) {
+    workflowError = "interpretation_returned_no_text";
   }
 
-  let reportWasWritten = fs.existsSync(reportPath);
-  let synthesisOutput: string | undefined;
-  if (!reportWasWritten && !workflowError) {
-    try {
-      emitProgress(options.onProgress, { type: "synthesis_started" });
-      synthesisOutput = await synthesizeReport({
-        models,
-        model,
-        repoPath: absoluteRepoPath,
-        messages,
-        timeoutMs: Math.min(timeoutMs, 60_000)
-      });
-      fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-      fs.writeFileSync(reportPath, renderReportEnvelope(absoluteRepoPath, synthesisOutput), "utf8");
-      reportWasWritten = true;
-      emitProgress(options.onProgress, { type: "report_submitted", reportPath });
-    } catch (error) {
-      workflowError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  const usage = usageFromMessages(messages);
-  const finalOutput = synthesisOutput ?? lastAssistantText(messages);
+  const usage = usageFromAssistant(interpretation);
+  const finalOutput = interpretationText;
   const status = workflowError ? "failed" : reportWasWritten ? "completed" : "failed";
 
   if (!reportWasWritten) {
@@ -258,25 +202,25 @@ ${workflowError ?? "No explicit error was recorded."}`
   };
 }
 
-async function synthesizeReport(input: {
+async function interpretEvidence(input: {
   models: MutableModels;
   model: Model<Api>;
   repoPath: string;
-  messages: AgentMessage[];
+  evidence: unknown;
   timeoutMs: number;
-}): Promise<string> {
-  const synthesis = await withWorkflowTimeout(
+  onProgress?: (event: WorkflowProgressEvent) => void;
+}): Promise<AssistantMessage> {
+  return await withWorkflowTimeout(
     input.models.completeSimple(
       input.model,
       {
         systemPrompt: `${readinessSweepSkill}
 
-You are now in final synthesis mode. Tools are unavailable. Write the report directly as Markdown.`,
+Collection is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.`,
         messages: [
-          ...toLlmMessages(input.messages),
           {
             role: "user",
-            content: buildReadinessSynthesisPrompt(input.repoPath),
+            content: buildReadinessInterpretationPrompt(input.repoPath, input.evidence),
             timestamp: Date.now()
           }
         ],
@@ -290,24 +234,10 @@ You are now in final synthesis mode. Tools are unavailable. Write the report dir
       }
     ),
     input.timeoutMs,
-    () => undefined
+    () => {
+      emitProgress(input.onProgress, { type: "timeout", timeoutMs: input.timeoutMs });
+    }
   );
-  const text = assistantText(synthesis);
-  if (!text) {
-    throw new Error("synthesis_returned_no_text");
-  }
-  return text;
-}
-
-function toLlmMessages(messages: AgentMessage[]): Message[] {
-  return messages.filter((message): message is Message => {
-    return (
-      typeof message === "object" &&
-      message !== null &&
-      "role" in message &&
-      (message.role === "user" || message.role === "assistant" || message.role === "toolResult")
-    );
-  });
 }
 
 async function withWorkflowTimeout<T>(
@@ -347,7 +277,27 @@ function emitProgress(
     logger.info({ turn: event.turn }, "readiness_sweep.turn_started");
   } else if (event.type === "timeout") {
     logger.warn({ timeout_ms: event.timeoutMs }, "readiness_sweep.timeout");
+  } else if (event.type === "collection_started") {
+    logger.info("readiness_sweep.collection_started");
+  } else if (event.type === "collection_completed") {
+    logger.info({ file_count: event.fileCount }, "readiness_sweep.collection_completed");
   }
+}
+
+function countedEvidenceFiles(evidence: {
+  key_files: string[];
+  docs: string[];
+  tests: string[];
+  ci: string[];
+  likely_entrypoints: string[];
+}): number {
+  return new Set([
+    ...evidence.key_files,
+    ...evidence.docs,
+    ...evidence.tests,
+    ...evidence.ci,
+    ...evidence.likely_entrypoints
+  ]).size;
 }
 
 function reportPathFor(repoPath: string, runId: number): string {
@@ -363,17 +313,15 @@ function reportPathFor(repoPath: string, runId: number): string {
   );
 }
 
-function usageFromMessages(messages: AgentMessage[]): HarnessUsage {
-  const usage = emptyUsage();
-  for (const message of messages) {
-    if (!isAssistantMessageWithUsage(message)) continue;
-    usage.requests += 1;
-    usage.inputTokens += message.usage.input;
-    usage.outputTokens += message.usage.output;
-    usage.totalTokens += message.usage.totalTokens;
-    usage.cost = (usage.cost ?? 0) + message.usage.cost.total;
-  }
-  return usage;
+function usageFromAssistant(message: AssistantMessage | undefined): HarnessUsage {
+  if (!message) return emptyUsage();
+  return {
+    requests: 1,
+    inputTokens: message.usage.input,
+    outputTokens: message.usage.output,
+    totalTokens: message.usage.totalTokens,
+    cost: message.usage.cost.total
+  };
 }
 
 function emptyUsage(): HarnessUsage {
@@ -385,27 +333,7 @@ function emptyUsage(): HarnessUsage {
   };
 }
 
-function isAssistantMessageWithUsage(
-  message: AgentMessage
-): message is AgentMessage & { usage: Usage } {
-  return (
-    typeof message === "object" &&
-    message !== null &&
-    "role" in message &&
-    message.role === "assistant"
-  );
-}
-
-function lastAssistantText(messages: AgentMessage[]): string {
-  for (const message of messages.toReversed()) {
-    if (!(typeof message === "object" && message !== null && "role" in message)) continue;
-    if (message.role !== "assistant") continue;
-    return assistantText(message);
-  }
-  return "";
-}
-
-function assistantText(message: AgentMessage & { role: "assistant" }): string {
+function assistantText(message: AssistantMessage): string {
   return message.content
     .filter((item) => item.type === "text")
     .map((item) => item.text)

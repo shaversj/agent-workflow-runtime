@@ -18,6 +18,8 @@ describe("sweep workflow", () => {
       const result = await runSweepWorkflow(repoPath);
 
       expect(result.status).toBe("skipped");
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0]?.name).toBe("collect_readiness_evidence");
       expect(fs.existsSync(result.reportPath)).toBe(true);
       expect(fs.readFileSync(result.reportPath, "utf8")).toContain("MINIMAX_API_KEY");
       expect(fs.existsSync(path.join(repoPath, ".agent-readiness", "agent-ops.db"))).toBe(true);
