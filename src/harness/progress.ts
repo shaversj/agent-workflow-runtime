@@ -17,10 +17,21 @@ export function emitWorkflowProgress(
   } else if (event.type === "turn_started") {
     logger.info({ turn: event.turn }, `${workflowName}.turn_started`);
   } else if (event.type === "timeout") {
-    logger.warn({ timeout_ms: event.timeoutMs }, `${workflowName}.timeout`);
+    logger.warn(
+      { workflow_name: workflowName, timeout_ms: event.timeoutMs },
+      `${workflowName}.timeout`
+    );
   } else if (event.type === "evidence_started") {
-    logger.info(`${workflowName}.evidence_started`);
+    logger.info({ workflow_name: workflowName }, `${workflowName}.evidence_started`);
   } else if (event.type === "evidence_completed") {
-    logger.info({ file_count: event.fileCount }, `${workflowName}.evidence_completed`);
+    logger.info(
+      { workflow_name: workflowName, file_count: event.fileCount },
+      `${workflowName}.evidence_completed`
+    );
+  } else if (event.type === "model_started") {
+    logger.info(
+      { workflow_name: workflowName, provider: event.provider, model: event.model },
+      `${workflowName}.model_started`
+    );
   }
 }

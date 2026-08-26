@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 
+import { logger } from "../logger.js";
 import { defaultBranch, remoteUrl, repoName } from "../repository.js";
 import { artifacts, repositories, runs, tasks, toolCalls } from "./schema.js";
 
@@ -82,6 +83,20 @@ export function createWorkflowRun(repoPath: string, provider: string, model: str
     .returning()
     .get();
 
+  logger.info(
+    {
+      workflow_name: "readiness_sweep",
+      repo_name: repository.name,
+      repo_path: absoluteRepoPath,
+      repository_id: repository.id,
+      task_id: task.id,
+      run_id: run.id,
+      provider,
+      model
+    },
+    "workflow_run.created"
+  );
+
   return { ...store, repository, task, run };
 }
 
@@ -128,6 +143,17 @@ export function completeWorkflowRun(input: {
       pathOrUrl: input.reportPath
     })
     .run();
+  logger.info(
+    {
+      workflow_name: "readiness_sweep",
+      task_id: input.taskId,
+      run_id: input.runId,
+      status: input.status,
+      report_path: input.reportPath,
+      tool_call_count: input.calls.length
+    },
+    "workflow_run.completed"
+  );
   store.sqlite.close();
 }
 

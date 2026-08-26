@@ -43,8 +43,17 @@ export async function runSweepWorkflow(
 
   const reportPath = reportPathFor(absoluteRepoPath, runStore.run.id);
   const calls: ToolCallRecord[] = [];
+  const workflowContext = {
+    workflow_name: WORKFLOW_LOG_NAME,
+    repo_name: path.basename(absoluteRepoPath),
+    repo_path: absoluteRepoPath,
+    task_id: runStore.task.id,
+    run_id: runStore.run.id,
+    provider: DEFAULT_HARNESS_PROVIDER,
+    model: modelName
+  };
 
-  logger.info({ repo_path: absoluteRepoPath, run_id: runStore.run.id }, "readiness_sweep.started");
+  logger.info({ ...workflowContext, timeout_ms: timeoutMs }, "readiness_sweep.started");
   emitProgress(options.onProgress, {
     type: "started",
     runId: runStore.run.id,
@@ -88,6 +97,10 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       reportPath,
       calls
     });
+    logger.warn(
+      { ...workflowContext, status: "skipped", reason: `missing_${MINIMAX_API_KEY_ENV}` },
+      "readiness_sweep.skipped"
+    );
     return {
       repoPath: absoluteRepoPath,
       runId: runStore.run.id,
@@ -101,11 +114,10 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     };
   }
 
-  const harnessModel = createMinimaxHarnessModel(modelName);
-
   let workflowError: string | undefined;
   let interpretation: AssistantMessage | undefined;
   try {
+    const harnessModel = createMinimaxHarnessModel(modelName);
     emitProgress(options.onProgress, {
       type: "model_started",
       provider: harnessModel.provider,
@@ -118,8 +130,25 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       timeoutMs,
       onProgress: options.onProgress
     });
+    logger.info(
+      {
+        ...workflowContext,
+        provider: harnessModel.provider,
+        token_count: interpretation.usage.totalTokens
+      },
+      "readiness_sweep.model_completed"
+    );
   } catch (error) {
     workflowError = error instanceof Error ? error.message : String(error);
+    logger.error(
+      {
+        ...workflowContext,
+        err: error,
+        error_type: error instanceof Error ? error.name : typeof error,
+        error: workflowError
+      },
+      "readiness_sweep.failed"
+    );
   }
 
   const interpretationText = interpretation ? assistantText(interpretation) : "";
@@ -135,6 +164,14 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     emitProgress(options.onProgress, { type: "report_submitted", reportPath });
   } else if (!workflowError) {
     workflowError = "interpretation_returned_no_text";
+    logger.error(
+      {
+        ...workflowContext,
+        error_type: "EmptyModelResponse",
+        error: workflowError
+      },
+      "readiness_sweep.failed"
+    );
   }
 
   const usage = usageFromAssistant(interpretation);
@@ -159,6 +196,7 @@ ${workflowError ?? "No explicit error was recorded."}`
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
   }
+  logger.info({ ...workflowContext, report_path: reportPath }, "readiness_sweep.report_written");
 
   completeWorkflowRun({
     repoPath: absoluteRepoPath,
@@ -171,7 +209,13 @@ ${workflowError ?? "No explicit error was recorded."}`
   });
 
   logger.info(
-    { repo_path: absoluteRepoPath, run_id: runStore.run.id, report_path: reportPath, status },
+    {
+      ...workflowContext,
+      report_path: reportPath,
+      status,
+      token_count: usage.totalTokens,
+      tool_call_count: calls.length
+    },
     "readiness_sweep.completed"
   );
   emitProgress(options.onProgress, { type: "completed", status, reportPath });
