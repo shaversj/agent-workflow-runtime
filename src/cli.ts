@@ -24,7 +24,7 @@ async function main() {
       } else if (event.type === "evidence_completed") {
         console.error(`Collected evidence from ${event.fileCount} files`);
       } else if (event.type === "model_started") {
-        console.error(`Waiting for ${event.provider}/${event.model}...`);
+        console.error(`Waiting for ${event.modelProvider}/${event.model}...`);
       } else if (event.type === "turn_started") {
         console.error(`Turn ${event.turn}`);
       } else if (event.type === "tool_started") {

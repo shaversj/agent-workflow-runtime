@@ -41,23 +41,25 @@ logger.info(
 
 Prefer these field names when the concept applies:
 
-| Concept                  | Field           |
-| ------------------------ | --------------- |
-| Workflow name            | `workflow_name` |
-| Plugin name              | `plugin_name`   |
-| Tool name                | `tool_name`     |
-| Repository name          | `repo_name`     |
-| Repository path          | `repo_path`     |
-| Task ID                  | `task_id`       |
-| Run ID                   | `run_id`        |
-| Provider                 | `provider`      |
-| Model                    | `model`         |
-| Status                   | `status`        |
-| Duration in milliseconds | `duration_ms`   |
-| File count               | `file_count`    |
-| Token count              | `token_count`   |
-| Error type               | `error_type`    |
-| Error message            | `error`         |
+| Concept                  | Field              |
+| ------------------------ | ------------------ |
+| Workflow name            | `workflow_name`    |
+| Plugin name              | `plugin_name`      |
+| Tool name                | `tool_name`        |
+| Repository name          | `repo_name`        |
+| Repository path          | `repo_path`        |
+| Task ID                  | `task_id`          |
+| Run ID                   | `run_id`           |
+| Harness provider         | `harness_provider` |
+| Model runtime            | `model_runtime`    |
+| Model provider           | `model_provider`   |
+| Model                    | `model`            |
+| Status                   | `status`           |
+| Duration in milliseconds | `duration_ms`      |
+| File count               | `file_count`       |
+| Token count              | `token_count`      |
+| Error type               | `error_type`       |
+| Error message            | `error`            |
 
 ## Levels
 

@@ -18,6 +18,8 @@ import {
 import { renderReportEnvelope } from "../tools/report.js";
 
 const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
+const MODEL_RUNTIME = "pi-ai";
+const MODEL_PROVIDER = "minimax";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
@@ -38,7 +40,13 @@ export async function runSweepWorkflow(
 
   const modelName = options.model ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
-  const runStore = createWorkflowRun(absoluteRepoPath, DEFAULT_HARNESS_PROVIDER, modelName);
+  const runStore = createWorkflowRun({
+    repoPath: absoluteRepoPath,
+    harnessProvider: DEFAULT_HARNESS_PROVIDER,
+    modelRuntime: MODEL_RUNTIME,
+    modelProvider: MODEL_PROVIDER,
+    model: modelName
+  });
   runStore.sqlite.close();
 
   const reportPath = reportPathFor(absoluteRepoPath, runStore.run.id);
@@ -49,7 +57,9 @@ export async function runSweepWorkflow(
     repo_path: absoluteRepoPath,
     task_id: runStore.task.id,
     run_id: runStore.run.id,
-    provider: DEFAULT_HARNESS_PROVIDER,
+    harness_provider: DEFAULT_HARNESS_PROVIDER,
+    model_runtime: MODEL_RUNTIME,
+    model_provider: MODEL_PROVIDER,
     model: modelName
   };
 
@@ -93,6 +103,10 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       runId: runStore.run.id,
       taskId: runStore.task.id,
       status: "skipped",
+      harnessProvider: DEFAULT_HARNESS_PROVIDER,
+      modelRuntime: MODEL_RUNTIME,
+      modelProvider: MODEL_PROVIDER,
+      model: modelName,
       summary: "Sweep interpretation skipped because MiniMax credentials are not configured.",
       reportPath,
       calls
@@ -120,7 +134,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     const harnessModel = createMinimaxHarnessModel(modelName);
     emitProgress(options.onProgress, {
       type: "model_started",
-      provider: harnessModel.provider,
+      modelProvider: harnessModel.modelProvider,
+      modelRuntime: harnessModel.modelRuntime,
       model: modelName
     });
     interpretation = await interpretEvidence({
@@ -133,7 +148,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     logger.info(
       {
         ...workflowContext,
-        provider: harnessModel.provider,
+        model_provider: harnessModel.modelProvider,
+        model_runtime: harnessModel.modelRuntime,
         token_count: interpretation.usage.totalTokens
       },
       "readiness_sweep.model_completed"
@@ -203,6 +219,10 @@ ${workflowError ?? "No explicit error was recorded."}`
     runId: runStore.run.id,
     taskId: runStore.task.id,
     status,
+    harnessProvider: DEFAULT_HARNESS_PROVIDER,
+    modelRuntime: MODEL_RUNTIME,
+    modelProvider: MODEL_PROVIDER,
+    model: modelName,
     summary: status === "completed" ? "Sweep workflow completed." : "Sweep workflow failed.",
     reportPath,
     calls

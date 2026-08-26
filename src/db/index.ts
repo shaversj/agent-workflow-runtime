@@ -22,8 +22,14 @@ function openStore(repoPath: string) {
   return { db, sqlite };
 }
 
-export function createWorkflowRun(repoPath: string, provider: string, model: string) {
-  const absoluteRepoPath = path.resolve(repoPath);
+export function createWorkflowRun(input: {
+  repoPath: string;
+  harnessProvider: string;
+  modelRuntime: string;
+  modelProvider: string;
+  model: string;
+}) {
+  const absoluteRepoPath = path.resolve(input.repoPath);
   const store = openStore(absoluteRepoPath);
   const existingRepository = store.db
     .select()
@@ -76,8 +82,8 @@ export function createWorkflowRun(repoPath: string, provider: string, model: str
     .insert(runs)
     .values({
       taskId: task.id,
-      provider,
-      model,
+      provider: input.harnessProvider,
+      model: input.model,
       context: { repoPath: absoluteRepoPath }
     })
     .returning()
@@ -91,8 +97,10 @@ export function createWorkflowRun(repoPath: string, provider: string, model: str
       repository_id: repository.id,
       task_id: task.id,
       run_id: run.id,
-      provider,
-      model
+      harness_provider: input.harnessProvider,
+      model_runtime: input.modelRuntime,
+      model_provider: input.modelProvider,
+      model: input.model
     },
     "workflow_run.created"
   );
@@ -105,6 +113,10 @@ export function completeWorkflowRun(input: {
   runId: number;
   taskId: number;
   status: "completed" | "failed" | "skipped";
+  harnessProvider: string;
+  modelRuntime: string;
+  modelProvider: string;
+  model: string;
   summary: string;
   reportPath: string;
   calls: { name: string; args: unknown; isError: boolean; result: unknown }[];
@@ -149,6 +161,10 @@ export function completeWorkflowRun(input: {
       task_id: input.taskId,
       run_id: input.runId,
       status: input.status,
+      harness_provider: input.harnessProvider,
+      model_runtime: input.modelRuntime,
+      model_provider: input.modelProvider,
+      model: input.model,
       report_path: input.reportPath,
       tool_call_count: input.calls.length
     },

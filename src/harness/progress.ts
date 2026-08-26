@@ -30,7 +30,12 @@ export function emitWorkflowProgress(
     );
   } else if (event.type === "model_started") {
     logger.info(
-      { workflow_name: workflowName, provider: event.provider, model: event.model },
+      {
+        workflow_name: workflowName,
+        model_provider: event.modelProvider,
+        model_runtime: event.modelRuntime,
+        model: event.model
+      },
       `${workflowName}.model_started`
     );
   }
