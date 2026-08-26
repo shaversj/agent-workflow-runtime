@@ -1,6 +1,6 @@
 import type { Static, TSchema } from "typebox";
 
-import type { ToolCallRecord } from "../domain/types.js";
+import type { ToolCallRecord } from "../harness/types.js";
 
 export interface ToolContext {
   repoPath: string;

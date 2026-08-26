@@ -6,8 +6,9 @@ Agent Ops Kit is a TypeScript harness for running agent-facing repository operat
 
 The default workflow runs a readiness sweep. It loads the readiness plugin, deterministically gathers a compact and redacted evidence packet, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
 
-The project should stay organized around four concepts:
+The project should stay organized around five concepts:
 
+- `harness/`: shared runtime contracts, model setup, timeout handling, usage parsing, and progress emission
 - `plugins/`: domain capability bundles containing manifests, evidence recipes, tools, and skills
 - `tools/`: shared TypeBox tool contracts and generic report helpers
 - `workflows/`: orchestration that connects evidence, models, skills, persistence, and CLI commands
@@ -46,7 +47,7 @@ make sweep REPO=/path/to/repo
 ## Development Workflow
 
 1. Bootstrap the environment with `make install`.
-2. Keep changes scoped to plugins, shared tools, workflows, or persistence as appropriate.
+2. Keep changes scoped to harness runtime, plugins, shared tools, workflows, or persistence as appropriate.
 3. Add future domain behavior under `src/plugins/<domain>/` with a manifest first, then evidence recipes, tools, and skills as needed.
 4. Add shared tool contracts under `src/tools/` only when multiple plugins or workflows need the same callable surface.
 5. Run focused validation for the touched surface.

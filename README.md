@@ -46,12 +46,13 @@ Sweep output is written inside the inspected repository:
 ```text
 src/
   db/          Drizzle schema and local SQLite persistence
+  harness/     shared runtime contracts, model setup, progress, timeouts, and usage helpers
   plugins/     domain bundles with manifests, evidence recipes, tools, and skills
   tools/       shared TypeBox tool contracts and report helpers
   workflows/   orchestration such as the readiness sweep
 ```
 
-Evidence gathering is deterministic. Plugins bundle domain-specific manifests, recipes, tools, and skills. Workflows connect plugins, model interpretation, persistence, and reporting.
+Evidence gathering is deterministic. Plugins bundle domain-specific manifests, recipes, tools, and skills. Harness code owns reusable runtime behavior. Workflows connect plugins, model interpretation, persistence, and reporting.
 
 ## Validation
 

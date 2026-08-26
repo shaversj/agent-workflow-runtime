@@ -1,22 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  type AssistantMessage,
-  createModels,
-  type Api,
-  type Model,
-  type MutableModels
-} from "@earendil-works/pi-ai";
-import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 import { completeWorkflowRun, createWorkflowRun } from "../db/index.js";
-import type {
-  HarnessUsage,
-  ToolCallRecord,
-  WorkflowProgressEvent,
-  WorkflowResult
-} from "../domain/types.js";
+import { createMinimaxHarnessModel, type HarnessModel } from "../harness/model.js";
+import { emitWorkflowProgress } from "../harness/progress.js";
+import type { ToolCallRecord, WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
+import { assistantText, emptyUsage, usageFromAssistant } from "../harness/usage.js";
+import { withWorkflowTimeout } from "../harness/timeout.js";
 import { logger } from "../logger.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
@@ -29,6 +21,7 @@ const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
+const WORKFLOW_LOG_NAME = "readiness_sweep";
 
 export async function runSweepWorkflow(
   repoPath: string,
@@ -108,24 +101,18 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     };
   }
 
-  const models = createModels();
-  models.setProvider(minimaxProvider());
-  const model = models.getModel("minimax", modelName);
-  if (!model) {
-    throw new Error(`MiniMax model is not available through pi-ai: ${modelName}`);
-  }
+  const harnessModel = createMinimaxHarnessModel(modelName);
 
   let workflowError: string | undefined;
   let interpretation: AssistantMessage | undefined;
   try {
     emitProgress(options.onProgress, {
       type: "model_started",
-      provider: "minimax",
+      provider: harnessModel.provider,
       model: modelName
     });
     interpretation = await interpretEvidence({
-      models,
-      model,
+      harnessModel,
       repoPath: absoluteRepoPath,
       evidence,
       timeoutMs,
@@ -203,16 +190,15 @@ ${workflowError ?? "No explicit error was recorded."}`
 }
 
 async function interpretEvidence(input: {
-  models: MutableModels;
-  model: Model<Api>;
+  harnessModel: HarnessModel;
   repoPath: string;
   evidence: unknown;
   timeoutMs: number;
   onProgress?: (event: WorkflowProgressEvent) => void;
 }): Promise<AssistantMessage> {
   return await withWorkflowTimeout(
-    input.models.completeSimple(
-      input.model,
+    input.harnessModel.models.completeSimple(
+      input.harnessModel.model,
       {
         systemPrompt: `${readinessSweepSkill}
 
@@ -240,49 +226,10 @@ Evidence gathering is already complete. Tools are unavailable. Interpret only th
   );
 }
 
-async function withWorkflowTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  onTimeout: () => void
-): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => {
-          onTimeout();
-          reject(new Error(`workflow_timeout:${timeoutMs}`));
-        }, timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
-function emitProgress(
+const emitProgress = (
   onProgress: ((event: WorkflowProgressEvent) => void) | undefined,
   event: WorkflowProgressEvent
-) {
-  onProgress?.(event);
-  if (event.type === "tool_started") {
-    logger.info({ tool_name: event.name }, "readiness_sweep.tool_started");
-  } else if (event.type === "tool_completed") {
-    logger.info(
-      { tool_name: event.name, is_error: event.isError },
-      "readiness_sweep.tool_completed"
-    );
-  } else if (event.type === "turn_started") {
-    logger.info({ turn: event.turn }, "readiness_sweep.turn_started");
-  } else if (event.type === "timeout") {
-    logger.warn({ timeout_ms: event.timeoutMs }, "readiness_sweep.timeout");
-  } else if (event.type === "evidence_started") {
-    logger.info("readiness_sweep.evidence_started");
-  } else if (event.type === "evidence_completed") {
-    logger.info({ file_count: event.fileCount }, "readiness_sweep.evidence_completed");
-  }
-}
+) => emitWorkflowProgress(WORKFLOW_LOG_NAME, onProgress, event);
 
 function countedEvidenceFiles(evidence: {
   key_files: string[];
@@ -311,32 +258,4 @@ function reportPathFor(repoPath: string, runId: number): string {
     "reports",
     `${timestamp}-${runId}-readiness-sweep.md`
   );
-}
-
-function usageFromAssistant(message: AssistantMessage | undefined): HarnessUsage {
-  if (!message) return emptyUsage();
-  return {
-    requests: 1,
-    inputTokens: message.usage.input,
-    outputTokens: message.usage.output,
-    totalTokens: message.usage.totalTokens,
-    cost: message.usage.cost.total
-  };
-}
-
-function emptyUsage(): HarnessUsage {
-  return {
-    requests: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0
-  };
-}
-
-function assistantText(message: AssistantMessage): string {
-  return message.content
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
 }
