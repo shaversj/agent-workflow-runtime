@@ -1,4 +1,4 @@
-export interface ReadinessCollectionSkill {
+export interface ReadinessEvidenceRecipe {
   name: string;
   maxExcerptBytes: number;
   maxSearchResultsPerQuery: number;
@@ -8,8 +8,8 @@ export interface ReadinessCollectionSkill {
   searchQueries: { name: string; query: string }[];
 }
 
-export const readinessCollectionSkill: ReadinessCollectionSkill = {
-  name: "readiness-collection",
+export const readinessEvidenceRecipe: ReadinessEvidenceRecipe = {
+  name: "readiness-evidence",
   maxExcerptBytes: 3000,
   maxSearchResultsPerQuery: 20,
   ignoredPathPatterns: [

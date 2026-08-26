@@ -4,10 +4,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { collectReadinessEvidence } from "../src/collection/readiness.js";
-import { readinessCollectionSkill } from "../src/skills/readiness-collection.js";
+import { gatherReadinessEvidence } from "../src/plugins/readiness/evidence.js";
+import { readinessEvidenceRecipe } from "../src/plugins/readiness/evidence-recipe.js";
 
-describe("readiness collection", () => {
+describe("readiness evidence", () => {
   it("collects deterministic evidence without producing findings", () => {
     const repoPath = tempRepo();
     fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n\nRun make check.\n");
@@ -23,9 +23,10 @@ describe("readiness collection", () => {
     fs.mkdirSync(path.join(repoPath, "tests"), { recursive: true });
     fs.writeFileSync(path.join(repoPath, "tests", "demo.test.ts"), "test('demo', () => {})\n");
 
-    const evidence = collectReadinessEvidence(repoPath);
+    const evidence = gatherReadinessEvidence(repoPath);
 
-    expect(evidence.collection_skill).toBe(readinessCollectionSkill.name);
+    expect(evidence.evidence_recipe).toBe(readinessEvidenceRecipe.name);
+    expect(evidence.plugin).toBe("readiness");
     expect(evidence.key_files).toEqual(expect.arrayContaining(["README.md", "AGENTS.md"]));
     expect(evidence.standard_expectations.map((standard) => standard.category)).toContain(
       "logging"
@@ -64,7 +65,7 @@ describe("readiness collection", () => {
       '{ "apiKey": "secret-value", "logging": true }\n'
     );
 
-    const evidence = collectReadinessEvidence(repoPath);
+    const evidence = gatherReadinessEvidence(repoPath);
     const packet = JSON.stringify(evidence);
 
     expect(evidence.redaction.ignored_files).toEqual(

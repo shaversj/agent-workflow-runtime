@@ -10,7 +10,6 @@ import {
 } from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 
-import { collectReadinessEvidence } from "../collection/readiness.js";
 import { completeWorkflowRun, createWorkflowRun } from "../db/index.js";
 import type {
   HarnessUsage,
@@ -19,10 +18,11 @@ import type {
   WorkflowResult
 } from "../domain/types.js";
 import { logger } from "../logger.js";
+import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
   buildReadinessInterpretationPrompt,
   readinessSweepSkill
-} from "../skills/readiness-sweep.js";
+} from "../plugins/readiness/skill.js";
 import { renderReportEnvelope } from "../tools/report.js";
 
 const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
@@ -60,16 +60,16 @@ export async function runSweepWorkflow(
     timeoutMs
   });
 
-  emitProgress(options.onProgress, { type: "collection_started" });
-  const evidence = collectReadinessEvidence(absoluteRepoPath);
+  emitProgress(options.onProgress, { type: "evidence_started" });
+  const evidence = gatherReadinessEvidence(absoluteRepoPath);
   calls.push({
-    name: "collect_readiness_evidence",
-    args: { skill: evidence.collection_skill },
+    name: "gather_readiness_evidence",
+    args: { plugin: evidence.plugin, recipe: evidence.evidence_recipe },
     isError: false,
     result: evidence
   });
   emitProgress(options.onProgress, {
-    type: "collection_completed",
+    type: "evidence_completed",
     fileCount: countedEvidenceFiles(evidence)
   });
 
@@ -216,7 +216,7 @@ async function interpretEvidence(input: {
       {
         systemPrompt: `${readinessSweepSkill}
 
-Collection is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.`,
+Evidence gathering is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.`,
         messages: [
           {
             role: "user",
@@ -277,10 +277,10 @@ function emitProgress(
     logger.info({ turn: event.turn }, "readiness_sweep.turn_started");
   } else if (event.type === "timeout") {
     logger.warn({ timeout_ms: event.timeoutMs }, "readiness_sweep.timeout");
-  } else if (event.type === "collection_started") {
-    logger.info("readiness_sweep.collection_started");
-  } else if (event.type === "collection_completed") {
-    logger.info({ file_count: event.fileCount }, "readiness_sweep.collection_completed");
+  } else if (event.type === "evidence_started") {
+    logger.info("readiness_sweep.evidence_started");
+  } else if (event.type === "evidence_completed") {
+    logger.info({ file_count: event.fileCount }, "readiness_sweep.evidence_completed");
   }
 }
 

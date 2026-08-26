@@ -19,9 +19,9 @@ async function main() {
     onProgress: (event) => {
       if (event.type === "started") {
         console.error(`Started sweep run ${event.runId} with ${event.model}`);
-      } else if (event.type === "collection_started") {
+      } else if (event.type === "evidence_started") {
         console.error("Collecting repository evidence...");
-      } else if (event.type === "collection_completed") {
+      } else if (event.type === "evidence_completed") {
         console.error(`Collected evidence from ${event.fileCount} files`);
       } else if (event.type === "model_started") {
         console.error(`Waiting for ${event.provider}/${event.model}...`);

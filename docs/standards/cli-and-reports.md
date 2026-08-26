@@ -22,17 +22,19 @@ make sweep REPO=/path/to/repo
 make sweep REPO=/path/to/repo HARNESS_MODEL=MiniMax-M3
 ```
 
-Use pi-agent-core as the default harness path. The readiness sweep should be a workflow that loads a skill and exposes tools; do not add deterministic sweep logic back into the workflow.
+The readiness sweep should be a workflow that loads a plugin, gathers deterministic evidence, and asks the model to interpret that evidence; do not add deterministic findings logic back into the workflow.
 
-## Tools, Skills, Workflows
+## Plugins, Tools, Skills, Workflows
 
-- Put tool contracts and handlers under `src/tools/`.
+- Put domain-specific capabilities under `src/plugins/<domain>/`.
+- Give each plugin a small manifest that names its authority and capabilities.
+- Keep deterministic evidence recipes with the plugin that uses them.
 - Define tool inputs and outputs with TypeBox.
-- Register tool families in `src/tools/index.ts`.
-- Put durable prompts under `src/skills/`.
+- Put shared tool contracts and generic helpers under `src/tools/`.
+- Put durable prompts with the plugin or workflow that owns them.
 - Put orchestration under `src/workflows/`.
 
-Adding a tool should usually require one new tool file plus one registry entry.
+Adding a domain-specific tool should usually require one plugin-local tool file plus a small plugin registration change.
 
 ## Reports
 

@@ -2,18 +2,18 @@
 
 ## Project Overview
 
-Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through deterministic collection, explicit skills, and auditable reports.
+Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through plugins, deterministic evidence gathering, explicit interpretation skills, and auditable reports.
 
-The default workflow runs a readiness sweep. It deterministically collects a compact, redacted evidence packet, loads a readiness interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
+The default workflow runs a readiness sweep. It loads the readiness plugin, deterministically gathers a compact and redacted evidence packet, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
 
 The project should stay organized around four concepts:
 
-- `collection/`: deterministic, secret-safe evidence collection
-- `skills/`: durable prompts and instructions for agent behavior
-- `tools/`: low-level TypeBox contracts and report helpers
-- `workflows/`: orchestration that connects collection, models, skills, persistence, and CLI commands
+- `plugins/`: domain capability bundles containing manifests, evidence recipes, tools, and skills
+- `tools/`: shared TypeBox tool contracts and generic report helpers
+- `workflows/`: orchestration that connects evidence, models, skills, persistence, and CLI commands
+- `db/`: local SQLite persistence for workflow runs and artifacts
 
-Do not reintroduce a deterministic readiness checker as the main sweep path. Collection can be deterministic, but findings and recommendations belong to the interpretation step.
+Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, but findings and recommendations belong to the interpretation step.
 
 ## Technology Choices
 
@@ -46,9 +46,9 @@ make sweep REPO=/path/to/repo
 ## Development Workflow
 
 1. Bootstrap the environment with `make install`.
-2. Keep changes scoped to tools, skills, workflows, or persistence as appropriate.
-3. Add future deterministic collection behavior under `src/collection/` and keep collection recipes in `src/skills/`.
-4. Add future tools as separate files under `src/tools/` only when a workflow needs an explicit callable tool surface.
+2. Keep changes scoped to plugins, shared tools, workflows, or persistence as appropriate.
+3. Add future domain behavior under `src/plugins/<domain>/` with a manifest first, then evidence recipes, tools, and skills as needed.
+4. Add shared tool contracts under `src/tools/` only when multiple plugins or workflows need the same callable surface.
 5. Run focused validation for the touched surface.
 6. Run `make check` before handoff when behavior changed.
 7. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
@@ -60,7 +60,7 @@ make sweep REPO=/path/to/repo
 - Store local sweep output under `.agent-readiness/` in the inspected repo.
 - Keep secret values out of reports, logs, fixtures, and tests.
 - Redact secret-shaped values before evidence is sent to an LLM.
-- Skip known sensitive files such as `.env`, credentials files, private keys, and local package auth files during collection.
+- Skip known sensitive files such as `.env`, credentials files, private keys, and local package auth files during evidence gathering.
 
 ## Standards Reference
 

@@ -27,8 +27,8 @@ export interface WorkflowResult {
 
 export type WorkflowProgressEvent =
   | { type: "started"; runId: number; repoPath: string; model: string; timeoutMs: number }
-  | { type: "collection_started" }
-  | { type: "collection_completed"; fileCount: number }
+  | { type: "evidence_started" }
+  | { type: "evidence_completed"; fileCount: number }
   | { type: "model_started"; provider: string; model: string }
   | { type: "turn_started"; turn: number }
   | { type: "tool_started"; name: string }

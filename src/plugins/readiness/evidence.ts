@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  readinessCollectionSkill,
-  type ReadinessCollectionSkill
-} from "../skills/readiness-collection.js";
+import { readinessEvidenceRecipe, type ReadinessEvidenceRecipe } from "./evidence-recipe.js";
+import { readinessPluginManifest } from "./manifest.js";
 
 const ignoredDirs = new Set([
   ".agent-readiness",
@@ -31,9 +29,10 @@ export interface ReadinessEvidenceSearchResult {
 }
 
 export interface ReadinessEvidence {
-  collection_skill: string;
+  plugin: string;
+  evidence_recipe: string;
   redaction: ReadinessEvidenceRedaction;
-  standard_expectations: ReadinessCollectionSkill["expectedStandards"];
+  standard_expectations: ReadinessEvidenceRecipe["expectedStandards"];
   key_files: string[];
   docs: string[];
   standards: string[];
@@ -51,23 +50,24 @@ export interface ReadinessEvidenceRedaction {
   redacted_occurrences: number;
 }
 
-export function collectReadinessEvidence(
+export function gatherReadinessEvidence(
   repoPath: string,
-  skill: ReadinessCollectionSkill = readinessCollectionSkill
+  recipe: ReadinessEvidenceRecipe = readinessEvidenceRecipe
 ): ReadinessEvidence {
   const allFiles = walkFiles(repoPath);
-  const ignoredFiles = allFiles.filter((file) => shouldIgnoreEvidencePath(file, skill));
-  const files = allFiles.filter((file) => !shouldIgnoreEvidencePath(file, skill));
+  const ignoredFiles = allFiles.filter((file) => shouldIgnoreEvidencePath(file, recipe));
+  const files = allFiles.filter((file) => !shouldIgnoreEvidencePath(file, recipe));
   const redaction: ReadinessEvidenceRedaction = {
     ignored_file_count: ignoredFiles.length,
     ignored_files: ignoredFiles.slice(0, 80),
     redacted_occurrences: 0
   };
-  const excerptPaths = selectExcerptPaths(files, skill);
+  const excerptPaths = selectExcerptPaths(files, recipe);
   return {
-    collection_skill: skill.name,
+    plugin: readinessPluginManifest.name,
+    evidence_recipe: recipe.name,
     redaction,
-    standard_expectations: skill.expectedStandards,
+    standard_expectations: recipe.expectedStandards,
     key_files: files.filter(isKeyFile).slice(0, 80),
     docs: files.filter(isDocFile).slice(0, 80),
     standards: files.filter(isStandardsFile).slice(0, 80),
@@ -76,12 +76,12 @@ export function collectReadinessEvidence(
     package_managers: files.filter(isPackageManagerFile),
     likely_entrypoints: files.filter(isLikelyEntrypoint).slice(0, 80),
     excerpts: excerptPaths.map((file) =>
-      readExcerpt(repoPath, file, skill.maxExcerptBytes, redaction)
+      readExcerpt(repoPath, file, recipe.maxExcerptBytes, redaction)
     ),
     searches: Object.fromEntries(
-      skill.searchQueries.map((query) => [
+      recipe.searchQueries.map((query) => [
         query.name,
-        searchFiles(repoPath, files, query.query, skill.maxSearchResultsPerQuery, redaction)
+        searchFiles(repoPath, files, query.query, recipe.maxSearchResultsPerQuery, redaction)
       ])
     )
   };
@@ -106,8 +106,8 @@ function walkFiles(root: string): string[] {
   return files.sort();
 }
 
-function selectExcerptPaths(files: string[], skill: ReadinessCollectionSkill): string[] {
-  const selected = skill.preferredExcerptPaths.filter((file) => files.includes(file));
+function selectExcerptPaths(files: string[], recipe: ReadinessEvidenceRecipe): string[] {
+  const selected = recipe.preferredExcerptPaths.filter((file) => files.includes(file));
   if (selected.length >= 8) return selected.slice(0, 12);
   const markdownDocs = files.filter(isDocFile).slice(0, 12 - selected.length);
   return [...new Set([...selected, ...markdownDocs])].slice(0, 12);
@@ -160,8 +160,8 @@ function safeReadText(absolutePath: string): string | undefined {
   return raw.toString("utf8");
 }
 
-function shouldIgnoreEvidencePath(file: string, skill: ReadinessCollectionSkill): boolean {
-  return skill.ignoredPathPatterns.some((pattern) => matchesGlob(file, pattern));
+function shouldIgnoreEvidencePath(file: string, recipe: ReadinessEvidenceRecipe): boolean {
+  return recipe.ignoredPathPatterns.some((pattern) => matchesGlob(file, pattern));
 }
 
 function matchesGlob(file: string, pattern: string): boolean {

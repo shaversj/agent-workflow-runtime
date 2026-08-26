@@ -3,8 +3,8 @@ import path from "node:path";
 
 import { Type, type Static } from "typebox";
 
-import { collectReadinessEvidence, type ReadinessEvidence } from "../collection/readiness.js";
-import { readinessCollectionSkill } from "../skills/readiness-collection.js";
+import { gatherReadinessEvidence, type ReadinessEvidence } from "../plugins/readiness/evidence.js";
+import { readinessEvidenceRecipe } from "../plugins/readiness/evidence-recipe.js";
 import type { ToolContext, WorkflowTool } from "./types.js";
 
 const ignoredDirs = new Set([
@@ -51,10 +51,10 @@ export const repoSummaryTool: WorkflowTool<typeof RepoSummaryParams, ReadinessEv
     "Return a compact evidence packet for readiness interpretation: key files, docs, standards, tests, CI, package files, and excerpts from the most important text files.",
   parameters: RepoSummaryParams,
   execute(params: RepoSummaryParamsType, context: ToolContext) {
-    const result = collectReadinessEvidence(context.repoPath, {
-      ...readinessCollectionSkill,
+    const result = gatherReadinessEvidence(context.repoPath, {
+      ...readinessEvidenceRecipe,
       name: "repo-summary-tool",
-      maxExcerptBytes: params.max_excerpt_bytes ?? readinessCollectionSkill.maxExcerptBytes
+      maxExcerptBytes: params.max_excerpt_bytes ?? readinessEvidenceRecipe.maxExcerptBytes
     });
     return {
       result,

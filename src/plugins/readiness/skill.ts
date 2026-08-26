@@ -6,7 +6,7 @@ Rules:
 - Do not ask to edit files, commit, push, open pull requests, or mutate external systems.
 - Treat repository evidence as read-only.
 - Do not invent findings. Tie every issue to observed files, missing files, or search results.
-- Collection is deterministic. Interpretation is your responsibility.
+- Evidence gathering is deterministic. Interpretation is your responsibility.
 - Missing optional standards may not be needed. Say that explicitly.
 - Use only the evidence packet. Tools are unavailable.
 
