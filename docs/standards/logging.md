@@ -13,10 +13,12 @@ Configure logging centrally in `src/logger.ts`.
 The shared logger should support:
 
 - `LOG_LEVEL`: defaults to `warn`.
-- `LOG_FORMAT`: `json` by default, with an optional human-readable local format when configured.
+- `LOG_FORMAT`: `json` by default. Use `pretty` for local development through the official `pino-pretty` formatter.
 - Pino redaction for secret-shaped fields such as `api_key`, `apiKey`, `token`, `secret`, `password`, `authorization`, and nested equivalents.
 
 Do not configure Pino in individual modules. Add new configuration in `src/logger.ts` so CLI, harness, plugin, workflow, and tool code share the same behavior.
+
+Keep JSON as the default format for machine consumption. Pretty logs are for local terminal use only.
 
 ## Event Shape
 

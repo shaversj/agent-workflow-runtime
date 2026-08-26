@@ -62,8 +62,9 @@ export async function runSweepWorkflow(
     model_provider: MODEL_PROVIDER,
     model: modelName
   };
+  const workflowLogger = logger.child(workflowContext);
 
-  logger.info({ ...workflowContext, timeout_ms: timeoutMs }, "readiness_sweep.started");
+  workflowLogger.info({ timeout_ms: timeoutMs }, "readiness_sweep.started");
   emitProgress(options.onProgress, {
     type: "started",
     runId: runStore.run.id,
@@ -111,8 +112,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       reportPath,
       calls
     });
-    logger.warn(
-      { ...workflowContext, status: "skipped", reason: `missing_${MINIMAX_API_KEY_ENV}` },
+    workflowLogger.warn(
+      { status: "skipped", reason: `missing_${MINIMAX_API_KEY_ENV}` },
       "readiness_sweep.skipped"
     );
     return {
@@ -145,9 +146,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       timeoutMs,
       onProgress: options.onProgress
     });
-    logger.info(
+    workflowLogger.info(
       {
-        ...workflowContext,
         model_provider: harnessModel.modelProvider,
         model_runtime: harnessModel.modelRuntime,
         token_count: interpretation.usage.totalTokens
@@ -156,9 +156,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     );
   } catch (error) {
     workflowError = error instanceof Error ? error.message : String(error);
-    logger.error(
+    workflowLogger.error(
       {
-        ...workflowContext,
         err: error,
         error_type: error instanceof Error ? error.name : typeof error,
         error: workflowError
@@ -180,9 +179,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     emitProgress(options.onProgress, { type: "report_submitted", reportPath });
   } else if (!workflowError) {
     workflowError = "interpretation_returned_no_text";
-    logger.error(
+    workflowLogger.error(
       {
-        ...workflowContext,
         error_type: "EmptyModelResponse",
         error: workflowError
       },
@@ -212,7 +210,7 @@ ${workflowError ?? "No explicit error was recorded."}`
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
   }
-  logger.info({ ...workflowContext, report_path: reportPath }, "readiness_sweep.report_written");
+  workflowLogger.info({ report_path: reportPath }, "readiness_sweep.report_written");
 
   completeWorkflowRun({
     repoPath: absoluteRepoPath,
@@ -228,9 +226,8 @@ ${workflowError ?? "No explicit error was recorded."}`
     calls
   });
 
-  logger.info(
+  workflowLogger.info(
     {
-      ...workflowContext,
       report_path: reportPath,
       status,
       token_count: usage.totalTokens,

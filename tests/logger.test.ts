@@ -41,10 +41,10 @@ describe("logger", () => {
 
     const output = lines.join("");
 
-    expect(output).toContain("info");
+    expect(output).toContain("INFO");
     expect(output).toContain("readiness_sweep.started");
-    expect(output).toContain('workflow_name="readiness_sweep"');
-    expect(output).toContain("run_id=123");
+    expect(output).toContain('workflow_name: "readiness_sweep"');
+    expect(output).toContain("run_id: 123");
   });
 
   it("preserves error type context for failure logs", () => {
