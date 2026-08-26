@@ -4,7 +4,7 @@
 
 Use `structlog` for application logging. When the first runtime logging code is
 added, add `structlog` as a runtime dependency and configure it in one shared
-module before logging from CLI, API, or workflow code.
+module before logging from CLI, harness, or workflow code.
 
 Prefer `structlog.stdlib.get_logger(__name__)` at module scope so application
 logs integrate with Python's standard logging handlers. Configure processors in
@@ -50,9 +50,9 @@ For readiness sweeps, useful bound fields include:
 
 Do not bind secrets, tokens, private keys, or full file contents.
 
-Use `structlog.contextvars` for request-scoped or run-scoped context when a
-single execution crosses API handlers, workflow functions, and helper modules.
-Clear context variables at the start of each independent request or sweep.
+Use `structlog.contextvars` for run-scoped context when a single execution
+crosses CLI, harness, workflow, and helper modules. Clear context variables at
+the start of each independent sweep.
 
 ## Levels
 

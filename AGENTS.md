@@ -12,7 +12,6 @@ The first version is intentionally narrow: assess repository readiness using rea
 
 - Use Python 3.13.
 - Use `uv` for dependency management.
-- Use FastAPI for the service boundary.
 - Use Typer for CLI commands.
 - Use SQLModel for persisted models.
 - Use Alembic for every schema change.
@@ -35,7 +34,6 @@ make test
 make typecheck
 make check
 make sweep REPO=/path/to/repo
-make dev
 ```
 
 ## Database Rules
@@ -63,10 +61,10 @@ make dev
 
 ## Coding Guidance
 
-- Keep workflow logic reusable from both the CLI and FastAPI.
+- Keep workflow logic reusable from the CLI and tests.
 - Prefer deterministic checks before adding LLM judgment.
 - Keep tasks small, explicit, and evidence-backed.
-- Tests should verify behavior at command, API, database, and report boundaries.
+- Tests should verify behavior at command, harness tool, database, and report boundaries.
 
 ## Standards Reference
 
@@ -77,7 +75,6 @@ Consult these standards when making changes:
 - [Dependency Management](docs/standards/dependency-management.md)
 - [Testing](docs/standards/testing.md)
 - [Database](docs/standards/database.md)
-- [API](docs/standards/api.md)
 - [CLI and Reports](docs/standards/cli-and-reports.md)
 - [Logging](docs/standards/logging.md)
 - [Security and Privacy](docs/standards/security-and-privacy.md)

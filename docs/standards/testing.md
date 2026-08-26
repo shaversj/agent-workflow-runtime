@@ -5,8 +5,8 @@
 Tests should prove behavior at the boundaries Agent Ops Kit exposes:
 
 - CLI commands and output behavior
-- FastAPI request and response behavior
 - readiness check classification
+- harness tool contracts and routing
 - database persistence and migration-sensitive flows
 - Markdown report contents and artifact paths
 

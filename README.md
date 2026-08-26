@@ -48,12 +48,6 @@ The sweep writes local output inside the inspected repository:
   reports/
 ```
 
-Start the API during development:
-
-```bash
-make dev
-```
-
 ## Validation
 
 ```bash

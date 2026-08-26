@@ -24,7 +24,7 @@ full relevant gate:
 - Documentation-only changes: inspect links and formatting manually.
 - Python behavior changes: run focused tests first, then `make check`.
 - Database changes: run migration generation/review plus `make check`.
-- CLI/API behavior changes: run tests that exercise the public boundary, then
+- CLI or harness behavior changes: run tests that exercise the public boundary, then
   `make check`.
 
 If a check cannot be run, record the reason and the risk clearly in the handoff.
@@ -37,7 +37,7 @@ Update `README.md` when changes affect:
 - common commands
 - project structure
 - development workflow
-- user-facing CLI or API behavior
+- user-facing CLI behavior
 
 Keep `AGENTS.md` focused on agent instructions. Put reusable project standards
 under `docs/standards/`.
