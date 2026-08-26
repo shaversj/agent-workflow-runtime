@@ -2,23 +2,23 @@
 
 ## Project Overview
 
-Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through explicit, auditable tools.
+Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through deterministic collection, explicit skills, and auditable reports.
 
-The default workflow runs a pi-agent-core readiness sweep. It loads a skill prompt, exposes registered TypeBox tools for repository inspection and report submission, records the run locally, and writes a Markdown report.
+The default workflow runs a readiness sweep. It deterministically collects a compact, redacted evidence packet, loads a readiness interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
 
-The project should stay organized around three concepts:
+The project should stay organized around four concepts:
 
-- `tools/`: low-level capabilities with TypeBox input/output contracts
+- `collection/`: deterministic, secret-safe evidence collection
 - `skills/`: durable prompts and instructions for agent behavior
-- `workflows/`: orchestration that connects models, skills, tools, persistence, and CLI commands
+- `tools/`: low-level TypeBox contracts and report helpers
+- `workflows/`: orchestration that connects collection, models, skills, persistence, and CLI commands
 
-Do not reintroduce a deterministic readiness checker as the main sweep path. The sweep is an interpretation workflow that uses tools directly.
+Do not reintroduce a deterministic readiness checker as the main sweep path. Collection can be deterministic, but findings and recommendations belong to the interpretation step.
 
 ## Technology Choices
 
 - Use TypeScript on Node.js 24.
 - Use `pnpm` for dependency management.
-- Use pi-agent-core for harness execution.
 - Use pi-ai's MiniMax provider for the default model path.
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.
 - Use Drizzle for persisted SQLite tables.
@@ -47,10 +47,11 @@ make sweep REPO=/path/to/repo
 
 1. Bootstrap the environment with `make install`.
 2. Keep changes scoped to tools, skills, workflows, or persistence as appropriate.
-3. Add future tools as separate files under `src/tools/`, then register them in `src/tools/index.ts`.
-4. Run focused validation for the touched surface.
-5. Run `make check` before handoff when behavior changed.
-6. Update `README.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
+3. Add future deterministic collection behavior under `src/collection/` and keep collection recipes in `src/skills/`.
+4. Add future tools as separate files under `src/tools/` only when a workflow needs an explicit callable tool surface.
+5. Run focused validation for the touched surface.
+6. Run `make check` before handoff when behavior changed.
+7. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
 
 ## Safety Boundaries
 
@@ -58,6 +59,8 @@ make sweep REPO=/path/to/repo
 - Do not edit, commit, push, open PRs, delete files, or mutate external systems unless a user explicitly asks.
 - Store local sweep output under `.agent-readiness/` in the inspected repo.
 - Keep secret values out of reports, logs, fixtures, and tests.
+- Redact secret-shaped values before evidence is sent to an LLM.
+- Skip known sensitive files such as `.env`, credentials files, private keys, and local package auth files during collection.
 
 ## Standards Reference
 

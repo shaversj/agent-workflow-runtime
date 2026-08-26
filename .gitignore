@@ -3,6 +3,13 @@ node_modules/
 dist/
 coverage/
 
+# Python-generated files
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+
 # Local environment
 .env
 

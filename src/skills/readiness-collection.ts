@@ -2,6 +2,7 @@ export interface ReadinessCollectionSkill {
   name: string;
   maxExcerptBytes: number;
   maxSearchResultsPerQuery: number;
+  ignoredPathPatterns: string[];
   expectedStandards: { category: string; paths: string[] }[];
   preferredExcerptPaths: string[];
   searchQueries: { name: string; query: string }[];
@@ -11,6 +12,32 @@ export const readinessCollectionSkill: ReadinessCollectionSkill = {
   name: "readiness-collection",
   maxExcerptBytes: 3000,
   maxSearchResultsPerQuery: 20,
+  ignoredPathPatterns: [
+    ".env",
+    ".env.*",
+    "**/.env",
+    "**/.env.*",
+    ".npmrc",
+    "**/.npmrc",
+    ".pypirc",
+    "**/.pypirc",
+    "*.pem",
+    "**/*.pem",
+    "*.key",
+    "**/*.key",
+    "*.p12",
+    "**/*.p12",
+    "*.pfx",
+    "**/*.pfx",
+    "id_rsa",
+    "**/id_rsa",
+    "id_ed25519",
+    "**/id_ed25519",
+    "*credentials*",
+    "**/*credentials*",
+    "*secret*",
+    "**/*secret*"
+  ],
   expectedStandards: [
     { category: "testing", paths: ["docs/standards/testing.md", "standards/testing.md"] },
     { category: "database", paths: ["docs/standards/database.md", "standards/database.md"] },

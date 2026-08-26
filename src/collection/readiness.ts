@@ -32,6 +32,7 @@ export interface ReadinessEvidenceSearchResult {
 
 export interface ReadinessEvidence {
   collection_skill: string;
+  redaction: ReadinessEvidenceRedaction;
   standard_expectations: ReadinessCollectionSkill["expectedStandards"];
   key_files: string[];
   docs: string[];
@@ -44,14 +45,28 @@ export interface ReadinessEvidence {
   searches: Record<string, ReadinessEvidenceSearchResult[]>;
 }
 
+export interface ReadinessEvidenceRedaction {
+  ignored_file_count: number;
+  ignored_files: string[];
+  redacted_occurrences: number;
+}
+
 export function collectReadinessEvidence(
   repoPath: string,
   skill: ReadinessCollectionSkill = readinessCollectionSkill
 ): ReadinessEvidence {
-  const files = walkFiles(repoPath);
+  const allFiles = walkFiles(repoPath);
+  const ignoredFiles = allFiles.filter((file) => shouldIgnoreEvidencePath(file, skill));
+  const files = allFiles.filter((file) => !shouldIgnoreEvidencePath(file, skill));
+  const redaction: ReadinessEvidenceRedaction = {
+    ignored_file_count: ignoredFiles.length,
+    ignored_files: ignoredFiles.slice(0, 80),
+    redacted_occurrences: 0
+  };
   const excerptPaths = selectExcerptPaths(files, skill);
   return {
     collection_skill: skill.name,
+    redaction,
     standard_expectations: skill.expectedStandards,
     key_files: files.filter(isKeyFile).slice(0, 80),
     docs: files.filter(isDocFile).slice(0, 80),
@@ -60,11 +75,13 @@ export function collectReadinessEvidence(
     ci: files.filter(isCiFile).slice(0, 80),
     package_managers: files.filter(isPackageManagerFile),
     likely_entrypoints: files.filter(isLikelyEntrypoint).slice(0, 80),
-    excerpts: excerptPaths.map((file) => readExcerpt(repoPath, file, skill.maxExcerptBytes)),
+    excerpts: excerptPaths.map((file) =>
+      readExcerpt(repoPath, file, skill.maxExcerptBytes, redaction)
+    ),
     searches: Object.fromEntries(
       skill.searchQueries.map((query) => [
         query.name,
-        searchFiles(repoPath, files, query.query, skill.maxSearchResultsPerQuery)
+        searchFiles(repoPath, files, query.query, skill.maxSearchResultsPerQuery, redaction)
       ])
     )
   };
@@ -96,12 +113,17 @@ function selectExcerptPaths(files: string[], skill: ReadinessCollectionSkill): s
   return [...new Set([...selected, ...markdownDocs])].slice(0, 12);
 }
 
-function readExcerpt(repoPath: string, file: string, maxBytes: number): ReadinessEvidenceFile {
+function readExcerpt(
+  repoPath: string,
+  file: string,
+  maxBytes: number,
+  redaction: ReadinessEvidenceRedaction
+): ReadinessEvidenceFile {
   const raw = fs.readFileSync(path.join(repoPath, file));
   const truncated = raw.byteLength > maxBytes;
   return {
     path: file,
-    excerpt: raw.subarray(0, maxBytes).toString("utf8"),
+    excerpt: redactEvidenceText(raw.subarray(0, maxBytes).toString("utf8"), redaction),
     truncated
   };
 }
@@ -110,7 +132,8 @@ function searchFiles(
   repoPath: string,
   files: string[],
   query: string,
-  maxResults: number
+  maxResults: number,
+  redaction: ReadinessEvidenceRedaction
 ): ReadinessEvidenceSearchResult[] {
   const normalizedQuery = query.toLowerCase();
   const matches: ReadinessEvidenceSearchResult[] = [];
@@ -120,7 +143,11 @@ function searchFiles(
     const lines = content.split(/\r?\n/);
     for (const [index, line] of lines.entries()) {
       if (!line.toLowerCase().includes(normalizedQuery)) continue;
-      matches.push({ path: file, line: index + 1, text: line.trim().slice(0, 400) });
+      matches.push({
+        path: file,
+        line: index + 1,
+        text: redactEvidenceText(line, redaction).trim().slice(0, 400)
+      });
       if (matches.length >= maxResults) return matches;
     }
   }
@@ -131,6 +158,58 @@ function safeReadText(absolutePath: string): string | undefined {
   const raw = fs.readFileSync(absolutePath);
   if (raw.includes(0)) return undefined;
   return raw.toString("utf8");
+}
+
+function shouldIgnoreEvidencePath(file: string, skill: ReadinessCollectionSkill): boolean {
+  return skill.ignoredPathPatterns.some((pattern) => matchesGlob(file, pattern));
+}
+
+function matchesGlob(file: string, pattern: string): boolean {
+  const expression = pattern
+    .split("**")
+    .map((part) =>
+      part
+        .split("*")
+        .map((value) => value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
+        .join("[^/]*")
+    )
+    .join(".*");
+  return new RegExp(`^${expression}$`).test(file);
+}
+
+function redactEvidenceText(content: string, redaction: ReadinessEvidenceRedaction): string {
+  let redacted = content;
+  const patterns: { pattern: RegExp; replacement: string }[] = [
+    {
+      pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+      replacement: "[REDACTED_PRIVATE_KEY]"
+    },
+    {
+      pattern:
+        /^(\s*(?:export\s+)?[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL|PRIVATE[_-]?KEY|DATABASE_URL|DB_URL)[A-Z0-9_]*\s*=\s*)(.+)$/gim,
+      replacement: "$1[REDACTED]"
+    },
+    {
+      pattern:
+        /(["']?[\w.-]*(?:api[_-]?key|token|secret|password|credential|private[_-]?key)[\w.-]*["']?\s*:\s*["'])([^"',}]+)(["'])/gi,
+      replacement: "$1[REDACTED]$3"
+    },
+    {
+      pattern: /([a-z][a-z0-9+.-]*:\/\/)[^:\s/@]+:[^@\s/]+@/gi,
+      replacement: "$1[REDACTED_CREDENTIALS]@"
+    }
+  ];
+
+  for (const item of patterns) {
+    redaction.redacted_occurrences += countMatches(redacted, item.pattern);
+    redacted = redacted.replace(item.pattern, item.replacement);
+  }
+
+  return redacted;
+}
+
+function countMatches(content: string, pattern: RegExp): number {
+  return Array.from(content.matchAll(pattern)).length;
 }
 
 function isKeyFile(file: string): boolean {
