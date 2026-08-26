@@ -1,13 +1,7 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
+# Node-generated files
+node_modules/
 dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
+coverage/
 
 # Local agent readiness output
 .agent-readiness/

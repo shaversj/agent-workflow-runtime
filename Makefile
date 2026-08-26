@@ -1,28 +1,34 @@
-.PHONY: install format format-check lint test typecheck check sweep
+.PHONY: install format format-check lint test typecheck deadcode build check sweep
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
 HARNESS_FLAGS = --harness-model "$(HARNESS_MODEL)"
 
 install:
-	uv sync
+	pnpm install
 
 format:
-	uv run ruff format .
+	pnpm format
 
 format-check:
-	uv run ruff format --check .
+	pnpm format:check
 
 lint:
-	uv run ruff check .
+	pnpm lint
 
 test:
-	uv run pytest
+	pnpm test
 
 typecheck:
-	uv run mypy
+	pnpm typecheck
 
-check: format-check lint test typecheck
+deadcode:
+	pnpm deadcode
+
+build:
+	pnpm build
+
+check: format-check lint test typecheck build
 
 sweep:
-	uv run agent-ops sweep "$(REPO)" $(HARNESS_FLAGS)
+	pnpm sweep -- "$(REPO)" $(HARNESS_FLAGS)

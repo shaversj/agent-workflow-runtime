@@ -2,20 +2,15 @@
 
 ## Package Manager
 
-Use `uv` for Python dependency management and command execution. Prefer Makefile
-targets when they exist.
+Use `pnpm` for dependency management and command execution. Prefer Makefile targets when they exist.
 
 ## Adding Dependencies
 
-- Add runtime dependencies to `[project].dependencies` in `pyproject.toml`.
-- Add test, lint, typing, or development-only dependencies to
-  `[dependency-groups].dev`.
-- Keep `uv.lock` in sync after dependency changes.
-- Do not add a dependency when the standard library or an existing dependency is
-  sufficient and clear.
+- Add runtime dependencies to `dependencies` in `package.json`.
+- Add test, lint, typing, or development-only dependencies to `devDependencies`.
+- Keep `pnpm-lock.yaml` in sync after dependency changes.
+- Do not add a dependency when Node.js or an existing dependency is sufficient and clear.
 
-## Python Version
+## Runtime Version
 
-The project currently targets Python 3.13. Keep `requires-python`,
-`tool.mypy.python_version`, and local runtime assumptions aligned when that
-changes.
+The project targets Node.js 24. Keep `package.json`, CI, and local runtime assumptions aligned when that changes.

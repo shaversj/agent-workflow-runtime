@@ -5,9 +5,9 @@
 Tests should prove behavior at the boundaries Agent Ops Kit exposes:
 
 - CLI commands and output behavior
-- readiness check classification
-- harness tool contracts and routing
-- database persistence and migration-sensitive flows
+- workflow behavior
+- tool contracts and routing
+- database persistence and schema-sensitive flows
 - Markdown report contents and artifact paths
 
 Prefer tests that exercise real project objects over tests that only mock local

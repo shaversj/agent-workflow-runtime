@@ -22,8 +22,8 @@ Before handing off code changes, run the smallest useful check first, then the
 full relevant gate:
 
 - Documentation-only changes: inspect links and formatting manually.
-- Python behavior changes: run focused tests first, then `make check`.
-- Database changes: run migration generation/review plus `make check`.
+- TypeScript behavior changes: run focused tests first, then `make check`.
+- Database changes: review Drizzle schema/bootstrap changes plus `make check`.
 - CLI or harness behavior changes: run tests that exercise the public boundary, then
   `make check`.
 
