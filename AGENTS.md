@@ -2,9 +2,11 @@
 
 ## Project Overview
 
-Agent Ops Kit is a task-centered toolkit for making software repositories easier and safer for AI agents to inspect, improve, and operate.
+Agent Ops Kit is a harness for running agent-facing repository operations through explicit, auditable tools.
 
-The first version is intentionally narrow: run a read-only repo readiness sweep, persist the result locally, and write a Markdown report.
+The default workflow runs a mini-swe-agent harness with a readiness tool profile. The harness can call registered tools such as `agent_ops_sweep`, records the run locally, and writes a Markdown report with deterministic findings, harness output, tool calls, and usage.
+
+The first version is intentionally narrow: assess repository readiness using read-only evidence, make the harness behavior inspectable, and keep future tool additions easy to understand.
 
 ## Technology Choices
 
