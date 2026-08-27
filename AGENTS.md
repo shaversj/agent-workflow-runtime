@@ -25,6 +25,7 @@ Do not reintroduce a deterministic readiness checker as the main sweep path. Evi
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.
 - Use Drizzle for persisted SQLite tables.
 - Use Pino for structured logging.
+- Use `discord.js` for the Discord bot surface.
 - Use ESLint, Prettier, Vitest, and `tsc` for validation.
 
 ## Environment Setup
@@ -43,6 +44,7 @@ make test
 make typecheck
 make check
 make sweep REPO=/path/to/repo
+make discord
 ```
 
 ## Development Workflow

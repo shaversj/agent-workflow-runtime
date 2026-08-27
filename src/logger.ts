@@ -12,6 +12,7 @@ const redactPaths = [
   "authorization",
   "headers.authorization",
   "env.MINIMAX_API_KEY",
+  "env.DISCORD_BOT_TOKEN",
   "args.api_key",
   "args.apiKey",
   "args.token",

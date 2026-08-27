@@ -28,6 +28,7 @@ export function createWorkflowRun(input: {
   modelRuntime: string;
   modelProvider: string;
   model: string;
+  sourceContext?: Record<string, unknown>;
 }) {
   const absoluteRepoPath = path.resolve(input.repoPath);
   const store = openStore(absoluteRepoPath);
@@ -84,7 +85,10 @@ export function createWorkflowRun(input: {
       taskId: task.id,
       provider: input.harnessProvider,
       model: input.model,
-      context: { repoPath: absoluteRepoPath }
+      context: {
+        repoPath: absoluteRepoPath,
+        ...(input.sourceContext ? { source: input.sourceContext } : {})
+      }
     })
     .returning()
     .get();
@@ -100,7 +104,8 @@ export function createWorkflowRun(input: {
       harness_provider: input.harnessProvider,
       model_runtime: input.modelRuntime,
       model_provider: input.modelProvider,
-      model: input.model
+      model: input.model,
+      source: input.sourceContext?.source
     },
     "workflow_run.created"
   );

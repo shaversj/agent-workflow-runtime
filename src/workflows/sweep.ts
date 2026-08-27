@@ -25,12 +25,22 @@ const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
 const WORKFLOW_LOG_NAME = "readiness_sweep";
 
+interface WorkflowSourceContext {
+  source: "cli" | "discord" | "slack";
+  guildId?: string;
+  channelId?: string;
+  threadId?: string;
+  messageId?: string;
+  userId?: string;
+}
+
 export async function runSweepWorkflow(
   repoPath: string,
   options: {
     model?: string;
     timeoutMs?: number;
     onProgress?: (event: WorkflowProgressEvent) => void;
+    sourceContext?: WorkflowSourceContext;
   } = {}
 ): Promise<WorkflowResult> {
   const absoluteRepoPath = path.resolve(repoPath);
@@ -45,7 +55,8 @@ export async function runSweepWorkflow(
     harnessProvider: DEFAULT_HARNESS_PROVIDER,
     modelRuntime: MODEL_RUNTIME,
     modelProvider: MODEL_PROVIDER,
-    model: modelName
+    model: modelName,
+    sourceContext: options.sourceContext ? { ...options.sourceContext } : undefined
   });
   runStore.sqlite.close();
 
@@ -60,7 +71,12 @@ export async function runSweepWorkflow(
     harness_provider: DEFAULT_HARNESS_PROVIDER,
     model_runtime: MODEL_RUNTIME,
     model_provider: MODEL_PROVIDER,
-    model: modelName
+    model: modelName,
+    source: options.sourceContext?.source,
+    source_channel_id: options.sourceContext?.channelId,
+    source_thread_id: options.sourceContext?.threadId,
+    source_message_id: options.sourceContext?.messageId,
+    source_user_id: options.sourceContext?.userId
   };
   const workflowLogger = logger.child(workflowContext);
 

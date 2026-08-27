@@ -34,6 +34,14 @@ make sweep REPO=/path/to/repo
 
 The sweep still records a skipped report when `MINIMAX_API_KEY` is not configured.
 
+Run the Discord bot surface:
+
+```bash
+make discord
+```
+
+See [docs/discord.md](docs/discord.md) for bot token, allowlist, intent, and command setup.
+
 Sweep output is written inside the inspected repository:
 
 ```text

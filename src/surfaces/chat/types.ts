@@ -1,4 +1,4 @@
-import type { WorkflowResult } from "../../harness/types.js";
+import type { WorkflowProgressEvent, WorkflowResult } from "../../harness/types.js";
 
 export type ChatPlatform = "discord" | "slack";
 export type ChatWorkflowName = "readiness_sweep";
@@ -37,6 +37,10 @@ export interface ChatRouterOptions {
   defaultRepoPath?: string;
   defaultModel?: string;
   defaultTimeoutMs?: number;
+}
+
+export interface ChatHandlerOptions extends ChatRouterOptions {
+  onProgress?: (event: WorkflowProgressEvent) => void;
 }
 
 export type ChatResponse =

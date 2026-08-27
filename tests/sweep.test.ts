@@ -56,6 +56,56 @@ describe("sweep workflow", () => {
       }
     }
   });
+
+  it("persists workflow source context on the run", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+
+    try {
+      const result = await runSweepWorkflow(repoPath, {
+        sourceContext: {
+          source: "discord",
+          guildId: "guild-1",
+          channelId: "channel-1",
+          threadId: "thread-1",
+          messageId: "message-1",
+          userId: "user-1"
+        }
+      });
+
+      const sqlite = new Database(path.join(repoPath, ".agent-readiness", "agent-ops.db"));
+      const row = sqlite.prepare("select context from run where id = ?").get(result.runId) as {
+        context: string;
+      };
+      const context = JSON.parse(row.context) as {
+        source: {
+          source: string;
+          guildId: string;
+          channelId: string;
+          threadId: string;
+          messageId: string;
+          userId: string;
+        };
+      };
+      expect(context.source).toEqual({
+        source: "discord",
+        guildId: "guild-1",
+        channelId: "channel-1",
+        threadId: "thread-1",
+        messageId: "message-1",
+        userId: "user-1"
+      });
+      sqlite.close();
+    } finally {
+      if (originalKey) {
+        process.env.MINIMAX_API_KEY = originalKey;
+      } else {
+        delete process.env.MINIMAX_API_KEY;
+      }
+    }
+  });
 });
 
 function createPythonEraDatabase(repoPath: string) {

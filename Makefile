@@ -1,4 +1,4 @@
-.PHONY: install format format-check lint test typecheck deadcode build check sweep
+.PHONY: install format format-check lint test typecheck deadcode build check sweep discord
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
@@ -36,3 +36,6 @@ check: format-check lint test typecheck build
 
 sweep:
 	pnpm sweep -- "$(REPO)" $(HARNESS_FLAGS)
+
+discord:
+	pnpm discord

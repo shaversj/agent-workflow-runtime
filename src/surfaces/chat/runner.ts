@@ -1,11 +1,11 @@
 import { logger } from "../../logger.js";
 import { runSweepWorkflow } from "../../workflows/sweep.js";
 import { routeChatMessage } from "./router.js";
-import type { ChatMessage, ChatResponse, ChatRouterOptions } from "./types.js";
+import type { ChatHandlerOptions, ChatMessage, ChatResponse } from "./types.js";
 
 export async function handleChatMessage(
   message: ChatMessage,
-  options: ChatRouterOptions = {}
+  options: ChatHandlerOptions = {}
 ): Promise<ChatResponse> {
   const intent = routeChatMessage(message, options);
   if (intent.kind === "clarify") {
@@ -28,7 +28,16 @@ export async function handleChatMessage(
 
   const result = await runSweepWorkflow(intent.repoPath, {
     model: intent.model,
-    timeoutMs: intent.timeoutMs
+    timeoutMs: intent.timeoutMs,
+    onProgress: options.onProgress,
+    sourceContext: {
+      source: message.platform,
+      guildId: message.workspaceId,
+      channelId: message.channelId,
+      threadId: message.threadId,
+      messageId: message.messageId,
+      userId: message.userId
+    }
   });
 
   chatLogger.info(

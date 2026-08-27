@@ -8,6 +8,11 @@ import {
   normalizeDiscordMessage,
   renderDiscordResponse
 } from "../src/surfaces/chat/discord/adapter.js";
+import {
+  createDiscordDuplicateGuard,
+  shouldAcceptDiscordMessage
+} from "../src/surfaces/chat/discord/bot.js";
+import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
 
@@ -114,5 +119,78 @@ describe("Discord chat surface", () => {
     expect(first?.content.length).toBeLessThanOrEqual(2000);
     expect(second?.content.length).toBeLessThanOrEqual(2000);
     expect(first?.replyToMessageId).toBe("message-1");
+  });
+
+  it("loads Discord bot guardrail config from environment variables", () => {
+    const config = loadDiscordBotConfig({
+      DISCORD_BOT_TOKEN: "token-value",
+      DISCORD_ALLOWED_GUILD_IDS: "guild-1, guild-2",
+      DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
+      DISCORD_DEFAULT_REPO_PATH: "/tmp/demo",
+      DISCORD_DEFAULT_MODEL: "MiniMax-M3",
+      DISCORD_TIMEOUT_MS: "1000",
+      DISCORD_ALLOW_DMS: "true"
+    });
+
+    expect(config.token).toBe("token-value");
+    expect([...config.allowedGuildIds]).toEqual(["guild-1", "guild-2"]);
+    expect([...config.allowedChannelIds]).toEqual(["channel-1"]);
+    expect(config.defaultRepoPath).toBe("/tmp/demo");
+    expect(config.defaultModel).toBe("MiniMax-M3");
+    expect(config.defaultTimeoutMs).toBe(1000);
+    expect(config.allowDms).toBe(true);
+  });
+
+  it("accepts only allowed Discord messages", () => {
+    const config = {
+      allowedGuildIds: new Set(["guild-1"]),
+      allowedChannelIds: new Set(["channel-1"]),
+      allowDms: false
+    };
+
+    expect(
+      shouldAcceptDiscordMessage(
+        {
+          isBot: false,
+          guildId: "guild-1",
+          channelId: "channel-1",
+          mentionedUserIds: new Set(["bot-1"]),
+          botUserId: "bot-1"
+        },
+        config
+      )
+    ).toBe(true);
+    expect(
+      shouldAcceptDiscordMessage(
+        {
+          isBot: false,
+          guildId: "guild-1",
+          channelId: "channel-1",
+          mentionedUserIds: new Set(),
+          botUserId: "bot-1"
+        },
+        config
+      )
+    ).toBe(false);
+    expect(
+      shouldAcceptDiscordMessage(
+        {
+          isBot: true,
+          guildId: "guild-1",
+          channelId: "channel-1",
+          mentionedUserIds: new Set(["bot-1"]),
+          botUserId: "bot-1"
+        },
+        config
+      )
+    ).toBe(false);
+  });
+
+  it("deduplicates repeated Discord message IDs", () => {
+    const guard = createDiscordDuplicateGuard();
+
+    expect(guard.claim("message-1")).toBe(true);
+    expect(guard.claim("message-1")).toBe(false);
+    expect(guard.claim("message-2")).toBe(true);
   });
 });

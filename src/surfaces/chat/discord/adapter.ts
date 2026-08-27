@@ -2,7 +2,7 @@ import type { ChatMessage, ChatResponse } from "../types.js";
 
 const DISCORD_MESSAGE_LIMIT = 2000;
 
-interface DiscordInboundMessage {
+export interface DiscordInboundMessage {
   guildId?: string;
   channelId: string;
   threadId?: string;
