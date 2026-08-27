@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import type { ChatMessage, ChatResponse } from "../types.js";
 
 const DISCORD_MESSAGE_LIMIT = 2000;
@@ -13,11 +16,17 @@ export interface DiscordInboundMessage {
   isBot?: boolean;
 }
 
-interface DiscordOutboundMessage {
+interface DiscordOutboundAttachment {
+  path: string;
+  name: string;
+}
+
+export interface DiscordOutboundMessage {
   channelId: string;
   threadId?: string;
   replyToMessageId?: string;
   content: string;
+  attachments?: DiscordOutboundAttachment[];
 }
 
 export function normalizeDiscordMessage(input: DiscordInboundMessage): ChatMessage | undefined {
@@ -39,11 +48,13 @@ export function renderDiscordResponse(
   destination: Pick<DiscordInboundMessage, "channelId" | "threadId" | "messageId">
 ): DiscordOutboundMessage[] {
   const content = response.text.trim() || "Done.";
-  return chunkDiscordMessage(content).map((chunk) => ({
+  const attachments = discordAttachmentsForResponse(response);
+  return chunkDiscordMessage(content).map((chunk, index) => ({
     channelId: destination.channelId,
     threadId: destination.threadId,
     replyToMessageId: destination.messageId,
-    content: chunk
+    content: chunk,
+    attachments: index === 0 ? attachments : undefined
   }));
 }
 
@@ -65,6 +76,42 @@ function chunkDiscordMessage(content: string): string[] {
   }
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+function discordAttachmentsForResponse(response: ChatResponse): DiscordOutboundAttachment[] {
+  if (response.kind !== "message") return [];
+  const repoPath = response.result?.repoPath;
+  const reportPath = response.result?.reportPath;
+  if (!repoPath || !reportPath) return [];
+  const safeReportPath = safeReportAttachmentPath(repoPath, reportPath);
+  if (!safeReportPath) return [];
+  return [
+    {
+      path: safeReportPath,
+      name: path.basename(safeReportPath)
+    }
+  ];
+}
+
+function safeReportAttachmentPath(repoPath: string, reportPath: string): string | undefined {
+  try {
+    const realRepoPath = fs.realpathSync(path.resolve(repoPath));
+    const reportDir = path.join(realRepoPath, ".agent-readiness", "reports");
+    if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) return undefined;
+    const realReportDir = fs.realpathSync(reportDir);
+    const reportDirRelativePath = path.relative(realRepoPath, realReportDir);
+    if (reportDirRelativePath.startsWith("..") || path.isAbsolute(reportDirRelativePath)) {
+      return undefined;
+    }
+    const realReportPath = fs.realpathSync(reportPath);
+    const relativePath = path.relative(realReportDir, realReportPath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return undefined;
+    if (!realReportPath.endsWith(".md")) return undefined;
+    if (!fs.statSync(realReportPath).isFile()) return undefined;
+    return realReportPath;
+  } catch {
+    return undefined;
+  }
 }
 
 function bestSplitIndex(content: string): number {

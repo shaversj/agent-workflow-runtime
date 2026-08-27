@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { toPiAgentTools } from "../harness/pi-tools.js";
@@ -21,6 +24,7 @@ import { DEFAULT_HARNESS_MODEL } from "./sweep.js";
 const CHAT_AGENT_WORKFLOW_NAME = "chat_agent";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_CHAT_AGENT_TIMEOUT_MS = 120_000;
+const REPORT_SUMMARY_MAX_CHARS = 900;
 
 export async function runChatAgentWorkflow(
   message: ChatMessage,
@@ -289,15 +293,57 @@ function buildChatAgentPrompt(message: ChatMessage, options: ChatHandlerOptions)
 }
 
 function renderWorkflowSummary(result: WorkflowResult): string {
+  const reportName = path.basename(result.reportPath);
   const lines = [
     `Readiness sweep ${result.status} for ${result.repoPath}.`,
     `Run: ${result.runId}`,
-    `Report: ${result.reportPath}`,
-    `Tool calls: ${result.toolCalls.length}`,
-    `Tokens: ${result.usage.totalTokens}`
+    `Tokens: ${result.usage.totalTokens}`,
+    `Report: ${reportName}`
   ];
+  const reportSummary = readReportSummary(result.reportPath);
+  if (reportSummary) lines.push("", "Summary:", reportSummary);
+  lines.push("", "Full report:", result.reportPath);
+  lines.push("", `Tool calls: ${result.toolCalls.length}`);
   if (result.error) lines.push(`Error: ${result.error}`);
   return lines.join("\n");
+}
+
+function readReportSummary(reportPath: string): string | undefined {
+  if (!fs.existsSync(reportPath) || !fs.statSync(reportPath).isFile()) return undefined;
+  const markdown = fs.readFileSync(reportPath, "utf8");
+  const section =
+    extractMarkdownSection(markdown, "Overall Judgment") ?? firstUsefulMarkdown(markdown);
+  if (!section) return undefined;
+  return truncateReportSummary(section.trim(), REPORT_SUMMARY_MAX_CHARS);
+}
+
+function extractMarkdownSection(markdown: string, heading: string): string | undefined {
+  const escapedHeading = escapeRegExp(heading);
+  const sectionPattern = new RegExp(
+    String.raw`(^|\n)##\s+${escapedHeading}\s*\n([\s\S]*?)(?=\n##\s+|\n#\s+|$)`,
+    "i"
+  );
+  const match = markdown.match(sectionPattern);
+  const body = match?.[2]?.trim();
+  return body || undefined;
+}
+
+function firstUsefulMarkdown(markdown: string): string | undefined {
+  const lines = markdown
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith("# Agent Readiness Sweep"))
+    .filter((line) => !line.startsWith("Repository:"))
+    .filter((line) => !line.startsWith("This report was generated"));
+  const firstSectionIndex = lines.findIndex((line) => /^##\s+/.test(line));
+  const usefulLines = firstSectionIndex >= 0 ? lines.slice(firstSectionIndex + 1) : lines;
+  return usefulLines.find((line) => !line.startsWith("#"));
+}
+
+function truncateReportSummary(summary: string, maxChars: number): string {
+  if (summary.length <= maxChars) return summary;
+  return `${summary.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function renderToolSummary(output: RegisteredToolResult<unknown>): string {

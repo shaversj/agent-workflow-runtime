@@ -1,4 +1,12 @@
-import { ChannelType, Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
+import {
+  AttachmentBuilder,
+  ChannelType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  Partials,
+  type Message
+} from "discord.js";
 
 import type { WorkflowProgressEvent } from "../../../harness/types.js";
 import { logger } from "../../../logger.js";
@@ -6,6 +14,7 @@ import { handleChatMessage } from "../runner.js";
 import {
   normalizeDiscordMessage,
   renderDiscordResponse,
+  type DiscordOutboundMessage,
   type DiscordInboundMessage
 } from "./adapter.js";
 import type { DiscordBotConfig } from "./config.js";
@@ -114,10 +123,38 @@ async function handleDiscordMessage(
     }
   });
 
-  await updateDiscordStatus(statusMessage, "Request finished.");
-  const replies = renderDiscordResponse(response, inbound);
-  for (const reply of replies) {
-    await message.reply(reply.content);
+  try {
+    const replies = renderDiscordResponse(response, inbound);
+    for (const reply of replies) {
+      await sendDiscordReply(message, reply);
+    }
+  } finally {
+    await deleteDiscordStatus(statusMessage);
+  }
+}
+
+export async function sendDiscordReply(
+  message: Pick<Message, "id" | "reply">,
+  reply: Pick<DiscordOutboundMessage, "content" | "attachments">
+) {
+  const files = reply.attachments?.map(
+    (attachment) => new AttachmentBuilder(attachment.path, { name: attachment.name })
+  );
+  try {
+    await message.reply({ content: reply.content, files });
+  } catch (error) {
+    if (!files?.length) throw error;
+    logger.warn(
+      {
+        surface: "discord",
+        message_id: message.id,
+        attachment_count: files.length,
+        error_type: error instanceof Error ? error.name : typeof error,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      "discord_bot.attachment_reply_failed"
+    );
+    await message.reply({ content: reply.content });
   }
 }
 
@@ -211,6 +248,22 @@ async function updateDiscordStatus(message: Message, content: string | undefined
         error: error instanceof Error ? error.message : String(error)
       },
       "discord_bot.status_update_failed"
+    );
+  }
+}
+
+async function deleteDiscordStatus(message: Message) {
+  try {
+    await message.delete();
+  } catch (error) {
+    logger.warn(
+      {
+        surface: "discord",
+        message_id: message.id,
+        error_type: error instanceof Error ? error.name : typeof error,
+        error: error instanceof Error ? error.message : String(error)
+      },
+      "discord_bot.status_delete_failed"
     );
   }
 }

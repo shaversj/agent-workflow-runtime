@@ -10,6 +10,7 @@ import {
 } from "../src/surfaces/chat/discord/adapter.js";
 import {
   createDiscordDuplicateGuard,
+  sendDiscordReply,
   shouldAcceptDiscordMessage
 } from "../src/surfaces/chat/discord/bot.js";
 import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
@@ -94,6 +95,9 @@ describe("Discord chat surface", () => {
       expect(response.kind).toBe("message");
       expect(response.text).toContain("Readiness sweep skipped");
       expect(response.text).toContain("missing_minimax_api_key");
+      expect(response.text).toContain("Summary:");
+      expect(response.text).toContain("Repository evidence was collected");
+      expect(response.text).toContain("Full report:");
     } finally {
       if (originalKey) {
         process.env.MINIMAX_API_KEY = originalKey;
@@ -178,6 +182,153 @@ describe("Discord chat surface", () => {
     expect(first?.content.length).toBeLessThanOrEqual(2000);
     expect(second?.content.length).toBeLessThanOrEqual(2000);
     expect(first?.replyToMessageId).toBe("message-1");
+  });
+
+  it("attaches the Markdown report to a Discord sweep response", () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+    const [reply] = renderDiscordResponse(
+      {
+        kind: "message",
+        status: "completed",
+        text: "Readiness sweep completed.",
+        result: {
+          repoPath,
+          runId: 1,
+          reportPath,
+          status: "completed",
+          provider: "agent-ops-kit",
+          model: "MiniMax-M3",
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          toolCalls: []
+        }
+      },
+      {
+        channelId: "channel-1",
+        messageId: "message-1"
+      }
+    );
+
+    expect(reply?.attachments).toEqual([{ path: fs.realpathSync(reportPath), name: "latest.md" }]);
+  });
+
+  it("does not attach reports outside the readiness report directory", () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    fs.mkdirSync(path.join(repoPath, ".agent-readiness", "reports"), { recursive: true });
+    const outsideReportPath = path.join(os.tmpdir(), `outside-${Date.now()}.md`);
+    fs.writeFileSync(outsideReportPath, "# Outside\n");
+    const [reply] = renderDiscordResponse(
+      {
+        kind: "message",
+        status: "completed",
+        text: "Readiness sweep completed.",
+        result: {
+          repoPath,
+          runId: 1,
+          reportPath: outsideReportPath,
+          status: "completed",
+          provider: "agent-ops-kit",
+          model: "MiniMax-M3",
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          toolCalls: []
+        }
+      },
+      {
+        channelId: "channel-1",
+        messageId: "message-1"
+      }
+    );
+
+    expect(reply?.attachments).toEqual([]);
+  });
+
+  it("does not attach symlinked reports that escape the readiness report directory", () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    const outsideReportPath = path.join(os.tmpdir(), `outside-${Date.now()}.md`);
+    fs.writeFileSync(outsideReportPath, "# Outside\n");
+    const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+    fs.mkdirSync(reportDir, { recursive: true });
+    const symlinkPath = path.join(reportDir, "link.md");
+    fs.symlinkSync(outsideReportPath, symlinkPath);
+    const [reply] = renderDiscordResponse(
+      {
+        kind: "message",
+        status: "completed",
+        text: "Readiness sweep completed.",
+        result: {
+          repoPath,
+          runId: 1,
+          reportPath: symlinkPath,
+          status: "completed",
+          provider: "agent-ops-kit",
+          model: "MiniMax-M3",
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          toolCalls: []
+        }
+      },
+      {
+        channelId: "channel-1",
+        messageId: "message-1"
+      }
+    );
+
+    expect(reply?.attachments).toEqual([]);
+  });
+
+  it("does not attach reports when the readiness report directory escapes the repo", () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    const escapedReportDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-reports-"));
+    const reportPath = path.join(escapedReportDir, "latest.md");
+    fs.writeFileSync(reportPath, "# Outside\n");
+    const readinessDir = path.join(repoPath, ".agent-readiness");
+    fs.mkdirSync(readinessDir, { recursive: true });
+    fs.symlinkSync(escapedReportDir, path.join(readinessDir, "reports"));
+    const [reply] = renderDiscordResponse(
+      {
+        kind: "message",
+        status: "completed",
+        text: "Readiness sweep completed.",
+        result: {
+          repoPath,
+          runId: 1,
+          reportPath,
+          status: "completed",
+          provider: "agent-ops-kit",
+          model: "MiniMax-M3",
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          toolCalls: []
+        }
+      },
+      {
+        channelId: "channel-1",
+        messageId: "message-1"
+      }
+    );
+
+    expect(reply?.attachments).toEqual([]);
+  });
+
+  it("retries Discord replies without attachments when file upload fails", async () => {
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+    const sentReplies: unknown[] = [];
+    const message = {
+      id: "message-1",
+      reply(payload: unknown) {
+        sentReplies.push(payload);
+        if (sentReplies.length === 1) throw new Error("upload failed");
+        return Promise.resolve();
+      }
+    };
+
+    await sendDiscordReply(message as never, {
+      content: "Readiness sweep completed.",
+      attachments: [{ path: reportPath, name: "latest.md" }]
+    });
+
+    expect(sentReplies).toHaveLength(2);
+    expect((sentReplies[0] as { files?: unknown[] }).files).toHaveLength(1);
+    expect(sentReplies[1]).toEqual({ content: "Readiness sweep completed." });
   });
 
   it("loads Discord bot guardrail config from environment variables", () => {

@@ -48,4 +48,8 @@ If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 @agent-ops sweep this repo
 ```
 
+Completed sweeps post a compact Markdown reply with the run ID, token count, report filename,
+first useful report summary, and full report path. When the report file is available on the
+bot host, the Discord reply also attaches the generated `.md` report.
+
 The Discord surface exposes a small set of readiness plugin tools to the chat-agent workflow. Pi lets the model choose among those tools, then Agent Ops Kit executes the selected tool locally. The current readiness tool set can run a sweep, find the latest report, or read a report. Repeated delivery of the same Discord message ID is ignored in memory to avoid duplicate local runs.
