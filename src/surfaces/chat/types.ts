@@ -1,4 +1,5 @@
 import type { WorkflowProgressEvent, WorkflowResult } from "../../harness/types.js";
+import type { RegisteredTool } from "../../tools/registry.js";
 
 export type ChatPlatform = "discord" | "slack";
 export type ChatWorkflowName = "readiness_sweep";
@@ -40,6 +41,7 @@ export interface ChatRouterOptions {
 }
 
 export interface ChatHandlerOptions extends ChatRouterOptions {
+  availableTools?: RegisteredTool[];
   onProgress?: (event: WorkflowProgressEvent) => void;
 }
 

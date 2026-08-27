@@ -104,7 +104,7 @@ async function handleDiscordMessage(
     "discord_bot.message_accepted"
   );
 
-  const statusMessage = await message.reply("Accepted. Running readiness sweep...");
+  const statusMessage = await message.reply("Accepted. Routing request...");
   const response = await handleChatMessage(chatMessage, {
     defaultRepoPath: botConfig.defaultRepoPath,
     defaultModel: botConfig.defaultModel,
@@ -114,7 +114,7 @@ async function handleDiscordMessage(
     }
   });
 
-  await updateDiscordStatus(statusMessage, "Readiness sweep finished.");
+  await updateDiscordStatus(statusMessage, "Request finished.");
   const replies = renderDiscordResponse(response, inbound);
   for (const reply of replies) {
     await message.reply(reply.content);

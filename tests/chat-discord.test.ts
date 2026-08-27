@@ -103,6 +103,65 @@ describe("Discord chat surface", () => {
     }
   });
 
+  it("returns the latest report without MiniMax credentials", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+
+    try {
+      const message = normalizeDiscordMessage({
+        channelId: "channel-1",
+        messageId: "message-1",
+        authorId: "user-1",
+        content: "where is the latest readiness report?"
+      });
+
+      expect(message).toBeDefined();
+      const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain(reportPath);
+      expect(response.text).not.toContain("Readiness sweep skipped");
+    } finally {
+      if (originalKey) {
+        process.env.MINIMAX_API_KEY = originalKey;
+      } else {
+        delete process.env.MINIMAX_API_KEY;
+      }
+    }
+  });
+
+  it("reads the latest report without MiniMax credentials", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+    writeReport(repoPath, "latest.md", "# Latest Report\n\nReady.\n");
+
+    try {
+      const message = normalizeDiscordMessage({
+        channelId: "channel-1",
+        messageId: "message-1",
+        authorId: "user-1",
+        content: "read the latest readiness report"
+      });
+
+      expect(message).toBeDefined();
+      const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain("# Latest Report");
+      expect(response.text).toContain("Ready.");
+      expect(response.text).not.toContain("Readiness sweep skipped");
+    } finally {
+      if (originalKey) {
+        process.env.MINIMAX_API_KEY = originalKey;
+      } else {
+        delete process.env.MINIMAX_API_KEY;
+      }
+    }
+  });
+
   it("renders Discord replies within the message size limit", () => {
     const [first, second] = renderDiscordResponse(
       {
@@ -194,3 +253,11 @@ describe("Discord chat surface", () => {
     expect(guard.claim("message-2")).toBe(true);
   });
 });
+
+function writeReport(repoPath: string, name: string, content: string): string {
+  const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportPath = path.join(reportDir, name);
+  fs.writeFileSync(reportPath, content);
+  return reportPath;
+}

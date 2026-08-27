@@ -1,6 +1,6 @@
 # Discord Bot
 
-Agent Ops Kit can run the readiness sweep from Discord mentions or direct messages.
+Agent Ops Kit can run readiness tools from Discord mentions or direct messages.
 
 ## Environment
 
@@ -38,6 +38,8 @@ The bot responds when mentioned in an allowed guild channel:
 ```text
 @agent-ops sweep repo=/Users/wu36/Code/incident-triage-demo
 @agent-ops can you check whether this repo is ready for agents?
+@agent-ops where is the latest readiness report?
+@agent-ops read the latest readiness report
 ```
 
 If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
@@ -46,4 +48,4 @@ If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 @agent-ops sweep this repo
 ```
 
-The bot updates one status reply while the sweep runs, then posts the final summary. Repeated delivery of the same Discord message ID is ignored in memory to avoid duplicate local runs.
+The Discord surface exposes a small set of readiness plugin tools to the chat-agent workflow. Pi lets the model choose among those tools, then Agent Ops Kit executes the selected tool locally. The current readiness tool set can run a sweep, find the latest report, or read a report. Repeated delivery of the same Discord message ID is ignored in memory to avoid duplicate local runs.

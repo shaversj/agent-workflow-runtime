@@ -41,8 +41,10 @@ export async function runSweepWorkflow(
     timeoutMs?: number;
     onProgress?: (event: WorkflowProgressEvent) => void;
     sourceContext?: WorkflowSourceContext;
+    signal?: AbortSignal;
   } = {}
 ): Promise<WorkflowResult> {
+  assertNotAborted(options.signal);
   const absoluteRepoPath = path.resolve(repoPath);
   if (!fs.existsSync(absoluteRepoPath) || !fs.statSync(absoluteRepoPath).isDirectory()) {
     throw new Error(`Repository path does not exist: ${absoluteRepoPath}`);
@@ -91,6 +93,7 @@ export async function runSweepWorkflow(
 
   emitProgress(options.onProgress, { type: "evidence_started" });
   const evidence = gatherReadinessEvidence(absoluteRepoPath);
+  assertNotAborted(options.signal);
   calls.push({
     name: "gather_readiness_evidence",
     args: { plugin: evidence.plugin, recipe: evidence.evidence_recipe },
@@ -103,6 +106,7 @@ export async function runSweepWorkflow(
   });
 
   if (!process.env[MINIMAX_API_KEY_ENV]) {
+    assertNotAborted(options.signal);
     const markdown = renderReportEnvelope(
       absoluteRepoPath,
       `## Overall Judgment
@@ -160,7 +164,8 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       repoPath: absoluteRepoPath,
       evidence,
       timeoutMs,
-      onProgress: options.onProgress
+      onProgress: options.onProgress,
+      signal: options.signal
     });
     workflowLogger.info(
       {
@@ -170,7 +175,12 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       },
       "readiness_sweep.model_completed"
     );
+    assertNotAborted(options.signal);
   } catch (error) {
+    if (isAbortError(error)) {
+      workflowLogger.warn({ status: "aborted" }, "readiness_sweep.aborted");
+      throw error;
+    }
     workflowError = error instanceof Error ? error.message : String(error);
     workflowLogger.error(
       {
@@ -272,35 +282,64 @@ async function interpretEvidence(input: {
   evidence: unknown;
   timeoutMs: number;
   onProgress?: (event: WorkflowProgressEvent) => void;
+  signal?: AbortSignal;
 }): Promise<AssistantMessage> {
-  return await withWorkflowTimeout(
-    input.harnessModel.models.completeSimple(
-      input.harnessModel.model,
-      {
-        systemPrompt: `${readinessSweepSkill}
+  const completion = input.harnessModel.models.completeSimple(
+    input.harnessModel.model,
+    {
+      systemPrompt: `${readinessSweepSkill}
 
 Evidence gathering is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.`,
-        messages: [
-          {
-            role: "user",
-            content: buildReadinessInterpretationPrompt(input.repoPath, input.evidence),
-            timestamp: Date.now()
-          }
-        ],
-        tools: []
-      },
-      {
-        toolChoice: "none",
-        reasoning: "low",
-        maxTokens: 3000,
-        timeoutMs: input.timeoutMs
-      }
-    ),
-    input.timeoutMs,
-    () => {
-      emitProgress(input.onProgress, { type: "timeout", timeoutMs: input.timeoutMs });
+      messages: [
+        {
+          role: "user",
+          content: buildReadinessInterpretationPrompt(input.repoPath, input.evidence),
+          timestamp: Date.now()
+        }
+      ],
+      tools: []
+    },
+    {
+      toolChoice: "none",
+      reasoning: "low",
+      maxTokens: 3000,
+      timeoutMs: input.timeoutMs
     }
   );
+  return await withWorkflowTimeout(withAbort(completion, input.signal), input.timeoutMs, () => {
+    emitProgress(input.onProgress, { type: "timeout", timeoutMs: input.timeoutMs });
+  });
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    );
+  });
+}
+
+function assertNotAborted(signal: AbortSignal | undefined) {
+  if (signal?.aborted) throw abortError();
+}
+
+function abortError(): Error {
+  return new Error("workflow_aborted");
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.message === "workflow_aborted";
 }
 
 const emitProgress = (
