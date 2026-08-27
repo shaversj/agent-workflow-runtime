@@ -6,12 +6,13 @@ Agent Ops Kit is a TypeScript harness for running agent-facing repository operat
 
 The default workflow runs a readiness sweep. It loads the readiness plugin, deterministically gathers a compact and redacted evidence packet, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
 
-The project should stay organized around five concepts:
+The project should stay organized around six concepts:
 
 - `harness/`: shared runtime contracts, model setup, timeout handling, usage parsing, and progress emission
 - `plugins/`: domain capability bundles containing manifests, evidence recipes, tools, and skills
+- `surfaces/`: user-facing ways to interact with the harness, such as CLI and chat adapters
 - `tools/`: shared TypeBox tool contracts and generic report helpers
-- `workflows/`: orchestration that connects evidence, models, skills, persistence, and CLI commands
+- `workflows/`: orchestration that connects evidence, models, skills, persistence, and user-facing surfaces
 - `db/`: local SQLite persistence for workflow runs and artifacts
 
 Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, but findings and recommendations belong to the interpretation step.
@@ -47,12 +48,13 @@ make sweep REPO=/path/to/repo
 ## Development Workflow
 
 1. Bootstrap the environment with `make install`.
-2. Keep changes scoped to harness runtime, plugins, shared tools, workflows, or persistence as appropriate.
+2. Keep changes scoped to harness runtime, plugins, surfaces, shared tools, workflows, or persistence as appropriate.
 3. Add future domain behavior under `src/plugins/<domain>/` with a manifest first, then evidence recipes, tools, and skills as needed.
-4. Add shared tool contracts under `src/tools/` only when multiple plugins or workflows need the same callable surface.
-5. Run focused validation for the touched surface.
-6. Run `make check` before handoff when behavior changed.
-7. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
+4. Add user-facing interaction behavior under `src/surfaces/<surface>/`, keeping platform-specific formatting and identifiers at the edge.
+5. Add shared tool contracts under `src/tools/` only when multiple plugins or workflows need the same callable surface.
+6. Run focused validation for the touched surface.
+7. Run `make check` before handoff when behavior changed.
+8. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
 
 ## Safety Boundaries
 
