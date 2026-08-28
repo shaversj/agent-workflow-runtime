@@ -17,6 +17,7 @@ import {
 import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
+import { repoTargetForChatMessage } from "../src/workflows/chat-agent.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
 describe("Discord chat surface", () => {
@@ -57,6 +58,27 @@ describe("Discord chat surface", () => {
       workflow: "readiness_sweep",
       repoPath: "/tmp/demo"
     });
+  });
+
+  it("routes explicit Git URL sweep requests instead of the configured default repo", () => {
+    const message = normalizeDiscordMessage({
+      channelId: "channel-1",
+      messageId: "message-1",
+      authorId: "user-1",
+      content: "sweep https://github.com/shaversj/incident-triage-agent"
+    });
+
+    expect(message).toBeDefined();
+    const intent = routeChatMessage(message!, { defaultRepoPath: "/tmp/default" });
+
+    expect(intent).toMatchObject({
+      kind: "run_workflow",
+      workflow: "readiness_sweep",
+      repoPath: "https://github.com/shaversj/incident-triage-agent"
+    });
+    expect(repoTargetForChatMessage(message!, { defaultRepoPath: "/tmp/default" }, intent)).toBe(
+      "https://github.com/shaversj/incident-triage-agent"
+    );
   });
 
   it("asks for a repository when the request has no repo context", () => {

@@ -79,7 +79,8 @@ function readOptionValue(text: string, name: string): string | undefined {
     "i"
   );
   const match = pattern.exec(text);
-  return match?.[1] ?? match?.[2] ?? match?.[3];
+  const value = match?.[1] ?? match?.[2] ?? match?.[3];
+  return value ? cleanTargetToken(value) : undefined;
 }
 
 function readPositiveIntegerOption(text: string, name: string): number | undefined {
@@ -92,7 +93,7 @@ function readPositiveIntegerOption(text: string, name: string): number | undefin
 function readTargetArgument(text: string): string | undefined {
   const quotedPath = /(?:"([^"]*(?:\/|\.)[^"]*)"|'([^']*(?:\/|\.)[^']*)')/.exec(text);
   if (quotedPath?.[1] ?? quotedPath?.[2]) {
-    return quotedPath[1] ?? quotedPath[2];
+    return cleanTargetToken(quotedPath[1] ?? quotedPath[2] ?? "");
   }
   const tokenPath = text
     .split(/\s+/)
@@ -103,7 +104,7 @@ function readTargetArgument(text: string): string | undefined {
         token.startsWith("../") ||
         isGitUrl(token)
     );
-  return tokenPath;
+  return tokenPath ? cleanTargetToken(tokenPath) : undefined;
 }
 
 function isGitUrl(value: string): boolean {
@@ -114,4 +115,11 @@ function isGitUrl(value: string): boolean {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanTargetToken(value: string): string {
+  return value
+    .trim()
+    .replace(/^<(.+)>$/, "$1")
+    .replace(/[),.;]+$/, "");
 }
