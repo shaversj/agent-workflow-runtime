@@ -83,7 +83,12 @@ function discordAttachmentsForResponse(response: ChatResponse): DiscordOutboundA
   const repoPath = response.result?.repoPath;
   const reportPath = response.result?.reportPath;
   if (!repoPath || !reportPath) return [];
-  const safeReportPath = safeReportAttachmentPath(repoPath, reportPath);
+  const safeReportPath = response.result?.workspace
+    ? safeReportAttachmentPath(
+        path.join(response.result.workspace.statePath, "reports"),
+        reportPath
+      )
+    : safeLegacyReportAttachmentPath(repoPath, reportPath);
   if (!safeReportPath) return [];
   return [
     {
@@ -93,7 +98,22 @@ function discordAttachmentsForResponse(response: ChatResponse): DiscordOutboundA
   ];
 }
 
-function safeReportAttachmentPath(repoPath: string, reportPath: string): string | undefined {
+function safeReportAttachmentPath(reportDir: string, reportPath: string): string | undefined {
+  try {
+    if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) return undefined;
+    const realReportDir = fs.realpathSync(reportDir);
+    const realReportPath = fs.realpathSync(reportPath);
+    const relativePath = path.relative(realReportDir, realReportPath);
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return undefined;
+    if (!realReportPath.endsWith(".md")) return undefined;
+    if (!fs.statSync(realReportPath).isFile()) return undefined;
+    return realReportPath;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeLegacyReportAttachmentPath(repoPath: string, reportPath: string): string | undefined {
   try {
     const realRepoPath = fs.realpathSync(path.resolve(repoPath));
     const reportDir = path.join(realRepoPath, ".agent-readiness", "reports");
@@ -103,12 +123,7 @@ function safeReportAttachmentPath(repoPath: string, reportPath: string): string 
     if (reportDirRelativePath.startsWith("..") || path.isAbsolute(reportDirRelativePath)) {
       return undefined;
     }
-    const realReportPath = fs.realpathSync(reportPath);
-    const relativePath = path.relative(realReportDir, realReportPath);
-    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return undefined;
-    if (!realReportPath.endsWith(".md")) return undefined;
-    if (!fs.statSync(realReportPath).isFile()) return undefined;
-    return realReportPath;
+    return safeReportAttachmentPath(realReportDir, reportPath);
   } catch {
     return undefined;
   }

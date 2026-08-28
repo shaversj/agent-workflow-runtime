@@ -4,7 +4,7 @@
 
 Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through plugins, a small tool registry, deterministic evidence gathering, explicit interpretation skills, and auditable reports.
 
-The default workflow runs a readiness sweep. It loads the readiness plugin, deterministically gathers a compact and redacted evidence packet, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, and writes a Markdown report.
+The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, writes a Markdown report, and cleans up the checkout.
 
 The project should stay organized around six concepts:
 
@@ -12,6 +12,7 @@ The project should stay organized around six concepts:
 - `plugins/`: domain capability bundles containing manifests, evidence recipes, tools, and skills
 - `surfaces/`: user-facing ways to interact with the harness, such as CLI and chat adapters
 - `tools/`: shared TypeBox tool contracts, the capability registry, the catalog bridge, and generic report helpers
+- `workspaces/`: target normalization, managed git checkouts, workspace leases, and target-scoped state paths
 - `workflows/`: orchestration that connects tools, evidence, models, skills, persistence, and user-facing surfaces
 - `db/`: local SQLite persistence for workflow runs and artifacts
 
@@ -46,6 +47,7 @@ make test
 make typecheck
 make check
 make sweep REPO=/path/to/repo
+make sweep REPO=https://github.com/org/repo REF=main
 make discord
 ```
 
@@ -64,7 +66,8 @@ make discord
 
 - Read source repositories by default.
 - Do not edit, commit, push, open PRs, delete files, or mutate external systems unless a user explicitly asks.
-- Store local sweep output under `.agent-readiness/` in the inspected repo.
+- Store sweep output under Agent Ops Kit managed state, defaulting to `~/.agent-ops-kit/targets/<target-key>/`.
+- Inspect repositories through managed git workspaces so reports can identify the origin, ref, and commit SHA.
 - Keep secret values out of reports, logs, fixtures, and tests.
 - Redact secret-shaped values before evidence is sent to an LLM.
 - Skip known sensitive files such as `.env`, credentials files, private keys, and local package auth files during evidence gathering.

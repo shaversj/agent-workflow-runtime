@@ -16,6 +16,13 @@ import {
   readinessSweepSkill
 } from "../plugins/readiness/skill.js";
 import { renderReportEnvelope } from "../tools/report.js";
+import {
+  prepareWorkspace,
+  workspaceSummary,
+  type TargetRef,
+  type WorkflowTargetSummary,
+  type WorkspaceLease
+} from "../workspaces/index.js";
 
 const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
 const MODEL_RUNTIME = "pi-ai";
@@ -35,9 +42,10 @@ interface WorkflowSourceContext {
 }
 
 export async function runSweepWorkflow(
-  repoPath: string,
+  target: string | TargetRef,
   options: {
     model?: string;
+    ref?: string;
     timeoutMs?: number;
     onProgress?: (event: WorkflowProgressEvent) => void;
     sourceContext?: WorkflowSourceContext;
@@ -45,44 +53,61 @@ export async function runSweepWorkflow(
   } = {}
 ): Promise<WorkflowResult> {
   assertNotAborted(options.signal);
-  const absoluteRepoPath = path.resolve(repoPath);
-  if (!fs.existsSync(absoluteRepoPath) || !fs.statSync(absoluteRepoPath).isDirectory()) {
-    throw new Error(`Repository path does not exist: ${absoluteRepoPath}`);
+  const lease = prepareWorkspace(target, options.ref);
+  try {
+    return await runSweepWorkspace(lease, options);
+  } finally {
+    await lease.cleanup();
   }
+}
 
+async function runSweepWorkspace(
+  lease: WorkspaceLease,
+  options: {
+    model?: string;
+    timeoutMs?: number;
+    onProgress?: (event: WorkflowProgressEvent) => void;
+    sourceContext?: WorkflowSourceContext;
+    signal?: AbortSignal;
+  }
+): Promise<WorkflowResult> {
+  assertNotAborted(options.signal);
+  const absoluteRepoPath = path.resolve(lease.path);
   const modelName = options.model ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
+  const workspace = workspaceSummary(lease);
+  const target = workflowTargetSummary(lease);
+  emitProgress(options.onProgress, { type: "workspace_prepared", target, workspace });
   const runStore = createWorkflowRun({
     repoPath: absoluteRepoPath,
+    statePath: lease.statePath,
+    repositoryIdentity: lease.displayOrigin,
+    repositoryName: repositoryNameFromOrigin(lease.displayOrigin),
+    repositoryRemoteUrl: lease.source === "git-url" ? lease.displayOrigin : undefined,
     harnessProvider: DEFAULT_HARNESS_PROVIDER,
     modelRuntime: MODEL_RUNTIME,
     modelProvider: MODEL_PROVIDER,
     model: modelName,
+    workspace,
     sourceContext: options.sourceContext ? { ...options.sourceContext } : undefined
   });
   runStore.sqlite.close();
 
-  const reportPath = reportPathFor(absoluteRepoPath, runStore.run.id);
+  const reportPath = reportPathFor(lease.statePath, runStore.run.id);
   const calls: ToolCallRecord[] = [];
-  const workflowContext = {
+  const workflowLogger = logger.child({
     workflow_name: WORKFLOW_LOG_NAME,
-    repo_name: path.basename(absoluteRepoPath),
-    repo_path: absoluteRepoPath,
     task_id: runStore.task.id,
-    run_id: runStore.run.id,
-    harness_provider: DEFAULT_HARNESS_PROVIDER,
-    model_runtime: MODEL_RUNTIME,
-    model_provider: MODEL_PROVIDER,
-    model: modelName,
-    source: options.sourceContext?.source,
-    source_channel_id: options.sourceContext?.channelId,
-    source_thread_id: options.sourceContext?.threadId,
-    source_message_id: options.sourceContext?.messageId,
-    source_user_id: options.sourceContext?.userId
-  };
-  const workflowLogger = logger.child(workflowContext);
+    run_id: runStore.run.id
+  });
+  const progressLogContext = { task_id: runStore.task.id, run_id: runStore.run.id };
 
-  workflowLogger.info({ timeout_ms: timeoutMs }, "readiness_sweep.started");
+  workflowLogger.info(
+    {
+      timeout_ms: timeoutMs
+    },
+    "readiness_sweep.started"
+  );
   emitProgress(options.onProgress, {
     type: "started",
     runId: runStore.run.id,
@@ -91,7 +116,7 @@ export async function runSweepWorkflow(
     timeoutMs
   });
 
-  emitProgress(options.onProgress, { type: "evidence_started" });
+  emitProgress(options.onProgress, { type: "evidence_started" }, progressLogContext);
   const evidence = gatherReadinessEvidence(absoluteRepoPath);
   assertNotAborted(options.signal);
   calls.push({
@@ -100,10 +125,14 @@ export async function runSweepWorkflow(
     isError: false,
     result: evidence
   });
-  emitProgress(options.onProgress, {
-    type: "evidence_completed",
-    fileCount: countedEvidenceFiles(evidence)
-  });
+  emitProgress(
+    options.onProgress,
+    {
+      type: "evidence_completed",
+      fileCount: countedEvidenceFiles(evidence)
+    },
+    progressLogContext
+  );
 
   if (!process.env[MINIMAX_API_KEY_ENV]) {
     assertNotAborted(options.signal);
@@ -115,12 +144,14 @@ Repository evidence was collected, but LLM interpretation was skipped because \`
 
 ## Next Step
 
-Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
+Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`,
+      { workspace }
     );
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
     completeWorkflowRun({
       repoPath: absoluteRepoPath,
+      statePath: lease.statePath,
       runId: runStore.run.id,
       taskId: runStore.task.id,
       status: "skipped",
@@ -130,13 +161,15 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       model: modelName,
       summary: "Sweep interpretation skipped because MiniMax credentials are not configured.",
       reportPath,
-      calls
+      calls,
+      workspace
     });
     workflowLogger.warn(
       { status: "skipped", reason: `missing_${MINIMAX_API_KEY_ENV}` },
       "readiness_sweep.skipped"
     );
     return {
+      target,
       repoPath: absoluteRepoPath,
       runId: runStore.run.id,
       reportPath,
@@ -145,6 +178,7 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
       model: modelName,
       usage: emptyUsage(),
       toolCalls: calls,
+      workspace,
       error: `missing_${MINIMAX_API_KEY_ENV.toLowerCase()}`
     };
   }
@@ -153,24 +187,30 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
   let interpretation: AssistantMessage | undefined;
   try {
     const harnessModel = createMinimaxHarnessModel(modelName);
-    emitProgress(options.onProgress, {
-      type: "model_started",
-      modelProvider: harnessModel.modelProvider,
-      modelRuntime: harnessModel.modelRuntime,
-      model: modelName
-    });
+    emitProgress(
+      options.onProgress,
+      {
+        type: "model_started",
+        modelProvider: harnessModel.modelProvider,
+        modelRuntime: harnessModel.modelRuntime,
+        model: modelName
+      },
+      progressLogContext
+    );
     interpretation = await interpretEvidence({
       harnessModel,
       repoPath: absoluteRepoPath,
       evidence,
       timeoutMs,
       onProgress: options.onProgress,
+      progressLogContext,
       signal: options.signal
     });
     workflowLogger.info(
       {
         model_provider: harnessModel.modelProvider,
         model_runtime: harnessModel.modelRuntime,
+        model: modelName,
         token_count: interpretation.usage.totalTokens
       },
       "readiness_sweep.model_completed"
@@ -198,7 +238,7 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(
       reportPath,
-      renderReportEnvelope(absoluteRepoPath, interpretationText),
+      renderReportEnvelope(absoluteRepoPath, interpretationText, { workspace }),
       "utf8"
     );
     reportWasWritten = true;
@@ -231,7 +271,8 @@ ${finalOutput || "No assistant output was produced."}
 
 ## Error
 
-${workflowError ?? "No explicit error was recorded."}`
+${workflowError ?? "No explicit error was recorded."}`,
+      { workspace }
     );
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
@@ -240,6 +281,7 @@ ${workflowError ?? "No explicit error was recorded."}`
 
   completeWorkflowRun({
     repoPath: absoluteRepoPath,
+    statePath: lease.statePath,
     runId: runStore.run.id,
     taskId: runStore.task.id,
     status,
@@ -249,7 +291,8 @@ ${workflowError ?? "No explicit error was recorded."}`
     model: modelName,
     summary: status === "completed" ? "Sweep workflow completed." : "Sweep workflow failed.",
     reportPath,
-    calls
+    calls,
+    workspace
   });
 
   workflowLogger.info(
@@ -264,6 +307,7 @@ ${workflowError ?? "No explicit error was recorded."}`
   emitProgress(options.onProgress, { type: "completed", status, reportPath });
 
   return {
+    target,
     repoPath: absoluteRepoPath,
     runId: runStore.run.id,
     reportPath,
@@ -272,6 +316,7 @@ ${workflowError ?? "No explicit error was recorded."}`
     model: modelName,
     usage,
     toolCalls: calls,
+    workspace,
     error: workflowError
   };
 }
@@ -282,6 +327,7 @@ async function interpretEvidence(input: {
   evidence: unknown;
   timeoutMs: number;
   onProgress?: (event: WorkflowProgressEvent) => void;
+  progressLogContext?: Record<string, unknown>;
   signal?: AbortSignal;
 }): Promise<AssistantMessage> {
   const completion = input.harnessModel.models.completeSimple(
@@ -307,7 +353,11 @@ Evidence gathering is already complete. Tools are unavailable. Interpret only th
     }
   );
   return await withWorkflowTimeout(withAbort(completion, input.signal), input.timeoutMs, () => {
-    emitProgress(input.onProgress, { type: "timeout", timeoutMs: input.timeoutMs });
+    emitProgress(
+      input.onProgress,
+      { type: "timeout", timeoutMs: input.timeoutMs },
+      input.progressLogContext
+    );
   });
 }
 
@@ -344,8 +394,9 @@ function isAbortError(error: unknown): boolean {
 
 const emitProgress = (
   onProgress: ((event: WorkflowProgressEvent) => void) | undefined,
-  event: WorkflowProgressEvent
-) => emitWorkflowProgress(WORKFLOW_LOG_NAME, onProgress, event);
+  event: WorkflowProgressEvent,
+  logContext?: Record<string, unknown>
+) => emitWorkflowProgress(WORKFLOW_LOG_NAME, onProgress, event, logContext);
 
 function countedEvidenceFiles(evidence: {
   key_files: string[];
@@ -363,15 +414,23 @@ function countedEvidenceFiles(evidence: {
   ]).size;
 }
 
-function reportPathFor(repoPath: string, runId: number): string {
+function reportPathFor(statePath: string, runId: number): string {
   const timestamp = new Date()
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z");
-  return path.join(
-    repoPath,
-    ".agent-readiness",
-    "reports",
-    `${timestamp}-${runId}-readiness-sweep.md`
-  );
+  return path.join(statePath, "reports", `${timestamp}-${runId}-readiness-sweep.md`);
+}
+
+function repositoryNameFromOrigin(origin: string): string {
+  return path.basename(origin.replace(/\/$/, "").replace(/\.git$/, ""));
+}
+
+function workflowTargetSummary(lease: WorkspaceLease): WorkflowTargetSummary {
+  return {
+    source: lease.source,
+    origin: lease.displayOrigin,
+    ref: lease.ref,
+    commitSha: lease.commitSha
+  };
 }

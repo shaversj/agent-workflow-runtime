@@ -17,8 +17,8 @@ async function main() {
 
 function printUsage() {
   console.log(`Usage:
-  agent-ops sweep <repo-path> [--harness-model MiniMax-M3] [--timeout-ms 120000]
-  pnpm sweep -- <repo-path> [--harness-model MiniMax-M3] [--timeout-ms 120000]`);
+  agent-ops sweep <repo-target> [--ref main] [--harness-model MiniMax-M3] [--timeout-ms 120000]
+  pnpm sweep -- <repo-target> [--ref main] [--harness-model MiniMax-M3] [--timeout-ms 120000]`);
 }
 
 main().catch((error: unknown) => {

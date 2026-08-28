@@ -1,3 +1,5 @@
+import type { WorkflowTargetSummary, WorkspaceSummary } from "../workspaces/types.js";
+
 export interface ToolCallRecord {
   name: string;
   args: unknown;
@@ -14,6 +16,7 @@ export interface HarnessUsage {
 }
 
 export interface WorkflowResult {
+  target: WorkflowTargetSummary;
   repoPath: string;
   runId: number;
   reportPath: string;
@@ -22,10 +25,12 @@ export interface WorkflowResult {
   model: string;
   usage: HarnessUsage;
   toolCalls: ToolCallRecord[];
+  workspace?: WorkspaceSummary;
   error?: string;
 }
 
 export type WorkflowProgressEvent =
+  | { type: "workspace_prepared"; target: WorkflowTargetSummary; workspace: WorkspaceSummary }
   | { type: "started"; runId: number; repoPath: string; model: string; timeoutMs: number }
   | { type: "evidence_started" }
   | { type: "evidence_completed"; fileCount: number }

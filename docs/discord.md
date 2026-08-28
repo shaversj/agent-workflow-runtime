@@ -43,6 +43,7 @@ The bot responds when mentioned in an allowed guild channel:
 
 ```text
 @agent-ops sweep repo=/Users/wu36/Code/incident-triage-demo
+@agent-ops sweep repo=https://github.com/org/repo ref=main
 @agent-ops can you check whether this repo is ready for agents?
 @agent-ops where is the latest readiness report?
 @agent-ops read the latest readiness report
@@ -55,8 +56,9 @@ If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 ```
 
 Completed sweeps post a compact Markdown reply with the run ID, token count, report filename,
-first useful report summary, and full report path. When the report file is available on the
-bot host, the Discord reply also attaches the generated `.md` report.
+first useful report summary, and full report path. Reports are stored in Agent Ops Kit managed
+state on the bot host. When the file is available, the Discord reply also attaches the generated
+`.md` report.
 
 The Discord surface enables plugin sources for the chat-agent workflow. Pi sees a stable
 tool bridge (`searchTools` and `executeTool`) instead of every plugin function directly. The

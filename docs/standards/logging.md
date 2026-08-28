@@ -20,6 +20,10 @@ Do not configure Pino in individual modules. Add new configuration in `src/logge
 
 Keep JSON as the default format for machine consumption. Pretty logs are for local terminal use only.
 
+Pretty logs should optimize for human scanning. Common correlation fields, paths, and counters such as `run_id`, `task_id`, `model`, `report_path`, `file_count`, and `token_count` may be summarized inline in the event message and hidden from the expanded field block. Do not remove those fields from JSON logs.
+
+CLI progress text should not duplicate info-level lifecycle logs. When info logs are enabled, prefer the log stream for progress and keep CLI text to the final command result.
+
 ## Event Shape
 
 Logs should be structured and queryable:
@@ -29,6 +33,7 @@ Logs should be structured and queryable:
 - Include durable IDs when available, such as `task_id`, `run_id`, and `repository_id`.
 - Include safe repository context, such as `repo_name` or sanitized path fields, when it helps connect logs to reports.
 - Use consistent field names across workflows and plugins.
+- Avoid repeating the full run context on every event. Put target, workspace, state, and source metadata on boundary events such as `workflow_run.created` and `readiness_sweep.workspace_prepared`; later phase events should carry IDs plus only the new facts they introduce.
 
 Example shape:
 
@@ -43,25 +48,28 @@ logger.info(
 
 Prefer these field names when the concept applies:
 
-| Concept                  | Field              |
-| ------------------------ | ------------------ |
-| Workflow name            | `workflow_name`    |
-| Plugin name              | `plugin_name`      |
-| Tool name                | `tool_name`        |
-| Repository name          | `repo_name`        |
-| Repository path          | `repo_path`        |
-| Task ID                  | `task_id`          |
-| Run ID                   | `run_id`           |
-| Harness provider         | `harness_provider` |
-| Model runtime            | `model_runtime`    |
-| Model provider           | `model_provider`   |
-| Model                    | `model`            |
-| Status                   | `status`           |
-| Duration in milliseconds | `duration_ms`      |
-| File count               | `file_count`       |
-| Token count              | `token_count`      |
-| Error type               | `error_type`       |
-| Error message            | `error`            |
+| Concept                   | Field              |
+| ------------------------- | ------------------ |
+| Workflow name             | `workflow_name`    |
+| Plugin name               | `plugin_name`      |
+| Tool name                 | `tool_name`        |
+| Repository name           | `repo_name`        |
+| Local target path         | `target_path`      |
+| Git target URL            | `target_url`       |
+| Disposable workspace path | `workspace_path`   |
+| Managed state path        | `state_path`       |
+| Task ID                   | `task_id`          |
+| Run ID                    | `run_id`           |
+| Harness provider          | `harness_provider` |
+| Model runtime             | `model_runtime`    |
+| Model provider            | `model_provider`   |
+| Model                     | `model`            |
+| Status                    | `status`           |
+| Duration in milliseconds  | `duration_ms`      |
+| File count                | `file_count`       |
+| Token count               | `token_count`      |
+| Error type                | `error_type`       |
+| Error message             | `error`            |
 
 ## Levels
 
@@ -80,10 +88,20 @@ Workflows should log these process events when they apply:
 - evidence gathering started and completed
 - model call started, completed, failed, or timed out
 - report written
-- database run created and completed
+- database run created
 - recoverable fallback or degraded-mode behavior
 
 Plugins should log lifecycle events at the workflow boundary, not every internal branch. Prefer counts and status fields over noisy per-file logs.
+
+Use full context sparingly:
+
+- `workflow_run.created`: include repository identity, target identity, state path, source, and model configuration.
+- `readiness_sweep.workspace_prepared`: include the disposable workspace path, source, ref, commit SHA, and managed state path.
+- `readiness_sweep.started`: include run IDs and timeout.
+- `readiness_sweep.model_completed`: include run IDs, model identity, and token count.
+- `readiness_sweep.report_written`: include run IDs and report path.
+- `workflow_run.completed`: log at `debug` with run IDs, status, state path, report path, and counts when database lifecycle troubleshooting is needed.
+- `readiness_sweep.completed`: include run IDs, status, report path, token count, and tool call count.
 
 ## Error Logging
 

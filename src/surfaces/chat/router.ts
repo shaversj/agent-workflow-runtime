@@ -39,6 +39,7 @@ export function routeChatMessage(
     kind: "run_workflow",
     workflow: "readiness_sweep",
     repoPath,
+    ref: request.ref,
     model: request.model ?? options.defaultModel,
     timeoutMs: request.timeoutMs ?? options.defaultTimeoutMs,
     sourceText
@@ -48,6 +49,7 @@ export function routeChatMessage(
 function parseSweepRequest(text: string):
   | {
       repoPath?: string;
+      ref?: string;
       model?: string;
       timeoutMs?: number;
     }
@@ -55,7 +57,8 @@ function parseSweepRequest(text: string):
   if (!isSweepLike(text)) return undefined;
 
   return {
-    repoPath: readOptionValue(text, "repo") ?? readPathArgument(text),
+    repoPath: readOptionValue(text, "repo") ?? readTargetArgument(text),
+    ref: readOptionValue(text, "ref"),
     model: readOptionValue(text, "model") ?? readOptionValue(text, "harness-model"),
     timeoutMs: readPositiveIntegerOption(text, "timeout-ms")
   };
@@ -86,15 +89,27 @@ function readPositiveIntegerOption(text: string, name: string): number | undefin
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function readPathArgument(text: string): string | undefined {
+function readTargetArgument(text: string): string | undefined {
   const quotedPath = /(?:"([^"]*(?:\/|\.)[^"]*)"|'([^']*(?:\/|\.)[^']*)')/.exec(text);
   if (quotedPath?.[1] ?? quotedPath?.[2]) {
     return quotedPath[1] ?? quotedPath[2];
   }
   const tokenPath = text
     .split(/\s+/)
-    .find((token) => token.startsWith("/") || token.startsWith("./") || token.startsWith("../"));
+    .find(
+      (token) =>
+        token.startsWith("/") ||
+        token.startsWith("./") ||
+        token.startsWith("../") ||
+        isGitUrl(token)
+    );
   return tokenPath;
+}
+
+function isGitUrl(value: string): boolean {
+  return (
+    /^(?:https?|ssh|git|file):\/\//i.test(value) || /^[a-z0-9_.-]+@[a-z0-9_.-]+:.+/i.test(value)
+  );
 }
 
 function escapeRegExp(value: string): string {

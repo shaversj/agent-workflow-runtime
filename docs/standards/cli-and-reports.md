@@ -10,16 +10,23 @@ CLI output should be concise and human-readable. Always show where artifacts wer
 
 Sweeps are read-only by default:
 
-- inspect the requested repository through registered tools
-- persist sweep state under `.agent-readiness/`
-- write Markdown reports under `.agent-readiness/reports/`
+- resolve the requested local git path or Git URL into a managed workspace lease
+- inspect the leased checkout through registered tools
+- persist sweep state under `AGENT_OPS_HOME`, defaulting to `~/.agent-ops-kit/`
+- write Markdown reports under the target state `reports/` directory
+- record the target origin, ref, and commit SHA in the run/report metadata
+- clean up disposable workspaces after the run
 - do not edit source files, commit, push, or open pull requests unless the user explicitly asks
+
+Local path sweeps inspect committed git state. They should not read uncommitted working tree files
+unless a future workflow explicitly adds and documents snapshot semantics for dirty work.
 
 Prefer Makefile entry points:
 
 ```bash
 make sweep REPO=/path/to/repo
 make sweep REPO=/path/to/repo HARNESS_MODEL=MiniMax-M3
+make sweep REPO=https://github.com/org/repo REF=main
 ```
 
 The readiness sweep should be a workflow that loads a plugin, gathers deterministic evidence, and asks the model to interpret that evidence; do not add deterministic findings logic back into the workflow.

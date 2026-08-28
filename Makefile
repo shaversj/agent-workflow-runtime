@@ -2,8 +2,12 @@
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
+REF ?=
 TIMEOUT_MS ?=
 HARNESS_FLAGS = --harness-model "$(HARNESS_MODEL)"
+ifneq ($(strip $(REF)),)
+HARNESS_FLAGS += --ref "$(REF)"
+endif
 ifneq ($(strip $(TIMEOUT_MS)),)
 HARNESS_FLAGS += --timeout-ms "$(TIMEOUT_MS)"
 endif

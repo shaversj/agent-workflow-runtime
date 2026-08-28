@@ -1,11 +1,13 @@
 import type { Static, TSchema } from "typebox";
 
 import type { ToolCallRecord } from "../harness/types.js";
+import type { WorkspaceSummary } from "../workspaces/types.js";
 
 export interface ToolContext {
   repoPath: string;
   reportPath: string;
   calls: ToolCallRecord[];
+  workspace?: WorkspaceSummary;
 }
 
 export interface WorkflowTool<TParameters extends TSchema, TResult> {

@@ -18,8 +18,8 @@ helper functions.
 - Keep tests under `tests/`.
 - Name test files for the behavior or module they cover.
 - Keep fixtures small and explicit.
-- Use temporary directories for inspected repositories and generated
-  `.agent-readiness/` output.
+- Use temporary directories for inspected repositories and set `AGENT_OPS_HOME`
+  to a temporary directory when tests generate sweep state or reports.
 
 ## Coverage Expectations
 

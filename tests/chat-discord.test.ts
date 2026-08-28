@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -16,6 +17,7 @@ import {
 import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
+import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
 describe("Discord chat surface", () => {
   it("normalizes Discord messages into chat messages", () => {
@@ -78,8 +80,9 @@ describe("Discord chat surface", () => {
   it("runs the sweep workflow from a Discord-shaped message", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
-    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
 
     try {
       const message = normalizeDiscordMessage({
@@ -99,6 +102,7 @@ describe("Discord chat surface", () => {
       expect(response.text).toContain("Repository evidence was collected");
       expect(response.text).toContain("Full report:");
     } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
       if (originalKey) {
         process.env.MINIMAX_API_KEY = originalKey;
       } else {
@@ -110,8 +114,10 @@ describe("Discord chat surface", () => {
   it("returns the latest report without MiniMax credentials", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
-    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    const reportPath = writeManagedReport(repoPath, "latest.md", "# Latest Report\n");
 
     try {
       const message = normalizeDiscordMessage({
@@ -128,6 +134,7 @@ describe("Discord chat surface", () => {
       expect(response.text).toContain(reportPath);
       expect(response.text).not.toContain("Readiness sweep skipped");
     } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
       if (originalKey) {
         process.env.MINIMAX_API_KEY = originalKey;
       } else {
@@ -139,8 +146,10 @@ describe("Discord chat surface", () => {
   it("reads the latest report without MiniMax credentials", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
-    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    writeReport(repoPath, "latest.md", "# Latest Report\n\nReady.\n");
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    writeManagedReport(repoPath, "latest.md", "# Latest Report\n\nReady.\n");
 
     try {
       const message = normalizeDiscordMessage({
@@ -158,6 +167,7 @@ describe("Discord chat surface", () => {
       expect(response.text).toContain("Ready.");
       expect(response.text).not.toContain("Readiness sweep skipped");
     } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
       if (originalKey) {
         process.env.MINIMAX_API_KEY = originalKey;
       } else {
@@ -193,6 +203,7 @@ describe("Discord chat surface", () => {
         status: "completed",
         text: "Readiness sweep completed.",
         result: {
+          target: localTarget(repoPath),
           repoPath,
           runId: 1,
           reportPath,
@@ -201,6 +212,50 @@ describe("Discord chat surface", () => {
           model: "MiniMax-M3",
           usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           toolCalls: []
+        }
+      },
+      {
+        channelId: "channel-1",
+        messageId: "message-1"
+      }
+    );
+
+    expect(reply?.attachments).toEqual([{ path: fs.realpathSync(reportPath), name: "latest.md" }]);
+  });
+
+  it("attaches managed Markdown reports for workspace-backed sweep responses", () => {
+    const statePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-state-"));
+    const reportDir = path.join(statePath, "reports");
+    fs.mkdirSync(reportDir, { recursive: true });
+    const reportPath = path.join(reportDir, "latest.md");
+    fs.writeFileSync(reportPath, "# Latest Report\n");
+    const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-workspace-"));
+    const [reply] = renderDiscordResponse(
+      {
+        kind: "message",
+        status: "completed",
+        text: "Readiness sweep completed.",
+        result: {
+          target: gitUrlTarget("https://github.com/example/demo"),
+          repoPath: workspacePath,
+          runId: 1,
+          reportPath,
+          status: "completed",
+          provider: "agent-ops-kit",
+          model: "MiniMax-M3",
+          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          toolCalls: [],
+          workspace: {
+            id: "lease-1",
+            source: "git-url",
+            origin: "https://github.com/example/demo",
+            displayOrigin: "https://github.com/example/demo",
+            ref: "main",
+            commitSha: "a".repeat(40),
+            path: workspacePath,
+            statePath,
+            cleanupPolicy: "delete"
+          }
         }
       },
       {
@@ -223,6 +278,7 @@ describe("Discord chat surface", () => {
         status: "completed",
         text: "Readiness sweep completed.",
         result: {
+          target: localTarget(repoPath),
           repoPath,
           runId: 1,
           reportPath: outsideReportPath,
@@ -256,6 +312,7 @@ describe("Discord chat surface", () => {
         status: "completed",
         text: "Readiness sweep completed.",
         result: {
+          target: localTarget(repoPath),
           repoPath,
           runId: 1,
           reportPath: symlinkPath,
@@ -289,6 +346,7 @@ describe("Discord chat surface", () => {
         status: "completed",
         text: "Readiness sweep completed.",
         result: {
+          target: localTarget(repoPath),
           repoPath,
           runId: 1,
           reportPath,
@@ -413,4 +471,57 @@ function writeReport(repoPath: string, name: string, content: string): string {
   const reportPath = path.join(reportDir, name);
   fs.writeFileSync(reportPath, content);
   return reportPath;
+}
+
+function localTarget(repoPath: string) {
+  return {
+    source: "local-git" as const,
+    origin: repoPath,
+    ref: "HEAD",
+    commitSha: "a".repeat(40)
+  };
+}
+
+function gitUrlTarget(origin: string) {
+  return {
+    source: "git-url" as const,
+    origin,
+    ref: "main",
+    commitSha: "a".repeat(40)
+  };
+}
+
+function writeManagedReport(repoPath: string, name: string, content: string): string {
+  const reportDir = path.join(statePathForRepo(repoPath), "reports");
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportPath = path.join(reportDir, name);
+  fs.writeFileSync(reportPath, content);
+  return reportPath;
+}
+
+function gitRepo() {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+  git(["init"], repoPath);
+  git(["config", "user.email", "test@example.com"], repoPath);
+  git(["config", "user.name", "Test User"], repoPath);
+  fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+  git(["add", "README.md"], repoPath);
+  git(["commit", "-m", "Initial commit"], repoPath);
+  return repoPath;
+}
+
+function statePathForRepo(repoPath: string): string {
+  return targetStatePath(normalizedTargetRef(parseTargetRef(repoPath)));
+}
+
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }

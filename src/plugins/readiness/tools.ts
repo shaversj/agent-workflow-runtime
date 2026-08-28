@@ -9,6 +9,12 @@ import {
   type RegisteredTool,
   type RegisteredToolContext
 } from "../../tools/registry.js";
+import {
+  normalizedTargetRef,
+  parseTargetRef,
+  safeGitUrlForDisplay,
+  targetStatePath
+} from "../../workspaces/index.js";
 
 const PLUGIN_NAME = "readiness";
 const READINESS_TOOL_SOURCE = {
@@ -19,7 +25,13 @@ const READINESS_TOOL_SOURCE = {
 
 const RunSweepParams = Type.Object({
   repo_path: Type.Optional(
-    Type.String({ description: "Repository path. Omit when the chat surface has a default repo." })
+    Type.String({
+      description:
+        "Repository target path or Git URL. Omit when the chat surface has a default repo."
+    })
+  ),
+  ref: Type.Optional(
+    Type.String({ description: "Git ref to sweep, such as main or a commit SHA." })
   ),
   model: Type.Optional(Type.String({ description: "Model name for interpretation." })),
   timeout_ms: Type.Optional(
@@ -29,13 +41,19 @@ const RunSweepParams = Type.Object({
 
 const GetLatestReportParams = Type.Object({
   repo_path: Type.Optional(
-    Type.String({ description: "Repository path. Omit when the chat surface has a default repo." })
+    Type.String({
+      description:
+        "Repository target path or Git URL. Omit when the chat surface has a default repo."
+    })
   )
 });
 
 const ReadReportParams = Type.Object({
   repo_path: Type.Optional(
-    Type.String({ description: "Repository path. Omit when the chat surface has a default repo." })
+    Type.String({
+      description:
+        "Repository target path or Git URL. Omit when the chat surface has a default repo."
+    })
   ),
   report_path: Type.Optional(
     Type.String({
@@ -67,8 +85,9 @@ export const readinessTools: RegisteredTool[] = [
       context: RegisteredToolContext,
       signal?: AbortSignal
     ) {
-      const repoPath = resolveRepoPath(params.repo_path, context);
-      const result = await runSweepWorkflow(repoPath, {
+      const repoTarget = resolveRepoTarget(params.repo_path, context);
+      const result = await runSweepWorkflow(repoTarget, {
+        ref: params.ref,
         model: params.model ?? context.model ?? DEFAULT_HARNESS_MODEL,
         timeoutMs: params.timeout_ms ?? context.timeoutMs,
         onProgress: context.onProgress,
@@ -95,21 +114,23 @@ export const readinessTools: RegisteredTool[] = [
     requiresApproval: false,
     allowedSurfaces: ["discord", "slack"],
     execute(params: GetLatestReportParamsType, context: RegisteredToolContext) {
-      const repoPath = resolveRepoPath(params.repo_path, context);
-      const report = latestReport(repoPath);
+      const repoTarget = resolveRepoTarget(params.repo_path, context);
+      const statePath = statePathForTarget(repoTarget);
+      const displayTarget = displayRepoTarget(repoTarget);
+      const report = latestReport(statePath);
       const result = report
         ? {
-            repo_path: repoPath,
+            repo_path: displayTarget,
             report_path: report.path,
             bytes: report.bytes,
             updated_at: report.updatedAt
           }
-        : { repo_path: repoPath, report_path: undefined, bytes: 0, updated_at: undefined };
+        : { repo_path: displayTarget, report_path: undefined, bytes: 0, updated_at: undefined };
       return {
         result,
         text: report
           ? `Latest readiness report: ${report.path}`
-          : `No readiness reports were found for ${repoPath}.`,
+          : `No readiness reports were found for ${displayTarget}.`,
         terminate: false
       };
     }
@@ -127,14 +148,16 @@ export const readinessTools: RegisteredTool[] = [
     requiresApproval: false,
     allowedSurfaces: ["discord", "slack"],
     execute(params: ReadReportParamsType, context: RegisteredToolContext) {
-      const repoPath = resolveRepoPath(params.repo_path, context);
-      const reportPath = resolveReportPath(repoPath, params.report_path);
+      const repoTarget = resolveRepoTarget(params.repo_path, context);
+      const statePath = statePathForTarget(repoTarget);
+      const displayTarget = displayRepoTarget(repoTarget);
+      const reportPath = resolveReportPath(statePath, displayTarget, params.report_path);
       const maxBytes = params.max_bytes ?? 12000;
       const raw = fs.readFileSync(reportPath);
       const truncated = raw.byteLength > maxBytes;
       const content = raw.subarray(0, maxBytes).toString("utf8");
       const result = {
-        repo_path: repoPath,
+        repo_path: displayTarget,
         report_path: reportPath,
         content,
         truncated
@@ -148,21 +171,28 @@ export const readinessTools: RegisteredTool[] = [
   })
 ];
 
-function resolveRepoPath(repoPath: string | undefined, context: RegisteredToolContext): string {
-  const resolved = path.resolve(repoPath ?? context.defaultRepoPath ?? "");
-  if (!repoPath && !context.defaultRepoPath) {
-    throw new Error("Repository path is required.");
-  }
-  if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
-    throw new Error(`Repository path does not exist: ${resolved}`);
+function resolveRepoTarget(repoTarget: string | undefined, context: RegisteredToolContext): string {
+  const resolved = repoTarget ?? context.defaultRepoPath;
+  if (!resolved) {
+    throw new Error("Repository target is required.");
   }
   return resolved;
 }
 
+function statePathForTarget(repoTarget: string): string {
+  const target = normalizedTargetRef(parseTargetRef(repoTarget));
+  return targetStatePath(target);
+}
+
+function displayRepoTarget(repoTarget: string): string {
+  const target = parseTargetRef(repoTarget);
+  return target.kind === "git-url" ? safeGitUrlForDisplay(target.url) : path.resolve(target.path);
+}
+
 function latestReport(
-  repoPath: string
+  statePath: string
 ): { path: string; bytes: number; updatedAt: string } | undefined {
-  const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+  const reportDir = path.join(statePath, "reports");
   if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) return undefined;
   const realReportDir = fs.realpathSync(reportDir);
   const reports = fs
@@ -184,19 +214,23 @@ function latestReport(
   };
 }
 
-function resolveReportPath(repoPath: string, requestedPath: string | undefined): string {
+function resolveReportPath(
+  statePath: string,
+  repoTarget: string,
+  requestedPath: string | undefined
+): string {
   if (!requestedPath) {
-    const report = latestReport(repoPath);
-    if (!report) throw new Error(`No readiness reports were found for ${repoPath}.`);
+    const report = latestReport(statePath);
+    if (!report) throw new Error(`No readiness reports were found for ${repoTarget}.`);
     return report.path;
   }
 
   const candidatePath = path.isAbsolute(requestedPath)
     ? path.resolve(requestedPath)
-    : path.resolve(repoPath, requestedPath);
-  const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+    : path.resolve(statePath, "reports", requestedPath);
+  const reportDir = path.join(statePath, "reports");
   if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) {
-    throw new Error(`No readiness reports were found for ${repoPath}.`);
+    throw new Error(`No readiness reports were found for ${repoTarget}.`);
   }
   const realReportDir = fs.realpathSync(reportDir);
   const reportPath = safeReportPath(realReportDir, candidatePath);
@@ -218,10 +252,13 @@ function safeReportPath(realReportDir: string, candidatePath: string): string | 
 function renderSweepToolText(result: Awaited<ReturnType<typeof runSweepWorkflow>>): string {
   return JSON.stringify(
     {
-      repo_path: result.repoPath,
+      target: result.target.origin,
+      workspace_path: result.workspace?.path ?? result.repoPath,
       run_id: result.runId,
       status: result.status,
       report_path: result.reportPath,
+      ref: result.target.ref,
+      commit_sha: result.target.commitSha,
       token_count: result.usage.totalTokens,
       tool_call_count: result.toolCalls.length,
       error: result.error

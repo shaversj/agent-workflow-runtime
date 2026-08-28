@@ -10,8 +10,8 @@ Use TypeBox for tool input/output schemas and API-shaped data contracts. Do not 
 
 Schema changes should start in the Drizzle schema, then update the local bootstrap SQL in `src/db/index.ts` until the project adopts generated migrations.
 
-Review schema changes carefully before committing because sweep state is written into inspected repositories under `.agent-readiness/agent-ops.db`.
+Review schema changes carefully before committing because sweep state is written into managed Agent Ops Kit state under `AGENT_OPS_HOME`.
 
 ## Local State
 
-Readiness sweep state is local to the inspected repository and belongs under `.agent-readiness/`. Do not write sweep state into the source tree outside that directory unless the user explicitly asks for a different artifact.
+Readiness sweep state belongs under `AGENT_OPS_HOME`, defaulting to `~/.agent-ops-kit/`. Keep target-scoped databases and reports under `targets/<target-key>/`; do not write sweep state into the inspected source tree unless the user explicitly asks for a different artifact.

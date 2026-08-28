@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
@@ -18,6 +19,7 @@ import { createCatalogBridgeTools } from "../src/tools/catalog-bridge.js";
 import { createToolCatalog } from "../src/tools/catalog.js";
 import { defineRegisteredTool, registeredToolName, ToolRegistry } from "../src/tools/registry.js";
 import type { ToolContext } from "../src/tools/types.js";
+import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
 describe("repo tools", () => {
   it("lists, reads, and searches repository files", async () => {
@@ -199,27 +201,63 @@ describe("tool catalog", () => {
 
 describe("readiness plugin tools", () => {
   it("reads the latest report and does not terminate the chat turn", async () => {
-    const repoPath = tempRepo();
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
     const reportPath = writeReport(repoPath, "latest.md", "# Latest\n");
     const registry = new ToolRegistry();
     registry.registerMany(readinessTools);
 
-    const latest = await registry
-      .get("readiness_get_latest_report")!
-      .execute({ repo_path: repoPath }, { surface: "discord" });
-    const read = await registry
-      .get("readiness_read_report")!
-      .execute({ repo_path: repoPath }, { surface: "discord" });
+    try {
+      const latest = await registry
+        .get("readiness_get_latest_report")!
+        .execute({ repo_path: repoPath }, { surface: "discord" });
+      const read = await registry
+        .get("readiness_read_report")!
+        .execute({ repo_path: repoPath }, { surface: "discord" });
 
-    expect(latest.text).toContain(reportPath);
-    expect(latest.terminate).toBe(false);
-    expect(read.text).toContain("# Latest");
-    expect(read.terminate).toBe(false);
+      expect(latest.text).toContain(reportPath);
+      expect(latest.terminate).toBe(false);
+      expect(read.text).toContain("# Latest");
+      expect(read.terminate).toBe(false);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+
+  it("redacts credentialed Git URL targets in report lookup output", async () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoTarget = "https://token:secret@example.com/org/repo.git?api_key=abc";
+    const registry = new ToolRegistry();
+    registry.registerMany(readinessTools);
+    writeReport(repoTarget, "latest.md", "# Latest\n");
+
+    try {
+      const latest = await registry
+        .get("readiness_get_latest_report")!
+        .execute({ repo_path: repoTarget }, { surface: "discord" });
+      const read = await registry
+        .get("readiness_read_report")!
+        .execute({ repo_path: repoTarget }, { surface: "discord" });
+
+      expect(latest.text).not.toContain("token");
+      expect(latest.text).not.toContain("secret");
+      expect(latest.text).not.toContain("abc");
+      expect(JSON.stringify(latest.result)).toContain("[REDACTED]");
+      expect(JSON.stringify(read.result)).not.toContain("token");
+      expect(JSON.stringify(read.result)).not.toContain("secret");
+      expect(JSON.stringify(read.result)).not.toContain("abc");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
   });
 
   it("rejects report symlinks that resolve outside the reports directory", () => {
-    const repoPath = tempRepo();
-    const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    const reportDir = path.join(statePathForRepo(repoPath), "reports");
     fs.mkdirSync(reportDir, { recursive: true });
     const secretPath = path.join(repoPath, "secret.md");
     fs.writeFileSync(secretPath, "private\n");
@@ -228,11 +266,15 @@ describe("readiness plugin tools", () => {
     const registry = new ToolRegistry();
     registry.registerMany(readinessTools);
 
-    expect(() =>
-      registry
-        .get("readiness_read_report")!
-        .execute({ repo_path: repoPath, report_path: symlinkPath }, { surface: "discord" })
-    ).toThrow(/outside the readiness reports directory/);
+    try {
+      expect(() =>
+        registry
+          .get("readiness_read_report")!
+          .execute({ repo_path: repoPath, report_path: symlinkPath }, { surface: "discord" })
+      ).toThrow(/outside the readiness reports directory/);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
   });
 
   it("does not start a sweep when the signal is already aborted", async () => {
@@ -256,11 +298,38 @@ function tempRepo() {
 }
 
 function writeReport(repoPath: string, name: string, content: string): string {
-  const reportDir = path.join(repoPath, ".agent-readiness", "reports");
+  const reportDir = path.join(statePathForRepo(repoPath), "reports");
   fs.mkdirSync(reportDir, { recursive: true });
   const reportPath = path.join(reportDir, name);
   fs.writeFileSync(reportPath, content);
   return reportPath;
+}
+
+function gitRepo() {
+  const repoPath = tempRepo();
+  git(["init"], repoPath);
+  git(["config", "user.email", "test@example.com"], repoPath);
+  git(["config", "user.name", "Test User"], repoPath);
+  fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+  git(["add", "README.md"], repoPath);
+  git(["commit", "-m", "Initial commit"], repoPath);
+  return repoPath;
+}
+
+function statePathForRepo(repoPath: string): string {
+  return targetStatePath(normalizedTargetRef(parseTargetRef(repoPath)));
+}
+
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }
 
 function testContext(repoPath: string): ToolContext {

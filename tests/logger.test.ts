@@ -29,7 +29,7 @@ describe("logger", () => {
     expect(output).not.toContain("tool-token");
   });
 
-  it("supports pretty log output without dropping structured context", () => {
+  it("summarizes common context in pretty log messages", () => {
     const lines: string[] = [];
     const logger = createLogger({
       level: "info",
@@ -37,14 +37,28 @@ describe("logger", () => {
       stream: { write: (message) => lines.push(message) }
     });
 
-    logger.info({ workflow_name: "readiness_sweep", run_id: 123 }, "readiness_sweep.started");
+    logger.info(
+      {
+        workflow_name: "readiness_sweep",
+        run_id: 123,
+        status: "completed",
+        token_count: 456,
+        report_path: "/tmp/reports/report.md"
+      },
+      "readiness_sweep.started"
+    );
 
     const output = lines.join("");
 
     expect(output).toContain("INFO");
-    expect(output).toContain("readiness_sweep.started");
-    expect(output).toContain('workflow_name: "readiness_sweep"');
-    expect(output).toContain("run_id: 123");
+    expect(output).toContain(
+      "readiness_sweep.started run=123 status=completed tokens=456 report=report.md"
+    );
+    expect(output).not.toContain('workflow_name: "readiness_sweep"');
+    expect(output).not.toContain("run_id: 123");
+    expect(output).not.toContain('status: "completed"');
+    expect(output).not.toContain("token_count: 456");
+    expect(output).not.toContain('report_path: "/tmp/reports/report.md"');
   });
 
   it("preserves error type context for failure logs", () => {

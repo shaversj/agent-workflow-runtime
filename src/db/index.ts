@@ -7,16 +7,17 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 
 import { logger } from "../logger.js";
 import { defaultBranch, remoteUrl, repoName } from "../repository.js";
+import type { WorkspaceSummary } from "../workspaces/types.js";
 import { artifacts, repositories, runs, tasks, toolCalls } from "./schema.js";
 
-function databasePathFor(repoPath: string): string {
-  const stateDir = path.join(path.resolve(repoPath), ".agent-readiness");
+function databasePathFor(statePath: string): string {
+  const stateDir = path.resolve(statePath);
   fs.mkdirSync(stateDir, { recursive: true });
   return path.join(stateDir, "agent-ops.db");
 }
 
-function openStore(repoPath: string) {
-  const sqlite = new Database(databasePathFor(repoPath));
+function openStore(statePath: string) {
+  const sqlite = new Database(databasePathFor(statePath));
   const db = drizzle(sqlite);
   ensureSchema(sqlite);
   return { db, sqlite };
@@ -24,18 +25,26 @@ function openStore(repoPath: string) {
 
 export function createWorkflowRun(input: {
   repoPath: string;
+  statePath: string;
+  repositoryIdentity?: string;
+  repositoryName?: string;
+  repositoryRemoteUrl?: string;
+  repositoryDefaultBranch?: string;
   harnessProvider: string;
   modelRuntime: string;
   modelProvider: string;
   model: string;
+  workspace?: WorkspaceSummary;
   sourceContext?: Record<string, unknown>;
 }) {
   const absoluteRepoPath = path.resolve(input.repoPath);
-  const store = openStore(absoluteRepoPath);
+  const absoluteStatePath = path.resolve(input.statePath);
+  const repositoryIdentity = input.repositoryIdentity ?? absoluteRepoPath;
+  const store = openStore(absoluteStatePath);
   const existingRepository = store.db
     .select()
     .from(repositories)
-    .where(eq(repositories.localPath, absoluteRepoPath))
+    .where(eq(repositories.localPath, repositoryIdentity))
     .get();
 
   const repository =
@@ -43,10 +52,10 @@ export function createWorkflowRun(input: {
     store.db
       .insert(repositories)
       .values({
-        name: repoName(absoluteRepoPath),
-        localPath: absoluteRepoPath,
-        remoteUrl: remoteUrl(absoluteRepoPath),
-        defaultBranch: defaultBranch(absoluteRepoPath)
+        name: input.repositoryName ?? repoName(absoluteRepoPath),
+        localPath: repositoryIdentity,
+        remoteUrl: input.repositoryRemoteUrl ?? remoteUrl(absoluteRepoPath),
+        defaultBranch: input.repositoryDefaultBranch ?? defaultBranch(absoluteRepoPath)
       })
       .returning()
       .get();
@@ -55,8 +64,8 @@ export function createWorkflowRun(input: {
     store.db
       .update(repositories)
       .set({
-        remoteUrl: remoteUrl(absoluteRepoPath),
-        defaultBranch: defaultBranch(absoluteRepoPath),
+        remoteUrl: input.repositoryRemoteUrl ?? remoteUrl(absoluteRepoPath),
+        defaultBranch: input.repositoryDefaultBranch ?? defaultBranch(absoluteRepoPath),
         updatedAt: new Date().toISOString()
       })
       .where(eq(repositories.id, repository.id))
@@ -87,6 +96,8 @@ export function createWorkflowRun(input: {
       model: input.model,
       context: {
         repoPath: absoluteRepoPath,
+        statePath: absoluteStatePath,
+        ...(input.workspace ? { workspace: input.workspace } : {}),
         ...(input.sourceContext ? { source: input.sourceContext } : {})
       }
     })
@@ -97,7 +108,11 @@ export function createWorkflowRun(input: {
     {
       workflow_name: "readiness_sweep",
       repo_name: repository.name,
-      repo_path: absoluteRepoPath,
+      ...targetLogFields({
+        identity: repositoryIdentity,
+        remoteUrl: input.repositoryRemoteUrl
+      }),
+      state_path: absoluteStatePath,
       repository_id: repository.id,
       task_id: task.id,
       run_id: run.id,
@@ -115,6 +130,7 @@ export function createWorkflowRun(input: {
 
 export function completeWorkflowRun(input: {
   repoPath: string;
+  statePath: string;
   runId: number;
   taskId: number;
   status: "completed" | "failed" | "skipped";
@@ -125,8 +141,9 @@ export function completeWorkflowRun(input: {
   summary: string;
   reportPath: string;
   calls: { name: string; args: unknown; isError: boolean; result: unknown }[];
+  workspace?: WorkspaceSummary;
 }) {
-  const store = openStore(input.repoPath);
+  const store = openStore(input.statePath);
   store.db
     .update(runs)
     .set({
@@ -160,16 +177,13 @@ export function completeWorkflowRun(input: {
       pathOrUrl: input.reportPath
     })
     .run();
-  logger.info(
+  logger.debug(
     {
       workflow_name: "readiness_sweep",
       task_id: input.taskId,
       run_id: input.runId,
       status: input.status,
-      harness_provider: input.harnessProvider,
-      model_runtime: input.modelRuntime,
-      model_provider: input.modelProvider,
-      model: input.model,
+      state_path: input.statePath,
       report_path: input.reportPath,
       tool_call_count: input.calls.length
     },
@@ -259,4 +273,8 @@ function ensureColumn(
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function targetLogFields(input: { identity: string; remoteUrl?: string }) {
+  return input.remoteUrl ? { target_url: input.remoteUrl } : { target_path: input.identity };
 }

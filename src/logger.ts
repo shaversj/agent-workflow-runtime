@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Writable } from "node:stream";
 
 import pino, { type DestinationStream, type LoggerOptions } from "pino";
@@ -26,6 +27,7 @@ const redactPaths = [
 ];
 
 type LogFormat = "json" | "pretty";
+type PrettyLogRecord = Record<string, unknown>;
 
 interface CreateLoggerOptions {
   level?: string;
@@ -61,13 +63,63 @@ function pinoPrettyStream(destination?: DestinationStream): DestinationStream {
   return pinoPretty({
     colorize: process.stdout.isTTY && process.env.NO_COLOR !== "1",
     errorProps: "stack,message,code",
-    ignore: "pid,hostname",
+    ignore:
+      "pid,hostname,workflow_name,task_id,run_id,harness_provider,model_runtime,model_provider,model,status,repo_name,repository_id,target_path,target_url,workspace_source,workspace_path,workspace_ref,workspace_commit_sha,state_path,report_path,timeout_ms,file_count,token_count,tool_call_count",
     levelFirst: true,
+    messageFormat: prettyMessageFormat,
     singleLine: false,
     sync: true,
     translateTime: "SYS:standard",
     ...(destination ? { destination: destinationToWritable(destination) } : {})
   });
+}
+
+function prettyMessageFormat(log: PrettyLogRecord, messageKey: string): string {
+  const message = primitiveLogValue(log[messageKey]) ?? "";
+  const context = [
+    formatContextValue("run", log.run_id),
+    formatContextValue("task", log.task_id),
+    formatContextValue("repo", log.repo_name),
+    formatPathBasenameValue("target", log.target_path ?? log.target_url),
+    formatContextValue("source", log.workspace_source),
+    formatContextValue("model", log.model),
+    formatContextValue("status", log.status),
+    formatContextValue("sha", shortSha(log.workspace_commit_sha)),
+    formatContextValue("files", log.file_count),
+    formatContextValue("tokens", log.token_count),
+    formatContextValue("tools", log.tool_call_count),
+    formatDurationValue("timeout", log.timeout_ms),
+    formatPathBasenameValue("report", log.report_path)
+  ].filter(Boolean);
+  return context.length ? `${message} ${context.join(" ")}` : message;
+}
+
+function formatContextValue(label: string, value: unknown): string | undefined {
+  const rendered = primitiveLogValue(value);
+  return rendered ? `${label}=${rendered}` : undefined;
+}
+
+function primitiveLogValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value || undefined;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  return undefined;
+}
+
+function shortSha(value: unknown): string | undefined {
+  const rendered = primitiveLogValue(value);
+  return rendered ? rendered.slice(0, 12) : undefined;
+}
+
+function formatDurationValue(label: string, value: unknown): string | undefined {
+  const rendered = primitiveLogValue(value);
+  return rendered ? `${label}=${rendered}ms` : undefined;
+}
+
+function formatPathBasenameValue(label: string, value: unknown): string | undefined {
+  const rendered = primitiveLogValue(value);
+  return rendered ? `${label}=${path.basename(rendered)}` : undefined;
 }
 
 function destinationToWritable(destination: DestinationStream): NodeJS.WritableStream {

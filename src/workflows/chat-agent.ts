@@ -160,7 +160,8 @@ export async function runChatAgentWorkflow(
   if (lastWorkflowResult) {
     workflowLogger.info(
       {
-        repo_path: lastWorkflowResult.repoPath,
+        ...workflowResultTargetLogFields(lastWorkflowResult),
+        workspace_path: lastWorkflowResult.repoPath,
         run_id: lastWorkflowResult.runId,
         status: lastWorkflowResult.status,
         report_path: lastWorkflowResult.reportPath,
@@ -208,6 +209,7 @@ async function runWithoutRouterModel(
     toolName: "readiness_run_sweep",
     args: {
       repo_path: intent.repoPath,
+      ref: intent.ref,
       model: intent.model,
       timeout_ms: intent.timeoutMs
     }
@@ -323,8 +325,9 @@ function buildChatAgentPrompt(message: ChatMessage, options: ChatHandlerOptions)
 
 function renderWorkflowSummary(result: WorkflowResult): string {
   const reportName = path.basename(result.reportPath);
+  const target = result.target.origin;
   const lines = [
-    `Readiness sweep ${result.status} for ${result.repoPath}.`,
+    `Readiness sweep ${result.status} for ${target}.`,
     `Run: ${result.runId}`,
     `Tokens: ${result.usage.totalTokens}`,
     `Report: ${reportName}`
@@ -403,7 +406,9 @@ function parseReportRequest(
   if (!wantsRead && !wantsLatest) return { kind: "unsupported" };
 
   const repoPath =
-    readOptionValue(normalized, "repo") ?? readPathArgument(normalized) ?? options.defaultRepoPath;
+    readOptionValue(normalized, "repo") ??
+    readTargetArgument(normalized) ??
+    options.defaultRepoPath;
   if (!repoPath) {
     return {
       kind: "clarify",
@@ -435,12 +440,31 @@ function readOptionValue(text: string, name: string): string | undefined {
   return match?.[1] ?? match?.[2] ?? match?.[3];
 }
 
-function readPathArgument(text: string): string | undefined {
+function readTargetArgument(text: string): string | undefined {
   const quotedPath = /(?:"([^"]*(?:\/|\.)[^"]*)"|'([^']*(?:\/|\.)[^']*)')/.exec(text);
   if (quotedPath?.[1] ?? quotedPath?.[2]) return quotedPath[1] ?? quotedPath[2];
   return text
     .split(/\s+/)
-    .find((token) => token.startsWith("/") || token.startsWith("./") || token.startsWith("../"));
+    .find(
+      (token) =>
+        token.startsWith("/") ||
+        token.startsWith("./") ||
+        token.startsWith("../") ||
+        isGitUrl(token)
+    );
+}
+
+function isGitUrl(value: string): boolean {
+  return (
+    /^(?:https?|ssh|git|file):\/\//i.test(value) || /^[a-z0-9_.-]+@[a-z0-9_.-]+:.+/i.test(value)
+  );
+}
+
+function workflowResultTargetLogFields(result: WorkflowResult) {
+  if (result.target.source === "git-url") {
+    return { target_url: result.target.origin };
+  }
+  return { target_path: result.target.origin };
 }
 
 function escapeRegExp(value: string): string {
@@ -469,7 +493,12 @@ function toolResultDetails(result: unknown): unknown {
 
 function workflowResultFromDetails(details: unknown): WorkflowResult | undefined {
   if (!isRecord(details)) return undefined;
-  return typeof details.repoPath === "string" &&
+  return isRecord(details.target) &&
+    (details.target.source === "local-git" || details.target.source === "git-url") &&
+    typeof details.target.origin === "string" &&
+    typeof details.target.ref === "string" &&
+    typeof details.target.commitSha === "string" &&
+    typeof details.repoPath === "string" &&
     typeof details.runId === "number" &&
     typeof details.reportPath === "string" &&
     typeof details.status === "string" &&

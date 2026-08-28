@@ -19,6 +19,7 @@ export type ChatIntent =
       kind: "run_workflow";
       workflow: ChatWorkflowName;
       repoPath: string;
+      ref?: string;
       model?: string;
       timeoutMs?: number;
       sourceText: string;
