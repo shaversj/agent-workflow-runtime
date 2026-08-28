@@ -128,8 +128,7 @@ describe("chat agent workflow", () => {
 
     try {
       const response = await runChatAgentWorkflow(chatMessage("please use the echo tool"), {
-        availableTools: [tool],
-        defaultRepoPath: "/tmp/demo"
+        availableTools: [tool]
       });
 
       expect(mockAgentState.toolNames).toEqual(["demo_echo"]);
@@ -139,6 +138,52 @@ describe("chat agent workflow", () => {
         status: "completed",
         text: "Synthesized tool:demo"
       });
+    } finally {
+      if (originalKey) {
+        process.env.MINIMAX_API_KEY = originalKey;
+      } else {
+        delete process.env.MINIMAX_API_KEY;
+      }
+    }
+  });
+
+  it("routes deferred plugin tools through searchTools and executeTool", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    process.env.MINIMAX_API_KEY = "test-key";
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+    const tool = defineRegisteredTool({
+      pluginName: "readiness",
+      name: "run_sweep",
+      label: "Run Sweep",
+      description: "Run a readiness sweep.",
+      parameters: Type.Object({ repo_path: Type.Optional(Type.String()) }),
+      source: {
+        id: "readiness",
+        label: "Readiness"
+      },
+      exposure: "deferred",
+      readOnly: true,
+      allowedSurfaces: ["discord"],
+      execute() {
+        return {
+          result: { ok: true },
+          text: "sweep complete"
+        };
+      }
+    });
+
+    try {
+      const response = await runChatAgentWorkflow(
+        chatMessage("what readiness tools are available?"),
+        {
+          availableTools: [tool],
+          enabledPluginSources: ["readiness"]
+        }
+      );
+
+      expect(mockAgentState.toolNames).toEqual(["searchTools", "executeTool"]);
+      expect(response.kind).toBe("message");
     } finally {
       if (originalKey) {
         process.env.MINIMAX_API_KEY = originalKey;

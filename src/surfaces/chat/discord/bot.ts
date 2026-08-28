@@ -118,6 +118,7 @@ async function handleDiscordMessage(
     defaultRepoPath: botConfig.defaultRepoPath,
     defaultModel: botConfig.defaultModel,
     defaultTimeoutMs: botConfig.defaultTimeoutMs,
+    enabledPluginSources: botConfig.enabledPluginSources,
     onProgress: (event) => {
       void updateDiscordStatus(statusMessage, formatDiscordProgress(event));
     }

@@ -10,7 +10,7 @@ The current workflow is intentionally narrow:
 
 - accept requests through user-facing surfaces such as CLI and chat adapters
 - load the readiness plugin
-- expose plugin capabilities through a small tool registry for chat surfaces
+- expose enabled plugin sources through a small tool catalog for chat surfaces
 - deterministically gather a compact evidence packet from a repository
 - load the plugin's readiness interpretation skill for the LLM
 - ask MiniMax to interpret the collected evidence
@@ -59,11 +59,11 @@ src/
   harness/     shared runtime contracts, model setup, Pi tool adapters, progress, timeouts, and usage helpers
   plugins/     domain bundles with manifests, evidence recipes, tools, and skills
   surfaces/    user-facing entry surfaces such as CLI and Discord chat adapters
-  tools/       shared TypeBox tool contracts, tool registry, and report helpers
+  tools/       shared TypeBox tool contracts, tool registry, catalog bridge, and report helpers
   workflows/   orchestration such as the readiness sweep and chat tool router
 ```
 
-Evidence gathering is deterministic. Plugins bundle domain-specific manifests, recipes, tools, and skills. The registry indexes plugin tools. Chat surfaces choose the available tool set, Pi lets the model choose among those tools, and workflows connect tool execution, model interpretation, persistence, and reporting. The CLI sweep remains a direct workflow path for predictable local use.
+Evidence gathering is deterministic. Plugins bundle domain-specific manifests, recipes, tools, and skills. The registry indexes plugin tools, and the catalog exposes plugin sources to chat surfaces. Chat surfaces enable sources such as `readiness`; Pi sees stable bridge tools like `searchTools` and `executeTool`; workflows connect tool execution, model interpretation, persistence, and reporting. The CLI sweep remains a direct workflow path for predictable local use.
 
 ## Validation
 

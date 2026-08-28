@@ -12,6 +12,8 @@ import { logger } from "../logger.js";
 import { readinessTools } from "../plugins/readiness/tools.js";
 import { routeChatMessage } from "../surfaces/chat/router.js";
 import type { ChatHandlerOptions, ChatMessage, ChatResponse } from "../surfaces/chat/types.js";
+import { createCatalogBridgeTools } from "../tools/catalog-bridge.js";
+import { createToolCatalog, describeTool } from "../tools/catalog.js";
 import {
   registeredToolName,
   ToolRegistry,
@@ -31,19 +33,36 @@ export async function runChatAgentWorkflow(
   options: ChatHandlerOptions = {}
 ): Promise<ChatResponse> {
   const routed = routeChatMessage(message, options);
-  if (routed.kind === "clarify") return { kind: "clarify", text: routed.question };
 
   const modelName = options.defaultModel ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = options.defaultTimeoutMs ?? DEFAULT_CHAT_AGENT_TIMEOUT_MS;
-  const registry = createChatToolRegistry(options.availableTools ?? readinessTools);
+  const catalog = createToolCatalog({
+    tools: options.availableTools ?? readinessTools,
+    surface: message.platform,
+    enabledSources: options.enabledPluginSources
+  });
+  const registry = catalog.registry;
   const toolContext = createToolContext(message, options, modelName, timeoutMs);
-  const availableTools = registry.list({ surface: message.platform });
+  const availableTools = [
+    ...catalog.directTools,
+    ...(catalog.catalogTools.length
+      ? createCatalogBridgeTools(catalog.catalogTools, message.platform)
+      : [])
+  ];
 
   if (availableTools.length === 0) {
     return { kind: "ignored", text: "No chat tools are available for this surface." };
   }
 
   if (!process.env[MINIMAX_API_KEY_ENV]) {
+    const deterministicReportRequest = parseReportRequest(message.text, options);
+    if (
+      routed.kind === "unsupported" &&
+      "kind" in deterministicReportRequest &&
+      deterministicReportRequest.kind === "unsupported"
+    ) {
+      return { kind: "ignored", text: routed.reason };
+    }
     return runWithoutRouterModel(message, options, registry, toolContext);
   }
 
@@ -57,7 +76,11 @@ export async function runChatAgentWorkflow(
     model: modelName
   });
   workflowLogger.info(
-    { tool_names: availableTools.map((tool) => registeredToolName(tool)) },
+    {
+      tool_names: availableTools.map((tool) => registeredToolName(tool)),
+      catalog_tool_names: catalog.catalogTools.map((tool) => registeredToolName(tool)),
+      enabled_sources: catalog.sourceSummaries.map((source) => source.id)
+    },
     "chat_agent.started"
   );
 
@@ -75,7 +98,7 @@ export async function runChatAgentWorkflow(
   let turn = 0;
   const agent = new Agent({
     initialState: {
-      systemPrompt: buildChatAgentSystemPrompt(availableTools),
+      systemPrompt: buildChatAgentSystemPrompt(availableTools, catalog.catalogTools),
       model: harnessModel.model,
       thinkingLevel: "low",
       tools: toPiAgentTools(availableTools, toolContext),
@@ -161,12 +184,6 @@ export async function runChatAgentWorkflow(
     status: "completed",
     text
   };
-}
-
-function createChatToolRegistry(tools: RegisteredTool[]): ToolRegistry {
-  const registry = new ToolRegistry();
-  registry.registerMany(tools);
-  return registry;
 }
 
 async function runWithoutRouterModel(
@@ -263,16 +280,28 @@ function createToolContext(
   };
 }
 
-function buildChatAgentSystemPrompt(tools: RegisteredTool[]): string {
+function buildChatAgentSystemPrompt(
+  tools: RegisteredTool[],
+  catalogTools: RegisteredTool[]
+): string {
   const toolList = tools
     .map((tool) => `- ${registeredToolName(tool)}: ${tool.description}`)
+    .join("\n");
+  const catalogToolList = catalogTools
+    .map((tool) => {
+      const metadata = describeTool(tool);
+      return `- ${metadata.name} [source=${metadata.source}, read_only=${metadata.read_only}, requires_approval=${metadata.requires_approval}]: ${metadata.description}`;
+    })
     .join("\n");
   return `You are Agent Ops Kit's chat tool router.
 
 Available tools:
 ${toolList}
 
-Choose exactly one tool when the user asks for a repository readiness sweep or an existing readiness report.
+${catalogToolList ? `Enabled plugin tools:\n${catalogToolList}\n` : ""}
+Use searchTools to inspect enabled plugin tools when plugin tools are available through the catalog.
+Use executeTool with the exact tool_name from searchTools when you need to run a catalog tool.
+Choose exactly one final action when the user asks for a repository readiness sweep or an existing readiness report.
 Use the selected tool result to answer the user naturally.
 If a required repository path is missing, ask one concise clarification question.
 Do not invent repository paths, report paths, run IDs, or results.`;

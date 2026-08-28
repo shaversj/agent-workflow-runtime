@@ -11,11 +11,11 @@ The project should stay organized around six concepts:
 - `harness/`: shared runtime contracts, model setup, Pi tool adapters, timeout handling, usage parsing, and progress emission
 - `plugins/`: domain capability bundles containing manifests, evidence recipes, tools, and skills
 - `surfaces/`: user-facing ways to interact with the harness, such as CLI and chat adapters
-- `tools/`: shared TypeBox tool contracts, the capability registry, and generic report helpers
+- `tools/`: shared TypeBox tool contracts, the capability registry, the catalog bridge, and generic report helpers
 - `workflows/`: orchestration that connects tools, evidence, models, skills, persistence, and user-facing surfaces
 - `db/`: local SQLite persistence for workflow runs and artifacts
 
-Plugins define capabilities. The registry indexes capabilities. Pi executes capabilities as tools. Surfaces decide which tools are available. The model chooses among the available tools. Keep direct CLI workflows simple when a deterministic command path is clearer than model-based routing.
+Plugins define capabilities. The registry indexes capabilities. Capabilities carry metadata such as source, exposure, read-only intent, approval requirement, and allowed surfaces. Surfaces enable plugin sources, not individual functions, then the catalog exposes a small model-facing bridge such as `searchTools` and `executeTool`. Pi executes the selected capability locally. Keep direct CLI workflows simple when a deterministic command path is clearer than model-based routing.
 
 Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, but findings and recommendations belong to the interpretation step.
 
@@ -55,7 +55,7 @@ make discord
 2. Keep changes scoped to harness runtime, plugins, surfaces, shared tools, workflows, or persistence as appropriate.
 3. Add future domain behavior under `src/plugins/<domain>/` with a manifest first, then evidence recipes, TypeBox-backed tools, and skills as needed.
 4. Add user-facing interaction behavior under `src/surfaces/<surface>/`, keeping platform-specific formatting and identifiers at the edge.
-5. Register plugin tools through `src/tools/registry.ts`; add shared tool contracts under `src/tools/` only when multiple plugins or workflows need the same callable surface.
+5. Register plugin tools through `src/tools/registry.ts`; use source metadata and deferred exposure when a chat surface should discover tools through the catalog bridge.
 6. Run focused validation for the touched surface.
 7. Run `make check` before handoff when behavior changed.
 8. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.

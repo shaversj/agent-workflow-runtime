@@ -4,6 +4,13 @@ import type { WorkflowProgressEvent } from "../harness/types.js";
 import type { ChatPlatform } from "../surfaces/chat/types.js";
 
 export type ToolSurface = "cli" | ChatPlatform;
+export type ToolExposure = "direct" | "deferred" | "hidden";
+
+export interface ToolSource {
+  id: string;
+  label: string;
+  description?: string;
+}
 
 export interface ToolSourceContext {
   source: ToolSurface;
@@ -32,9 +39,14 @@ export interface RegisteredToolResult<TResult> {
 export interface RegisteredTool<TParameters extends TSchema = TSchema, TResult = unknown> {
   pluginName: string;
   name: string;
+  modelName?: string;
   label: string;
   description: string;
   parameters: TParameters;
+  source?: ToolSource;
+  exposure?: ToolExposure;
+  readOnly?: boolean;
+  requiresApproval?: boolean;
   allowedSurfaces?: ToolSurface[];
   execute: (
     params: unknown,
@@ -46,9 +58,14 @@ export interface RegisteredTool<TParameters extends TSchema = TSchema, TResult =
 interface TypedRegisteredTool<TParameters extends TSchema, TResult> {
   pluginName: string;
   name: string;
+  modelName?: string;
   label: string;
   description: string;
   parameters: TParameters;
+  source?: ToolSource;
+  exposure?: ToolExposure;
+  readOnly?: boolean;
+  requiresApproval?: boolean;
   allowedSurfaces?: ToolSurface[];
   execute: (
     params: Static<TParameters>,
@@ -71,6 +88,9 @@ export function defineRegisteredTool<TParameters extends TSchema, TResult>(
 interface ToolListOptions {
   surface?: ToolSurface;
   names?: string[];
+  sources?: string[];
+  includeHidden?: boolean;
+  includeApprovalRequired?: boolean;
 }
 
 export class ToolRegistry {
@@ -94,17 +114,27 @@ export class ToolRegistry {
 
   list(options: ToolListOptions = {}): RegisteredTool[] {
     const requestedNames = options.names ? new Set(options.names) : undefined;
+    const requestedSources = options.sources ? new Set(options.sources) : undefined;
     return [...this.tools.entries()]
       .filter(([name]) => !requestedNames || requestedNames.has(name))
       .map(([, tool]) => tool)
+      .filter((tool) => !requestedSources || requestedSources.has(toolSourceId(tool)))
       .filter((tool) =>
         options.surface && tool.allowedSurfaces
           ? tool.allowedSurfaces.includes(options.surface)
           : true
-      );
+      )
+      .filter((tool) => options.includeHidden || tool.exposure !== "hidden")
+      .filter((tool) => options.includeApprovalRequired || !tool.requiresApproval);
   }
 }
 
-export function registeredToolName(tool: Pick<RegisteredTool, "pluginName" | "name">): string {
-  return `${tool.pluginName}_${tool.name}`;
+export function registeredToolName(
+  tool: Pick<RegisteredTool, "pluginName" | "name" | "modelName">
+): string {
+  return tool.modelName ?? `${tool.pluginName}_${tool.name}`;
+}
+
+export function toolSourceId(tool: Pick<RegisteredTool, "pluginName" | "source">): string {
+  return tool.source?.id ?? tool.pluginName;
 }

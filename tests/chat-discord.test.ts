@@ -339,6 +339,7 @@ describe("Discord chat surface", () => {
       DISCORD_DEFAULT_REPO_PATH: "/tmp/demo",
       DISCORD_DEFAULT_MODEL: "MiniMax-M3",
       DISCORD_TIMEOUT_MS: "1000",
+      DISCORD_ENABLED_PLUGIN_SOURCES: "readiness,deploy",
       DISCORD_ALLOW_DMS: "true"
     });
 
@@ -348,6 +349,7 @@ describe("Discord chat surface", () => {
     expect(config.defaultRepoPath).toBe("/tmp/demo");
     expect(config.defaultModel).toBe("MiniMax-M3");
     expect(config.defaultTimeoutMs).toBe(1000);
+    expect([...config.enabledPluginSources]).toEqual(["readiness", "deploy"]);
     expect(config.allowDms).toBe(true);
   });
 

@@ -14,6 +14,8 @@ import {
 import { readinessTools } from "../src/plugins/readiness/tools.js";
 import { toPiAgentTools } from "../src/harness/pi-tools.js";
 import { submitReportTool } from "../src/tools/report.js";
+import { createCatalogBridgeTools } from "../src/tools/catalog-bridge.js";
+import { createToolCatalog } from "../src/tools/catalog.js";
 import { defineRegisteredTool, registeredToolName, ToolRegistry } from "../src/tools/registry.js";
 import type { ToolContext } from "../src/tools/types.js";
 
@@ -143,6 +145,58 @@ describe("tool registry", () => {
   });
 });
 
+describe("tool catalog", () => {
+  it("filters enabled plugin sources and exposes deferred tools through the catalog", () => {
+    const directTool = demoTool("core", "status", "direct");
+    const deferredTool = demoTool("readiness", "run", "deferred");
+    const hiddenTool = demoTool("readiness", "hidden", "hidden");
+    const otherSourceTool = demoTool("deploy", "release", "deferred");
+
+    const catalog = createToolCatalog({
+      tools: [directTool, deferredTool, hiddenTool, otherSourceTool],
+      surface: "discord",
+      enabledSources: ["readiness"]
+    });
+
+    expect(catalog.directTools).toEqual([]);
+    expect(catalog.catalogTools.map((tool) => registeredToolName(tool))).toEqual(["readiness_run"]);
+    expect(catalog.hiddenTools.map((tool) => registeredToolName(tool))).toEqual([
+      "readiness_hidden"
+    ]);
+    expect(catalog.registry.get("readiness_run")).toBeDefined();
+    expect(catalog.registry.get("core_status")).toBeUndefined();
+    expect(catalog.registry.get("deploy_release")).toBeUndefined();
+  });
+
+  it("lets the model search and execute catalog tools through stable bridge names", async () => {
+    const calls: unknown[] = [];
+    const readinessRunTool = demoTool("readiness", "run_sweep", "deferred", (params) => {
+      calls.push(params);
+      return {
+        result: { ok: true },
+        text: "sweep complete",
+        terminate: true
+      };
+    });
+    const [searchTools, executeTool] = createCatalogBridgeTools([readinessRunTool], "discord");
+
+    expect(registeredToolName(searchTools!)).toBe("searchTools");
+    expect(registeredToolName(executeTool!)).toBe("executeTool");
+
+    const searchResult = await searchTools!.execute({ query: "sweep" }, { surface: "discord" });
+    expect(searchResult.text).toContain("readiness_run_sweep");
+
+    const executeResult = await executeTool!.execute(
+      { tool_name: "readiness_run_sweep", arguments: { repo_path: "/tmp/demo" } },
+      { surface: "discord" }
+    );
+
+    expect(calls).toEqual([{ repo_path: "/tmp/demo" }]);
+    expect(executeResult.text).toBe("sweep complete");
+    expect(executeResult.terminate).toBe(true);
+  });
+});
+
 describe("readiness plugin tools", () => {
   it("reads the latest report and does not terminate the chat turn", async () => {
     const repoPath = tempRepo();
@@ -215,4 +269,35 @@ function testContext(repoPath: string): ToolContext {
     reportPath: path.join(repoPath, ".agent-readiness", "reports", "test.md"),
     calls: []
   };
+}
+
+function demoTool(
+  pluginName: string,
+  name: string,
+  exposure: "direct" | "deferred" | "hidden",
+  execute: (params: { value?: string }) => {
+    result: unknown;
+    text: string;
+    terminate?: boolean;
+  } = (params) => ({
+    result: params,
+    text: "ok"
+  })
+) {
+  return defineRegisteredTool({
+    pluginName,
+    name,
+    label: name,
+    description: `${pluginName} ${name}`,
+    parameters: Type.Object({ value: Type.Optional(Type.String()) }),
+    source: {
+      id: pluginName,
+      label: pluginName
+    },
+    exposure,
+    readOnly: true,
+    requiresApproval: false,
+    allowedSurfaces: ["discord"],
+    execute
+  });
 }

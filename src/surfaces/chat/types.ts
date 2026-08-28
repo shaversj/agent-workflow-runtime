@@ -42,6 +42,7 @@ export interface ChatRouterOptions {
 
 export interface ChatHandlerOptions extends ChatRouterOptions {
   availableTools?: RegisteredTool[];
+  enabledPluginSources?: Iterable<string>;
   onProgress?: (event: WorkflowProgressEvent) => void;
 }
 

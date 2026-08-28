@@ -11,6 +11,11 @@ import {
 } from "../../tools/registry.js";
 
 const PLUGIN_NAME = "readiness";
+const READINESS_TOOL_SOURCE = {
+  id: PLUGIN_NAME,
+  label: "Readiness",
+  description: "Repository readiness workflows and report inspection tools."
+};
 
 const RunSweepParams = Type.Object({
   repo_path: Type.Optional(
@@ -52,6 +57,10 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
     parameters: RunSweepParams,
+    source: READINESS_TOOL_SOURCE,
+    exposure: "deferred",
+    readOnly: false,
+    requiresApproval: false,
     allowedSurfaces: ["discord", "slack"],
     async execute(
       params: RunSweepParamsType,
@@ -80,6 +89,10 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Return metadata for the newest readiness report in the repository without reading the full report body.",
     parameters: GetLatestReportParams,
+    source: READINESS_TOOL_SOURCE,
+    exposure: "deferred",
+    readOnly: true,
+    requiresApproval: false,
     allowedSurfaces: ["discord", "slack"],
     execute(params: GetLatestReportParamsType, context: RegisteredToolContext) {
       const repoPath = resolveRepoPath(params.repo_path, context);
@@ -108,6 +121,10 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report.",
     parameters: ReadReportParams,
+    source: READINESS_TOOL_SOURCE,
+    exposure: "deferred",
+    readOnly: true,
+    requiresApproval: false,
     allowedSurfaces: ["discord", "slack"],
     execute(params: ReadReportParamsType, context: RegisteredToolContext) {
       const repoPath = resolveRepoPath(params.repo_path, context);
