@@ -19,6 +19,29 @@ const SearchToolsParams = Type.Object({
   max_results: Type.Optional(Type.Number({ minimum: 1, maximum: 20, default: 8 }))
 });
 
+const ToolSourceSummarySchema = Type.Object({
+  id: Type.String(),
+  label: Type.String(),
+  description: Type.Optional(Type.String()),
+  toolCount: Type.Number()
+});
+
+const ToolDescriptionSchema = Type.Object({
+  name: Type.String(),
+  source: Type.String(),
+  label: Type.String(),
+  description: Type.String(),
+  exposure: Type.Union([Type.Literal("direct"), Type.Literal("deferred"), Type.Literal("hidden")]),
+  read_only: Type.Boolean(),
+  requires_approval: Type.Boolean(),
+  allowed_surfaces: Type.Array(Type.String())
+});
+
+const SearchToolsResult = Type.Object({
+  sources: Type.Array(ToolSourceSummarySchema),
+  tools: Type.Array(ToolDescriptionSchema)
+});
+
 const ExecuteToolParams = Type.Object({
   tool_name: Type.String({ description: "Exact tool name returned by searchTools." }),
   arguments: Type.Optional(
@@ -26,6 +49,10 @@ const ExecuteToolParams = Type.Object({
       description: "JSON object arguments for the selected tool."
     })
   )
+});
+
+const ExecuteToolResult = Type.Unknown({
+  description: "The selected tool result. The selected tool validates its own result schema."
 });
 
 type SearchToolsParamsType = Static<typeof SearchToolsParams>;
@@ -47,6 +74,7 @@ function createSearchToolsTool(tools: RegisteredTool[], surface: ToolSurface): R
     description:
       "Search available plugin tools by source, name, label, and description before choosing a tool to execute.",
     parameters: SearchToolsParams,
+    resultSchema: SearchToolsResult,
     source: {
       id: "tool-catalog",
       label: "Tool Catalog",
@@ -80,6 +108,7 @@ function createExecuteToolTool(tools: RegisteredTool[], surface: ToolSurface): R
     description:
       "Execute one exact tool name returned by searchTools. Use only after selecting the intended plugin tool.",
     parameters: ExecuteToolParams,
+    resultSchema: ExecuteToolResult,
     source: {
       id: "tool-catalog",
       label: "Tool Catalog",

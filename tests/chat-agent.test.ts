@@ -121,6 +121,7 @@ describe("chat agent workflow", () => {
       label: "Echo",
       description: "Echo a value.",
       parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Object({ echoed: Type.String() }),
       allowedSurfaces: ["discord"],
       execute(params, context) {
         toolCalls.push({ params, context });
@@ -164,6 +165,7 @@ describe("chat agent workflow", () => {
       label: "Run Sweep",
       description: "Run a readiness sweep.",
       parameters: Type.Object({ repo_path: Type.Optional(Type.String()) }),
+      resultSchema: Type.Object({ ok: Type.Boolean() }),
       source: {
         id: "readiness",
         label: "Readiness"

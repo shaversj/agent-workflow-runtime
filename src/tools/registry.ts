@@ -3,6 +3,8 @@ import { Value } from "typebox/value";
 
 import type { WorkflowProgressEvent } from "../harness/types.js";
 
+const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
+
 export type ToolSurface = "cli" | "discord" | "slack";
 export type ToolExposure = "direct" | "deferred" | "hidden";
 
@@ -45,13 +47,19 @@ export interface RegisteredToolResult<TResult> {
   terminate?: boolean;
 }
 
-export interface RegisteredTool<TParameters extends TSchema = TSchema, TResult = unknown> {
+export interface RegisteredTool<
+  TParameters extends TSchema = TSchema,
+  TResult = unknown,
+  TResultSchema extends TSchema = TSchema
+> {
+  readonly [registeredToolBrand]: true;
   pluginName: string;
   name: string;
   modelName?: string;
   label: string;
   description: string;
   parameters: TParameters;
+  resultSchema: TResultSchema;
   source?: ToolSource;
   exposure?: ToolExposure;
   readOnly?: boolean;
@@ -64,13 +72,14 @@ export interface RegisteredTool<TParameters extends TSchema = TSchema, TResult =
   ) => Promise<RegisteredToolResult<TResult>> | RegisteredToolResult<TResult>;
 }
 
-interface TypedRegisteredTool<TParameters extends TSchema, TResult> {
+interface TypedRegisteredTool<TParameters extends TSchema, TResultSchema extends TSchema> {
   pluginName: string;
   name: string;
   modelName?: string;
   label: string;
   description: string;
   parameters: TParameters;
+  resultSchema: TResultSchema;
   source?: ToolSource;
   exposure?: ToolExposure;
   readOnly?: boolean;
@@ -80,18 +89,38 @@ interface TypedRegisteredTool<TParameters extends TSchema, TResult> {
     params: Static<TParameters>,
     context: RegisteredToolContext,
     signal?: AbortSignal
-  ) => Promise<RegisteredToolResult<TResult>> | RegisteredToolResult<TResult>;
+  ) =>
+    | Promise<RegisteredToolResult<Static<TResultSchema>>>
+    | RegisteredToolResult<Static<TResultSchema>>;
 }
 
-export function defineRegisteredTool<TParameters extends TSchema, TResult>(
-  tool: TypedRegisteredTool<TParameters, TResult>
-): RegisteredTool<TParameters, TResult> {
+export function defineRegisteredTool<TParameters extends TSchema, TResultSchema extends TSchema>(
+  tool: TypedRegisteredTool<TParameters, TResultSchema>
+): RegisteredTool<TParameters, Static<TResultSchema>, TResultSchema> {
   return {
     ...tool,
+    [registeredToolBrand]: true,
     execute(params, context, signal) {
-      return tool.execute(validateToolParameters(tool, params), context, signal);
+      const output = tool.execute(validateToolParameters(tool, params), context, signal);
+      if (isPromiseLike(output)) {
+        return output.then((result) => validateToolResult(tool, result));
+      }
+      return validateToolResult(tool, output);
     }
   };
+}
+
+export class UnvalidatedToolError extends Error {
+  constructor(toolName: string) {
+    super(`Tool must be created with defineRegisteredTool: ${toolName}`);
+    this.name = "UnvalidatedToolError";
+  }
+}
+
+function assertRegisteredTool(tool: RegisteredTool): void {
+  if (tool[registeredToolBrand] !== true) {
+    throw new UnvalidatedToolError(registeredToolName(tool));
+  }
 }
 
 export class ToolParameterValidationError extends Error {
@@ -101,8 +130,15 @@ export class ToolParameterValidationError extends Error {
   }
 }
 
-function validateToolParameters<TParameters extends TSchema, TResult>(
-  tool: TypedRegisteredTool<TParameters, TResult>,
+export class ToolResultValidationError extends Error {
+  constructor(toolName: string, errors: string[]) {
+    super(`Invalid result for ${toolName}: ${errors.join("; ")}`);
+    this.name = "ToolResultValidationError";
+  }
+}
+
+function validateToolParameters<TParameters extends TSchema, TResultSchema extends TSchema>(
+  tool: TypedRegisteredTool<TParameters, TResultSchema>,
   params: unknown
 ): Static<TParameters> {
   if (Value.Check(tool.parameters, params)) return params;
@@ -113,6 +149,29 @@ function validateToolParameters<TParameters extends TSchema, TResult>(
       return `${path} ${error.message}`;
     });
   throw new ToolParameterValidationError(registeredToolName(tool), errors);
+}
+
+function validateToolResult<TParameters extends TSchema, TResultSchema extends TSchema>(
+  tool: TypedRegisteredTool<TParameters, TResultSchema>,
+  output: RegisteredToolResult<Static<TResultSchema>>
+): RegisteredToolResult<Static<TResultSchema>> {
+  if (Value.Check(tool.resultSchema, output.result)) return output;
+  const errors = Value.Errors(tool.resultSchema, output.result)
+    .slice(0, 5)
+    .map((error) => {
+      const path = error.instancePath || "/";
+      return `${path} ${error.message}`;
+    });
+  throw new ToolResultValidationError(registeredToolName(tool), errors);
+}
+
+function isPromiseLike<T>(value: Promise<T> | T): value is Promise<T> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
 }
 
 interface ToolListOptions {
@@ -127,6 +186,7 @@ export class ToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
 
   register(tool: RegisteredTool): void {
+    assertRegisteredTool(tool);
     const key = registeredToolName(tool);
     if (this.tools.has(key)) throw new Error(`Tool already registered: ${key}`);
     this.tools.set(key, tool);

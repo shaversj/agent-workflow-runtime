@@ -1,33 +1,13 @@
+import type { Static } from "typebox";
+
+import type { HarnessUsageSchema, ToolCallRecordSchema, WorkflowResultSchema } from "./schemas.js";
 import type { WorkflowTargetSummary, WorkspaceSummary } from "../workspaces/types.js";
 
-export interface ToolCallRecord {
-  name: string;
-  args: unknown;
-  isError: boolean;
-  result: unknown;
-}
+export type ToolCallRecord = Static<typeof ToolCallRecordSchema>;
 
-export interface HarnessUsage {
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cost?: number;
-}
+export type HarnessUsage = Static<typeof HarnessUsageSchema>;
 
-export interface WorkflowResult {
-  target: WorkflowTargetSummary;
-  repoPath: string;
-  runId: number;
-  reportPath: string;
-  status: "completed" | "failed" | "skipped";
-  provider: string;
-  model: string;
-  usage: HarnessUsage;
-  toolCalls: ToolCallRecord[];
-  workspace?: WorkspaceSummary;
-  error?: string;
-}
+export type WorkflowResult = Static<typeof WorkflowResultSchema>;
 
 export type WorkflowProgressEvent =
   | { type: "workspace_prepared"; target: WorkflowTargetSummary; workspace: WorkspaceSummary }

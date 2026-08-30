@@ -1,3 +1,7 @@
+import type { Static } from "typebox";
+
+import type { WorkflowTargetSummarySchema, WorkspaceSummarySchema } from "./schemas.js";
+
 export type TargetRef =
   | {
       kind: "local-git";
@@ -10,10 +14,12 @@ export type TargetRef =
       ref?: string;
     };
 
+export type WorkspaceSource = Static<typeof WorkflowTargetSummarySchema>["source"];
+
 export interface WorkspaceLease {
   id: string;
   target: TargetRef;
-  source: TargetRef["kind"];
+  source: WorkspaceSource;
   origin: string;
   displayOrigin: string;
   ref: string;
@@ -24,21 +30,5 @@ export interface WorkspaceLease {
   cleanup: () => Promise<void>;
 }
 
-export interface WorkspaceSummary {
-  id: string;
-  source: WorkspaceLease["source"];
-  origin: string;
-  displayOrigin: string;
-  ref: string;
-  commitSha: string;
-  path: string;
-  statePath: string;
-  cleanupPolicy: WorkspaceLease["cleanupPolicy"];
-}
-
-export interface WorkflowTargetSummary {
-  source: WorkspaceLease["source"];
-  origin: string;
-  ref: string;
-  commitSha: string;
-}
+export type WorkspaceSummary = Static<typeof WorkspaceSummarySchema>;
+export type WorkflowTargetSummary = Static<typeof WorkflowTargetSummarySchema>;

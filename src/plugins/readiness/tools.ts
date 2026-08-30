@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { Type, type Static } from "typebox";
 
+import { WorkflowResultSchema } from "../../harness/schemas.js";
 import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
 import {
   defineRegisteredTool,
@@ -63,6 +64,20 @@ const ReadReportParams = Type.Object({
   max_bytes: Type.Optional(Type.Number({ minimum: 1, maximum: 50000, default: 12000 }))
 });
 
+const GetLatestReportResult = Type.Object({
+  repo_path: Type.String(),
+  report_path: Type.Optional(Type.String()),
+  bytes: Type.Number(),
+  updated_at: Type.Optional(Type.String())
+});
+
+const ReadReportResult = Type.Object({
+  repo_path: Type.String(),
+  report_path: Type.String(),
+  content: Type.String(),
+  truncated: Type.Boolean()
+});
+
 type RunSweepParamsType = Static<typeof RunSweepParams>;
 type GetLatestReportParamsType = Static<typeof GetLatestReportParams>;
 type ReadReportParamsType = Static<typeof ReadReportParams>;
@@ -75,6 +90,7 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
     parameters: RunSweepParams,
+    resultSchema: WorkflowResultSchema,
     source: READINESS_TOOL_SOURCE,
     exposure: "deferred",
     readOnly: false,
@@ -108,6 +124,7 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Return metadata for the newest readiness report in the repository without reading the full report body.",
     parameters: GetLatestReportParams,
+    resultSchema: GetLatestReportResult,
     source: READINESS_TOOL_SOURCE,
     exposure: "deferred",
     readOnly: true,
@@ -125,7 +142,7 @@ export const readinessTools: RegisteredTool[] = [
             bytes: report.bytes,
             updated_at: report.updatedAt
           }
-        : { repo_path: displayTarget, report_path: undefined, bytes: 0, updated_at: undefined };
+        : { repo_path: displayTarget, bytes: 0 };
       return {
         result,
         text: report
@@ -142,6 +159,7 @@ export const readinessTools: RegisteredTool[] = [
     description:
       "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report.",
     parameters: ReadReportParams,
+    resultSchema: ReadReportResult,
     source: READINESS_TOOL_SOURCE,
     exposure: "deferred",
     readOnly: true,

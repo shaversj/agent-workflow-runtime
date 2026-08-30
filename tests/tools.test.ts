@@ -13,8 +13,11 @@ import { createToolCatalog } from "../src/tools/catalog.js";
 import {
   defineRegisteredTool,
   registeredToolName,
+  type RegisteredTool,
   ToolParameterValidationError,
-  ToolRegistry
+  ToolResultValidationError,
+  ToolRegistry,
+  UnvalidatedToolError
 } from "../src/tools/registry.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
@@ -56,6 +59,7 @@ describe("tool registry", () => {
       label: "Echo",
       description: "Echo a value.",
       parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Object({ echoed: Type.String() }),
       execute(params, toolContext, signal) {
         calls.push({ params, context: toolContext, signal });
         return {
@@ -82,6 +86,7 @@ describe("tool registry", () => {
       label: "Echo",
       description: "Echo a value.",
       parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Object({ echoed: Type.String() }),
       execute(params) {
         return {
           result: { echoed: params.value },
@@ -92,6 +97,47 @@ describe("tool registry", () => {
 
     expect(() => tool.execute({ value: 42 }, { surface: "discord" })).toThrow(
       ToolParameterValidationError
+    );
+  });
+
+  it("rejects tools that bypass the registered tool wrapper", () => {
+    const registry = new ToolRegistry();
+    const tool = {
+      pluginName: "demo",
+      name: "raw",
+      label: "Raw",
+      description: "Raw tool.",
+      parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Object({ echoed: Type.String() }),
+      execute() {
+        return {
+          result: { echoed: 42 },
+          text: "raw"
+        };
+      }
+    } as unknown as RegisteredTool;
+
+    expect(() => registry.register(tool)).toThrow(UnvalidatedToolError);
+  });
+
+  it("validates tool results before returning to the caller", () => {
+    const tool = defineRegisteredTool({
+      pluginName: "demo",
+      name: "echo",
+      label: "Echo",
+      description: "Echo a value.",
+      parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Object({ echoed: Type.String() }),
+      execute() {
+        return {
+          result: { echoed: 42 },
+          text: "bad result"
+        };
+      }
+    });
+
+    expect(() => tool.execute({ value: "hello" }, { surface: "discord" })).toThrow(
+      ToolResultValidationError
     );
   });
 });
@@ -169,6 +215,25 @@ describe("readiness plugin tools", () => {
       expect(latest.terminate).toBe(false);
       expect(read.text).toContain("# Latest");
       expect(read.terminate).toBe(false);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+
+  it("omits optional report metadata when no report exists", async () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    const registry = new ToolRegistry();
+    registry.registerMany(readinessTools);
+
+    try {
+      const latest = await registry
+        .get("readiness_get_latest_report")!
+        .execute({ repo_path: repoPath }, { surface: "discord" });
+
+      expect(latest.result).toEqual({ repo_path: repoPath, bytes: 0 });
+      expect(latest.text).toContain("No readiness reports were found");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
     }
@@ -300,6 +365,10 @@ function demoTool(
     label: name,
     description: `${pluginName} ${name}`,
     parameters: Type.Object({ value: Type.Optional(Type.String()) }),
+    resultSchema: Type.Object({
+      ok: Type.Optional(Type.Boolean()),
+      value: Type.Optional(Type.String())
+    }),
     source: {
       id: pluginName,
       label: pluginName
