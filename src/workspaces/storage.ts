@@ -6,7 +6,7 @@ import type { TargetRef } from "./types.js";
 
 const AGENT_OPS_HOME_ENV = "AGENT_OPS_HOME";
 
-function agentOpsHome(env: NodeJS.ProcessEnv = process.env): string {
+export function agentOpsHome(env: NodeJS.ProcessEnv = process.env): string {
   return path.resolve(env[AGENT_OPS_HOME_ENV] ?? path.join(os.homedir(), ".agent-ops-kit"));
 }
 

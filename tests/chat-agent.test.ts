@@ -8,6 +8,7 @@ import { Type } from "typebox";
 
 import { defineRegisteredTool } from "../src/tools/registry.js";
 import { runChatAgentWorkflow } from "../src/workflows/chat-agent.js";
+import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import type { ChatMessage } from "../src/surfaces/chat/types.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
@@ -363,6 +364,110 @@ describe("chat agent workflow", () => {
       expect(mockAgentState.prompts).toEqual([]);
       expect(response.kind).toBe("message");
       expect(response.text).toContain(reportPath);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("handles run inspection deterministically even when MiniMax credentials are configured", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = gitRepo();
+
+    try {
+      await runSweepWorkflow(repoPath);
+      process.env.MINIMAX_API_KEY = "test-key";
+      mockAgentState.toolNames = [];
+      mockAgentState.prompts = [];
+
+      const response = await runChatAgentWorkflow(chatMessage("runs list"), {
+        defaultRepoPath: repoPath
+      });
+
+      expect(mockAgentState.toolNames).toEqual([]);
+      expect(mockAgentState.prompts).toEqual([]);
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain("status=skipped");
+      expect(response.text).toContain("tokens=0");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("asks for repo context before run list inspection in chat", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    process.env.MINIMAX_API_KEY = "test-key";
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+
+    try {
+      const response = await runChatAgentWorkflow(chatMessage("runs list"));
+
+      expect(response).toEqual({
+        kind: "clarify",
+        text: "Which repository should I use to list readiness runs?"
+      });
+      expect(mockAgentState.toolNames).toEqual([]);
+      expect(mockAgentState.prompts).toEqual([]);
+    } finally {
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("shows target-qualified run references without repo context", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = gitRepo();
+
+    try {
+      await runSweepWorkflow(repoPath);
+      const list = await runChatAgentWorkflow(chatMessage("runs list"), {
+        defaultRepoPath: repoPath
+      });
+      const runRef = list.text.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
+      expect(runRef).toBeDefined();
+
+      process.env.MINIMAX_API_KEY = "test-key";
+      mockAgentState.toolNames = [];
+      mockAgentState.prompts = [];
+      const response = await runChatAgentWorkflow(chatMessage(`show run ${runRef}`));
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain(`Run: ${runRef}`);
+      expect(response.text).toContain("Status: skipped");
+      expect(mockAgentState.toolNames).toEqual([]);
+      expect(mockAgentState.prompts).toEqual([]);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("accepts target-qualified run references with trailing sentence punctuation", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = gitRepo();
+
+    try {
+      await runSweepWorkflow(repoPath);
+      const list = await runChatAgentWorkflow(chatMessage("runs list"), {
+        defaultRepoPath: repoPath
+      });
+      const runRef = list.text.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
+      expect(runRef).toBeDefined();
+
+      const response = await runChatAgentWorkflow(chatMessage(`show run ${runRef}.`));
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain(`Run: ${runRef}`);
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);

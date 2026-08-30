@@ -9,6 +9,7 @@ import { logger } from "../logger.js";
 import { defaultBranch, remoteUrl, repoName } from "../repository.js";
 import type { WorkspaceSummary } from "../workspaces/types.js";
 import { artifacts, repositories, runs, tasks, toolCalls } from "./schema.js";
+import { quoteIdentifier } from "./sql.js";
 
 function databasePathFor(statePath: string): string {
   const stateDir = path.resolve(statePath);
@@ -138,6 +139,8 @@ export function completeWorkflowRun(input: {
   modelRuntime: string;
   modelProvider: string;
   model: string;
+  tokenCount?: number;
+  failureReason?: string;
   summary: string;
   reportPath: string;
   calls: { name: string; args: unknown; isError: boolean; result: unknown }[];
@@ -148,6 +151,8 @@ export function completeWorkflowRun(input: {
     .update(runs)
     .set({
       status: input.status,
+      tokenCount: input.tokenCount,
+      failureReason: input.failureReason,
       summary: input.summary,
       finishedAt: new Date().toISOString()
     })
@@ -226,6 +231,8 @@ function ensureSchema(sqlite: Database.Database) {
       status TEXT NOT NULL DEFAULT 'running',
       provider TEXT,
       model TEXT,
+      token_count INTEGER,
+      failure_reason TEXT,
       summary TEXT,
       context TEXT NOT NULL DEFAULT '{}',
       started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -254,6 +261,8 @@ function ensureSchema(sqlite: Database.Database) {
     );
   `);
   ensureColumn(sqlite, "run", "provider", "TEXT");
+  ensureColumn(sqlite, "run", "token_count", "INTEGER");
+  ensureColumn(sqlite, "run", "failure_reason", "TEXT");
 }
 
 function ensureColumn(
@@ -269,10 +278,6 @@ function ensureColumn(
   sqlite.exec(
     `ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${definition}`
   );
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replaceAll('"', '""')}"`;
 }
 
 function targetLogFields(input: { identity: string; remoteUrl?: string }) {

@@ -9,6 +9,114 @@ export const ToolCallRecordSchema = Type.Object({
   result: Type.Unknown()
 });
 
+const RunStatusSchema = Type.Union([
+  Type.Literal("running"),
+  Type.Literal("completed"),
+  Type.Literal("failed"),
+  Type.Literal("skipped")
+]);
+
+const InspectionToolCallSummarySchema = Type.Object({
+  name: Type.String(),
+  is_error: Type.Boolean(),
+  created_at: Type.Optional(Type.String())
+});
+
+export const InspectionRunSummarySchema = Type.Object({
+  target_key: Type.String(),
+  run_ref: Type.String(),
+  run_id: Type.Number(),
+  task_id: Type.Number(),
+  status: RunStatusSchema,
+  target: Type.String(),
+  ref: Type.Optional(Type.String()),
+  commit_sha: Type.Optional(Type.String()),
+  short_commit: Type.Optional(Type.String()),
+  report_path: Type.Optional(Type.String()),
+  token_count: Type.Optional(Type.Number()),
+  tool_call_count: Type.Number(),
+  failure_reason: Type.Optional(Type.String()),
+  harness_provider: Type.Optional(Type.String()),
+  model: Type.Optional(Type.String()),
+  started_at: Type.String(),
+  finished_at: Type.Optional(Type.String())
+});
+
+export const InspectionRunDetailSchema = Type.Object({
+  target_key: Type.String(),
+  run_ref: Type.String(),
+  run_id: Type.Number(),
+  task_id: Type.Number(),
+  status: RunStatusSchema,
+  target: Type.String(),
+  ref: Type.Optional(Type.String()),
+  commit_sha: Type.Optional(Type.String()),
+  short_commit: Type.Optional(Type.String()),
+  report_path: Type.Optional(Type.String()),
+  token_count: Type.Optional(Type.Number()),
+  tool_call_count: Type.Number(),
+  failure_reason: Type.Optional(Type.String()),
+  harness_provider: Type.Optional(Type.String()),
+  model: Type.Optional(Type.String()),
+  summary: Type.Optional(Type.String()),
+  started_at: Type.String(),
+  finished_at: Type.Optional(Type.String()),
+  tool_calls: Type.Array(InspectionToolCallSummarySchema)
+});
+
+export const InspectionReportSummarySchema = Type.Object({
+  target_key: Type.Optional(Type.String()),
+  run_ref: Type.Optional(Type.String()),
+  run_id: Type.Optional(Type.Number()),
+  status: Type.Optional(RunStatusSchema),
+  target: Type.String(),
+  ref: Type.Optional(Type.String()),
+  commit_sha: Type.Optional(Type.String()),
+  short_commit: Type.Optional(Type.String()),
+  report_path: Type.String(),
+  bytes: Type.Number(),
+  updated_at: Type.Optional(Type.String()),
+  token_count: Type.Optional(Type.Number()),
+  tool_call_count: Type.Optional(Type.Number()),
+  failure_reason: Type.Optional(Type.String())
+});
+
+export const InspectionRunListResultSchema = Type.Object({
+  runs: Type.Array(InspectionRunSummarySchema),
+  count: Type.Number()
+});
+
+export const InspectionRunShowResultSchema = Type.Union([
+  Type.Object({
+    found: Type.Literal(true),
+    run: InspectionRunDetailSchema
+  }),
+  Type.Object({
+    found: Type.Literal(false),
+    reason: Type.String(),
+    matches: Type.Optional(Type.Array(InspectionRunSummarySchema))
+  })
+]);
+
+export const InspectionLatestReportResultSchema = Type.Object({
+  repo_path: Type.String(),
+  report_path: Type.Optional(Type.String()),
+  bytes: Type.Number(),
+  updated_at: Type.Optional(Type.String()),
+  run_ref: Type.Optional(Type.String()),
+  status: Type.Optional(RunStatusSchema),
+  token_count: Type.Optional(Type.Number()),
+  tool_call_count: Type.Optional(Type.Number()),
+  failure_reason: Type.Optional(Type.String())
+});
+
+export const InspectionReadReportResultSchema = Type.Object({
+  repo_path: Type.String(),
+  report_path: Type.String(),
+  content: Type.String(),
+  truncated: Type.Boolean()
+});
+
 export const HarnessUsageSchema = Type.Object({
   requests: Type.Number(),
   inputTokens: Type.Number(),

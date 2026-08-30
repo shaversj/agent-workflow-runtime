@@ -10,6 +10,7 @@ import { readinessTools } from "../src/plugins/readiness/tools.js";
 import { toPiAgentTools } from "../src/harness/pi-tools.js";
 import { createCatalogBridgeTools } from "../src/tools/catalog-bridge.js";
 import { createToolCatalog } from "../src/tools/catalog.js";
+import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import {
   defineRegisteredTool,
   registeredToolName,
@@ -28,6 +29,8 @@ describe("tool registry", () => {
 
     expect(registry.get("readiness_run_sweep")).toBeDefined();
     expect(registry.list({ surface: "discord" }).map((tool) => registeredToolName(tool))).toEqual([
+      "readiness_list_runs",
+      "readiness_show_run",
       "readiness_run_sweep",
       "readiness_get_latest_report",
       "readiness_read_report"
@@ -195,6 +198,61 @@ describe("tool catalog", () => {
 });
 
 describe("readiness plugin tools", () => {
+  it("lists and shows readiness runs through structured tools", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    const registry = new ToolRegistry();
+    registry.registerMany(readinessTools);
+
+    try {
+      const sweep = await runSweepWorkflow(repoPath);
+      const list = await registry
+        .get("readiness_list_runs")!
+        .execute({ repo_path: repoPath }, { surface: "discord" });
+      const runRef = (list.result as { runs: { run_ref: string }[] }).runs[0]!.run_ref;
+      const show = await registry
+        .get("readiness_show_run")!
+        .execute({ run_ref: runRef }, { surface: "discord" });
+
+      expect(list.text).toContain("status=skipped");
+      expect(list.result).toMatchObject({
+        count: 1,
+        runs: [
+          {
+            run_id: sweep.runId,
+            token_count: 0,
+            failure_reason: "missing_minimax_api_key"
+          }
+        ]
+      });
+      expect(show.result).toMatchObject({
+        found: true,
+        run: {
+          run_ref: runRef,
+          tool_call_count: 1
+        }
+      });
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("requires a repository target for Discord run lists and bare run IDs", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany(readinessTools);
+
+    expect(() => registry.get("readiness_list_runs")!.execute({}, { surface: "discord" })).toThrow(
+      /Repository target is required/
+    );
+    expect(() =>
+      registry.get("readiness_show_run")!.execute({ run_ref: "1" }, { surface: "discord" })
+    ).toThrow(/Repository target is required/);
+  });
+
   it("reads the latest report and does not terminate the chat turn", async () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
@@ -234,6 +292,28 @@ describe("readiness plugin tools", () => {
 
       expect(latest.result).toEqual({ repo_path: repoPath, bytes: 0 });
       expect(latest.text).toContain("No readiness reports were found");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+
+  it("redacts credentialed Git URL targets when no report exists", async () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoTarget = "https://token:secret@example.com/org/repo.git?api_key=abc";
+    const registry = new ToolRegistry();
+    registry.registerMany(readinessTools);
+
+    try {
+      const latest = await registry
+        .get("readiness_get_latest_report")!
+        .execute({ repo_path: repoTarget }, { surface: "discord" });
+      const output = `${latest.text}\n${JSON.stringify(latest.result)}`;
+
+      expect(output).toContain("[REDACTED]");
+      expect(output).not.toContain("token");
+      expect(output).not.toContain("secret");
+      expect(output).not.toContain("abc");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
     }

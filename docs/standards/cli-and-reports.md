@@ -6,6 +6,23 @@ Keep command parsing small and delegate behavior to workflow code under `src/wor
 
 CLI output should be concise and human-readable. Always show where artifacts were written.
 
+Run/report inspection commands should read Agent Ops Kit managed state only. They should not
+prepare workspaces, clone repositories, read target repository files, or call an LLM.
+
+Prefer these command shapes:
+
+```bash
+agent-ops runs list
+agent-ops runs list /path/to/repo
+agent-ops runs show <target-key>:<run-id>
+agent-ops reports latest
+agent-ops reports latest /path/to/repo
+```
+
+Inspection output should include status, target, ref, commit, report path, token count, tool-call
+count, and failure reason when available. Render missing legacy fields as `unknown` or omit them
+when omission is clearer than false data.
+
 ## Readiness Sweeps
 
 Sweeps are read-only by default:
@@ -52,3 +69,5 @@ Reports should include enough evidence for a human or future agent to understand
 Reports should include harness status, model, token usage when available, and tool calls when available. Include any error or skipped reason.
 
 Do not include secret values, access tokens, private keys, or sensitive personal data in reports.
+Do not include credentialed Git URLs in run/report inspection output, logs, tool results, or chat
+replies.

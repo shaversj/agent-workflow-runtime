@@ -36,6 +36,21 @@ make sweep REPO=https://github.com/org/repo REF=main
 
 The sweep still records a skipped report when `MINIMAX_API_KEY` is not configured.
 
+Inspect prior runs without rerunning a sweep:
+
+```bash
+agent-ops runs list
+agent-ops runs list /path/to/repo
+agent-ops runs show <target-key>:<run-id>
+agent-ops reports latest
+agent-ops reports latest /path/to/repo
+```
+
+Run references are target-scoped because each managed target has its own SQLite database.
+Use the `<target-key>:<run-id>` value from `runs list` when inspecting across all managed
+state. Bare run IDs are only safe when a repo target is supplied or the ID is globally
+unambiguous.
+
 Run the Discord bot surface:
 
 ```bash
@@ -77,7 +92,9 @@ Plugins bundle domain-specific manifests, recipes, tools, and skills. The regist
 indexes plugin tools, and the catalog exposes plugin sources to chat surfaces. Chat surfaces
 enable sources such as `readiness`; Pi sees stable bridge tools like `searchTools` and
 `executeTool`; workflows connect tool execution, model interpretation, persistence, and reporting.
-The CLI sweep remains a direct workflow path for predictable use.
+The CLI sweep remains a direct workflow path for predictable use. Run and report inspection
+read only Agent Ops Kit managed state; they do not prepare workspaces, clone repositories,
+read target files, or call MiniMax.
 
 ## Validation
 

@@ -1,3 +1,5 @@
+import { isGitUrl } from "../../workspaces/index.js";
+
 import type { ChatRequestContext, ChatRouterOptions } from "./types.js";
 
 export function createChatRequestContext(
@@ -49,12 +51,6 @@ function readTargetArgument(text: string): string | undefined {
         item.startsWith("/") || item.startsWith("./") || item.startsWith("../") || isGitUrl(item)
     );
   return token ? cleanTargetToken(token) : undefined;
-}
-
-function isGitUrl(value: string): boolean {
-  return (
-    /^(?:https?|ssh|git|file):\/\//i.test(value) || /^[a-z0-9_.-]+@[a-z0-9_.-]+:.+/i.test(value)
-  );
 }
 
 function cleanTargetToken(value: string): string {

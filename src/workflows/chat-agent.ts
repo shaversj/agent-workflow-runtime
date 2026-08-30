@@ -10,6 +10,7 @@ import { withWorkflowTimeout } from "../harness/timeout.js";
 import type { WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
 import { assistantText } from "../harness/usage.js";
 import { createMinimaxHarnessModel } from "../harness/model.js";
+import { isTargetQualifiedInspectionRunRef } from "../db/run-ref.js";
 import { logger } from "../logger.js";
 import { readinessTools } from "../plugins/readiness/tools.js";
 import { createChatRequestContext } from "../surfaces/chat/request-context.js";
@@ -64,23 +65,19 @@ export async function runChatAgentWorkflow(
     return { kind: "ignored", text: "No chat tools are available for this surface." };
   }
 
-  const deterministicReportRequest = parseReportRequest(requestContext);
+  const deterministicInspectionRequest = parseInspectionRequest(requestContext);
   if (
-    !("kind" in deterministicReportRequest) ||
-    deterministicReportRequest.kind !== "unsupported"
+    !("kind" in deterministicInspectionRequest) ||
+    deterministicInspectionRequest.kind !== "unsupported"
   ) {
-    return runDeterministicTool(deterministicReportRequest, registry, toolContext);
+    return runDeterministicTool(deterministicInspectionRequest, registry, toolContext);
   }
 
   if (!process.env[MINIMAX_API_KEY_ENV]) {
-    if (
-      routed.kind === "unsupported" &&
-      "kind" in deterministicReportRequest &&
-      deterministicReportRequest.kind === "unsupported"
-    ) {
+    if (routed.kind === "unsupported") {
       return { kind: "ignored", text: routed.reason };
     }
-    return runWithoutRouterModel(message, options, registry, toolContext, requestContext);
+    return runWithoutRouterModel(message, options, registry, toolContext);
   }
 
   const workflowLogger = logger.child({
@@ -208,17 +205,8 @@ async function runWithoutRouterModel(
   message: ChatMessage,
   options: ChatHandlerOptions,
   registry: ToolRegistry,
-  toolContext: RegisteredToolContext,
-  requestContext: ChatRequestContext
+  toolContext: RegisteredToolContext
 ): Promise<ChatResponse> {
-  const deterministicReportRequest = parseReportRequest(requestContext);
-  if (
-    !("kind" in deterministicReportRequest) ||
-    deterministicReportRequest.kind !== "unsupported"
-  ) {
-    return runDeterministicTool(deterministicReportRequest, registry, toolContext);
-  }
-
   const intent = routeChatMessage(message, options);
   if (intent.kind === "clarify") return { kind: "clarify", text: intent.question };
   if (intent.kind === "unsupported") return { kind: "ignored", text: intent.reason };
@@ -415,14 +403,46 @@ function renderToolSummary(output: RegisteredToolResult<unknown>): string {
   return output.text;
 }
 
-function parseReportRequest(
+function parseInspectionRequest(
   request: ChatRequestContext
 ):
   | { toolName: string; args: Record<string, unknown> }
   | { kind: "clarify"; question: string }
   | { kind: "unsupported" } {
   const normalized = request.sourceText;
-  if (!/\breport\b/i.test(normalized)) return { kind: "unsupported" };
+  const runListMatch = /\b(?:runs?\s+list|list\s+runs?)\b/i.exec(normalized);
+  if (runListMatch) {
+    if (!request.repoTarget) {
+      return {
+        kind: "clarify",
+        question: "Which repository should I use to list readiness runs?"
+      };
+    }
+    return {
+      toolName: "readiness_list_runs",
+      args: { repo_path: request.repoTarget }
+    };
+  }
+
+  const showRunMatch = /\b(?:runs?\s+show|show\s+runs?)\s+([A-Za-z0-9._:-]+)/i.exec(normalized);
+  if (showRunMatch?.[1]) {
+    const runRef = showRunMatch[1];
+    if (!request.repoTarget && !isTargetQualifiedInspectionRunRef(runRef)) {
+      return {
+        kind: "clarify",
+        question: "Which repository should I use to show that readiness run?"
+      };
+    }
+    return {
+      toolName: "readiness_show_run",
+      args: {
+        run_ref: runRef,
+        repo_path: request.repoTarget
+      }
+    };
+  }
+
+  if (!/\breports?\b/i.test(normalized)) return { kind: "unsupported" };
   const wantsRead = /\b(read|show|summarize|inspect|open)\b/i.test(normalized);
   const wantsLatest = /\blatest\b/i.test(normalized) || /\bwhere\b/i.test(normalized);
   if (!wantsRead && !wantsLatest) return { kind: "unsupported" };

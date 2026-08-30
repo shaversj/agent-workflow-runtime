@@ -15,7 +15,7 @@ export function normalizedTargetRef(target: TargetRef): TargetRef {
   return { ...target, path: resolveGitRoot(path.resolve(target.path)) };
 }
 
-function isGitUrl(value: string): boolean {
+export function isGitUrl(value: string): boolean {
   return (
     /^(?:https?|ssh|git|file):\/\//i.test(value) || /^[a-z0-9_.-]+@[a-z0-9_.-]+:.+/i.test(value)
   );

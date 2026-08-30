@@ -47,6 +47,9 @@ The bot responds when mentioned in an allowed guild channel:
 @agent-ops can you check whether this repo is ready for agents?
 @agent-ops where is the latest readiness report?
 @agent-ops read the latest readiness report
+@agent-ops runs list
+@agent-ops show run <target-key>:<run-id>
+@agent-ops reports latest
 ```
 
 If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
@@ -60,9 +63,14 @@ first useful report summary, and full report path. Reports are stored in Agent O
 state on the bot host. When the file is available, the Discord reply also attaches the generated
 `.md` report.
 
+Run and report inspection requests are deterministic and read managed state only. They do not
+call MiniMax. Discord inspection uses the explicit repo in the message or
+`DISCORD_DEFAULT_REPO_PATH`; when neither is available, the bot asks for a repo instead of
+listing every managed target on the host.
+
 The Discord surface enables plugin sources for the chat-agent workflow. Pi sees a stable
 tool bridge (`searchTools` and `executeTool`) instead of every plugin function directly. The
 model searches enabled plugin tools, selects the exact tool name, and Agent Ops Kit executes
-that selected tool locally. The current readiness source can run a sweep, find the latest
-report, or read a report. Repeated delivery of the same Discord message ID is ignored in
-memory to avoid duplicate local runs.
+that selected tool locally. The current readiness source can run a sweep, list runs, show a run,
+find the latest report, or read a report. Repeated delivery of the same Discord message ID is
+ignored in memory to avoid duplicate local runs.

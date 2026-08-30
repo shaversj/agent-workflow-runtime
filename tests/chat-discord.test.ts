@@ -18,6 +18,7 @@ import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
 import { repoTargetForChatMessage } from "../src/workflows/chat-agent.js";
+import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
 describe("Discord chat surface", () => {
@@ -165,6 +166,33 @@ describe("Discord chat surface", () => {
     }
   });
 
+  it("accepts command-shaped latest report requests", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    const reportPath = writeManagedReport(repoPath, "latest.md", "# Latest Report\n");
+
+    try {
+      const message = normalizeDiscordMessage({
+        channelId: "channel-1",
+        messageId: "message-1",
+        authorId: "user-1",
+        content: "reports latest"
+      });
+
+      expect(message).toBeDefined();
+      const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain(reportPath);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
   it("reads the latest report without MiniMax credentials", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
@@ -196,6 +224,51 @@ describe("Discord chat surface", () => {
         delete process.env.MINIMAX_API_KEY;
       }
     }
+  });
+
+  it("returns run lists without MiniMax credentials", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+
+    try {
+      await runSweepWorkflow(repoPath);
+      const message = normalizeDiscordMessage({
+        channelId: "channel-1",
+        messageId: "message-1",
+        authorId: "user-1",
+        content: "runs list"
+      });
+
+      expect(message).toBeDefined();
+      const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain("status=skipped");
+      expect(response.text).toContain("tokens=0");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("asks for repo context before Discord run list inspection", async () => {
+    const message = normalizeDiscordMessage({
+      channelId: "channel-1",
+      messageId: "message-1",
+      authorId: "user-1",
+      content: "runs list"
+    });
+
+    expect(message).toBeDefined();
+    const response = await handleChatMessage(message!);
+
+    expect(response).toEqual({
+      kind: "clarify",
+      text: "Which repository should I use to list readiness runs?"
+    });
   });
 
   it("renders Discord replies within the message size limit", () => {

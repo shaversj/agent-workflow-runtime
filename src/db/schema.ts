@@ -51,6 +51,8 @@ export const runs = sqliteTable("run", {
   status: text("status").notNull().default("running"),
   provider: text("provider"),
   model: text("model"),
+  tokenCount: integer("token_count"),
+  failureReason: text("failure_reason"),
   summary: text("summary"),
   context: text("context", { mode: "json" }).notNull().default({}),
   startedAt: text("started_at")

@@ -1,0 +1,152 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { runReportsCli } from "../src/surfaces/cli/reports.js";
+import { runRunsCli } from "../src/surfaces/cli/runs.js";
+import { runSweepWorkflow } from "../src/workflows/sweep.js";
+
+describe("inspection CLI", () => {
+  afterEach(() => {
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("lists and shows managed readiness runs", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+
+    try {
+      const result = await runSweepWorkflow(repoPath);
+      const listOutput = captureStdout(() => runRunsCli(["list", repoPath]));
+      const runRef = listOutput.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
+
+      expect(listOutput).toContain("Recent readiness sweep runs:");
+      expect(listOutput).toContain("status=skipped");
+      expect(listOutput).toContain("tokens=0");
+      expect(listOutput).toContain("tools=1");
+      expect(runRef).toBeDefined();
+
+      const showOutput = captureStdout(() => runRunsCli(["show", runRef!]));
+      expect(showOutput).toContain(`Run: ${runRef}`);
+      expect(showOutput).toContain("Status: skipped");
+      expect(showOutput).toContain(`Report: ${result.reportPath}`);
+      expect(showOutput).toContain("Failure reason: missing_minimax_api_key");
+      expect(showOutput).toContain("Tool call details:");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("prints ambiguity for duplicate bare run IDs", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+
+    try {
+      await runSweepWorkflow(gitRepo());
+      await runSweepWorkflow(gitRepo());
+
+      const output = captureStdout(() => runRunsCli(["show", "1"]));
+
+      expect(output).toContain("ambiguous");
+      expect(output).toContain("Recent readiness sweep runs:");
+      expect(process.exitCode).toBe(1);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("rejects invalid run list limits", () => {
+    expect(() => runRunsCli(["list", "--limit", "0"])).toThrow(
+      /--limit must be an integer between 1 and 100/
+    );
+    expect(() => runRunsCli(["list", "--limit", "101"])).toThrow(
+      /--limit must be an integer between 1 and 100/
+    );
+    expect(() => runRunsCli(["list", "--limit", "2abc"])).toThrow(
+      /--limit must be an integer between 1 and 100/
+    );
+  });
+
+  it("prints latest report metadata", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+
+    try {
+      const result = await runSweepWorkflow(repoPath);
+      const output = captureStdout(() => runReportsCli(["latest", repoPath]));
+
+      expect(output).toContain("Latest readiness report");
+      expect(output).toContain(`Report: ${fs.realpathSync(result.reportPath)}`);
+      expect(output).toContain("Run: local-git-");
+      expect(output).toContain("Status: skipped");
+      expect(output).toContain("Tokens: 0");
+      expect(output).toContain("Tool calls: 1");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("redacts credentialed Git URL targets when no report exists", () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoTarget = "https://token:secret@example.com/org/repo.git?api_key=abc";
+
+    try {
+      const output = captureStdout(() => runReportsCli(["latest", repoTarget]));
+
+      expect(output).toContain("[REDACTED]");
+      expect(output).not.toContain("token");
+      expect(output).not.toContain("secret");
+      expect(output).not.toContain("abc");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+});
+
+function captureStdout(run: () => void): string {
+  const lines: string[] = [];
+  vi.spyOn(console, "log").mockImplementation((line = "") => {
+    lines.push(String(line));
+  });
+  run();
+  return lines.join("\n");
+}
+
+function gitRepo(): string {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+  git(["init"], repoPath);
+  git(["config", "user.email", "test@example.com"], repoPath);
+  git(["config", "user.name", "Test User"], repoPath);
+  fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+  git(["add", "README.md"], repoPath);
+  git(["commit", "-m", "Initial commit"], repoPath);
+  return repoPath;
+}
+
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
