@@ -2,8 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
+import { Value } from "typebox/value";
 
 import { toPiAgentTools } from "../harness/pi-tools.js";
+import { WorkflowResultSchema } from "../harness/schemas.js";
 import { withWorkflowTimeout } from "../harness/timeout.js";
 import type { WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
 import { assistantText } from "../harness/usage.js";
@@ -488,20 +490,7 @@ function toolResultDetails(result: unknown): unknown {
 }
 
 function workflowResultFromDetails(details: unknown): WorkflowResult | undefined {
-  if (!isRecord(details)) return undefined;
-  return isRecord(details.target) &&
-    (details.target.source === "local-git" || details.target.source === "git-url") &&
-    typeof details.target.origin === "string" &&
-    typeof details.target.ref === "string" &&
-    typeof details.target.commitSha === "string" &&
-    typeof details.repoPath === "string" &&
-    typeof details.runId === "number" &&
-    typeof details.reportPath === "string" &&
-    typeof details.status === "string" &&
-    typeof details.provider === "string" &&
-    typeof details.model === "string"
-    ? (details as unknown as WorkflowResult)
-    : undefined;
+  return Value.Check(WorkflowResultSchema, details) ? details : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

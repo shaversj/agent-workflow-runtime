@@ -13,7 +13,8 @@ import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/wor
 
 const mockAgentState = vi.hoisted(() => ({
   toolNames: [] as string[],
-  prompts: [] as string[]
+  prompts: [] as string[],
+  stopDecisions: [] as boolean[]
 }));
 
 vi.mock("@earendil-works/pi-agent-core", () => {
@@ -41,6 +42,7 @@ vi.mock("@earendil-works/pi-agent-core", () => {
     initialState: {
       tools: MockTool[];
     };
+    shouldStopAfterTurn?: (state: { toolResults: MockToolResult[] }) => boolean;
   }
 
   type MockAgentEvent = Record<string, unknown>;
@@ -78,6 +80,12 @@ vi.mock("@earendil-works/pi-agent-core", () => {
           result,
           isError: false
         });
+        const shouldStop = this.options.shouldStopAfterTurn?.({ toolResults: [result] }) ?? false;
+        mockAgentState.stopDecisions.push(shouldStop);
+        if (shouldStop) {
+          this.listener?.({ type: "agent_end", messages: [] });
+          return;
+        }
         this.listener?.({
           type: "agent_end",
           messages: [
@@ -114,6 +122,7 @@ describe("chat agent workflow", () => {
     process.env.MINIMAX_API_KEY = "test-key";
     mockAgentState.toolNames = [];
     mockAgentState.prompts = [];
+    mockAgentState.stopDecisions = [];
     const toolCalls: unknown[] = [];
     const tool = defineRegisteredTool({
       pluginName: "demo",
@@ -201,6 +210,137 @@ describe("chat agent workflow", () => {
     }
   });
 
+  it("renders valid workflow details as a readiness workflow summary", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    process.env.MINIMAX_API_KEY = "test-key";
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+    mockAgentState.stopDecisions = [];
+    const workflowResult = workflowDetails();
+    const tool = defineRegisteredTool({
+      pluginName: "readiness",
+      name: "run_sweep",
+      label: "Run Sweep",
+      description: "Run a readiness sweep.",
+      parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Unknown(),
+      allowedSurfaces: ["discord"],
+      execute() {
+        return {
+          result: workflowResult,
+          text: "workflow complete",
+          terminate: true
+        };
+      }
+    });
+
+    try {
+      const response = await runChatAgentWorkflow(chatMessage("sweep this repo"), {
+        availableTools: [tool]
+      });
+
+      expect(response).toMatchObject({
+        kind: "message",
+        status: "completed",
+        result: workflowResult
+      });
+      expect(response.text).toContain("Readiness sweep completed for /tmp/demo.");
+      expect(response.text).toContain("Run: 42");
+      expect(response.text).toContain("Tokens: 30");
+      expect(mockAgentState.stopDecisions).toEqual([true]);
+    } finally {
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("treats incomplete workflow-like details as ordinary tool output", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    process.env.MINIMAX_API_KEY = "test-key";
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+    mockAgentState.stopDecisions = [];
+    const incompleteWorkflowDetails = {
+      ...workflowDetails(),
+      usage: undefined
+    };
+    const tool = defineRegisteredTool({
+      pluginName: "demo",
+      name: "incomplete",
+      label: "Incomplete",
+      description: "Return incomplete workflow-like details.",
+      parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Unknown(),
+      allowedSurfaces: ["discord"],
+      execute() {
+        return {
+          result: incompleteWorkflowDetails,
+          text: "ordinary output",
+          terminate: false
+        };
+      }
+    });
+
+    try {
+      const response = await runChatAgentWorkflow(chatMessage("inspect this"), {
+        availableTools: [tool]
+      });
+
+      expect(response).toMatchObject({
+        kind: "message",
+        status: "completed",
+        text: "Synthesized ordinary output"
+      });
+      expect("result" in response).toBe(false);
+      expect(mockAgentState.stopDecisions).toEqual([false]);
+    } finally {
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("treats workflow-like details with an invalid status as ordinary tool output", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    process.env.MINIMAX_API_KEY = "test-key";
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+    mockAgentState.stopDecisions = [];
+    const invalidWorkflowDetails = {
+      ...workflowDetails(),
+      status: "done"
+    };
+    const tool = defineRegisteredTool({
+      pluginName: "demo",
+      name: "invalid_status",
+      label: "Invalid Status",
+      description: "Return workflow-like details with an invalid status.",
+      parameters: Type.Object({ value: Type.String() }),
+      resultSchema: Type.Unknown(),
+      allowedSurfaces: ["discord"],
+      execute() {
+        return {
+          result: invalidWorkflowDetails,
+          text: "ordinary output",
+          terminate: false
+        };
+      }
+    });
+
+    try {
+      const response = await runChatAgentWorkflow(chatMessage("inspect this"), {
+        availableTools: [tool]
+      });
+
+      expect(response).toMatchObject({
+        kind: "message",
+        status: "completed",
+        text: "Synthesized ordinary output"
+      });
+      expect("result" in response).toBe(false);
+      expect(mockAgentState.stopDecisions).toEqual([false]);
+    } finally {
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
   it("handles report lookup deterministically even when MiniMax credentials are configured", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     const originalHome = process.env.AGENT_OPS_HOME;
@@ -237,6 +377,37 @@ function chatMessage(text: string): ChatMessage {
     messageId: "message-1",
     userId: "user-1",
     text
+  };
+}
+
+function workflowDetails() {
+  return {
+    target: {
+      source: "local-git",
+      origin: "/tmp/demo",
+      ref: "HEAD",
+      commitSha: "abc123"
+    },
+    repoPath: "/tmp/demo-workspace",
+    runId: 42,
+    reportPath: "/tmp/demo/.agent-readiness/reports/latest.md",
+    status: "completed",
+    provider: "agent-ops-kit",
+    model: "MiniMax-M3",
+    usage: {
+      requests: 1,
+      inputTokens: 10,
+      outputTokens: 20,
+      totalTokens: 30
+    },
+    toolCalls: [
+      {
+        name: "collect_readiness_evidence",
+        args: {},
+        isError: false,
+        result: {}
+      }
+    ]
   };
 }
 
