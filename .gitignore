@@ -15,3 +15,6 @@ __pycache__/
 
 # Local agent readiness output
 .agent-readiness/
+
+# Local planning artifacts
+docs/plans/
