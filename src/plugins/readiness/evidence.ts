@@ -16,19 +16,19 @@ const ignoredDirs = new Set([
   "__pycache__"
 ]);
 
-export interface ReadinessEvidenceFile {
+interface ReadinessEvidenceFile {
   path: string;
   excerpt: string;
   truncated: boolean;
 }
 
-export interface ReadinessEvidenceSearchResult {
+interface ReadinessEvidenceSearchResult {
   path: string;
   line: number;
   text: string;
 }
 
-export interface ReadinessEvidence {
+interface ReadinessEvidence {
   plugin: string;
   evidence_recipe: string;
   redaction: ReadinessEvidenceRedaction;
@@ -44,7 +44,7 @@ export interface ReadinessEvidence {
   searches: Record<string, ReadinessEvidenceSearchResult[]>;
 }
 
-export interface ReadinessEvidenceRedaction {
+interface ReadinessEvidenceRedaction {
   ignored_file_count: number;
   ignored_files: string[];
   redacted_occurrences: number;

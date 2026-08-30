@@ -36,7 +36,7 @@ deadcode:
 build:
 	pnpm build
 
-check: format-check lint test typecheck build
+check: format-check lint test typecheck deadcode build
 
 sweep:
 	pnpm sweep -- "$(REPO)" $(HARNESS_FLAGS)

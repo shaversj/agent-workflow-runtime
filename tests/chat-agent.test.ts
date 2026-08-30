@@ -1,9 +1,15 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 
 import { defineRegisteredTool } from "../src/tools/registry.js";
 import { runChatAgentWorkflow } from "../src/workflows/chat-agent.js";
 import type { ChatMessage } from "../src/surfaces/chat/types.js";
+import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
 
 const mockAgentState = vi.hoisted(() => ({
   toolNames: [] as string[],
@@ -192,6 +198,34 @@ describe("chat agent workflow", () => {
       }
     }
   });
+
+  it("handles report lookup deterministically even when MiniMax credentials are configured", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.MINIMAX_API_KEY = "test-key";
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    mockAgentState.toolNames = [];
+    mockAgentState.prompts = [];
+    const repoPath = gitRepo();
+    const reportPath = writeManagedReport(repoPath, "latest.md", "# Latest Report\n");
+
+    try {
+      const response = await runChatAgentWorkflow(
+        chatMessage("where is the latest readiness report?"),
+        {
+          defaultRepoPath: repoPath
+        }
+      );
+
+      expect(mockAgentState.toolNames).toEqual([]);
+      expect(mockAgentState.prompts).toEqual([]);
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain(reportPath);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
 });
 
 function chatMessage(text: string): ChatMessage {
@@ -202,4 +236,38 @@ function chatMessage(text: string): ChatMessage {
     userId: "user-1",
     text
   };
+}
+
+function gitRepo() {
+  const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+  git(["init"], repoPath);
+  git(["config", "user.email", "test@example.com"], repoPath);
+  git(["config", "user.name", "Test User"], repoPath);
+  fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n");
+  git(["add", "README.md"], repoPath);
+  git(["commit", "-m", "Initial commit"], repoPath);
+  return repoPath;
+}
+
+function writeManagedReport(repoPath: string, name: string, content: string): string {
+  const reportDir = path.join(
+    targetStatePath(normalizedTargetRef(parseTargetRef(repoPath))),
+    "reports"
+  );
+  fs.mkdirSync(reportDir, { recursive: true });
+  const reportPath = path.join(reportDir, name);
+  fs.writeFileSync(reportPath, content);
+  return reportPath;
+}
+
+function git(args: string[], cwd: string): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
 }

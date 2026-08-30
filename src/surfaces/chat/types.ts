@@ -1,7 +1,7 @@
 import type { WorkflowProgressEvent, WorkflowResult } from "../../harness/types.js";
-import type { RegisteredTool } from "../../tools/registry.js";
+import type { RegisteredTool, ToolRequestContext, ToolSurface } from "../../tools/registry.js";
 
-export type ChatPlatform = "discord" | "slack";
+export type ChatPlatform = Extract<ToolSurface, "discord" | "slack">;
 export type ChatWorkflowName = "readiness_sweep";
 
 export interface ChatMessage {
@@ -39,6 +39,11 @@ export interface ChatRouterOptions {
   defaultRepoPath?: string;
   defaultModel?: string;
   defaultTimeoutMs?: number;
+}
+
+export interface ChatRequestContext extends ToolRequestContext {
+  sourceText: string;
+  explicitRepoTarget?: string;
 }
 
 export interface ChatHandlerOptions extends ChatRouterOptions {

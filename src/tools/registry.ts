@@ -1,9 +1,9 @@
 import type { Static, TSchema } from "typebox";
+import { Value } from "typebox/value";
 
 import type { WorkflowProgressEvent } from "../harness/types.js";
-import type { ChatPlatform } from "../surfaces/chat/types.js";
 
-export type ToolSurface = "cli" | ChatPlatform;
+export type ToolSurface = "cli" | "discord" | "slack";
 export type ToolExposure = "direct" | "deferred" | "hidden";
 
 export interface ToolSource {
@@ -23,11 +23,20 @@ export interface ToolSourceContext {
 
 export interface RegisteredToolContext {
   surface: ToolSurface;
-  defaultRepoPath?: string;
+  requestContext?: ToolRequestContext;
   model?: string;
   timeoutMs?: number;
   sourceContext?: ToolSourceContext;
   onProgress?: (event: WorkflowProgressEvent) => void;
+}
+
+export interface ToolRequestContext {
+  sourceText?: string;
+  repoTarget?: string;
+  ref?: string;
+  reportPath?: string;
+  model?: string;
+  timeoutMs?: number;
 }
 
 export interface RegisteredToolResult<TResult> {
@@ -80,9 +89,30 @@ export function defineRegisteredTool<TParameters extends TSchema, TResult>(
   return {
     ...tool,
     execute(params, context, signal) {
-      return tool.execute(params as Static<TParameters>, context, signal);
+      return tool.execute(validateToolParameters(tool, params), context, signal);
     }
   };
+}
+
+export class ToolParameterValidationError extends Error {
+  constructor(toolName: string, errors: string[]) {
+    super(`Invalid parameters for ${toolName}: ${errors.join("; ")}`);
+    this.name = "ToolParameterValidationError";
+  }
+}
+
+function validateToolParameters<TParameters extends TSchema, TResult>(
+  tool: TypedRegisteredTool<TParameters, TResult>,
+  params: unknown
+): Static<TParameters> {
+  if (Value.Check(tool.parameters, params)) return params;
+  const errors = Value.Errors(tool.parameters, params)
+    .slice(0, 5)
+    .map((error) => {
+      const path = error.instancePath || "/";
+      return `${path} ${error.message}`;
+    });
+  throw new ToolParameterValidationError(registeredToolName(tool), errors);
 }
 
 interface ToolListOptions {

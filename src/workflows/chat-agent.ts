@@ -10,10 +10,12 @@ import { assistantText } from "../harness/usage.js";
 import { createMinimaxHarnessModel } from "../harness/model.js";
 import { logger } from "../logger.js";
 import { readinessTools } from "../plugins/readiness/tools.js";
+import { createChatRequestContext } from "../surfaces/chat/request-context.js";
 import { routeChatMessage } from "../surfaces/chat/router.js";
 import type {
   ChatHandlerOptions,
   ChatMessage,
+  ChatRequestContext,
   ChatResponse,
   ChatRouterOptions
 } from "../surfaces/chat/types.js";
@@ -37,21 +39,18 @@ export async function runChatAgentWorkflow(
   message: ChatMessage,
   options: ChatHandlerOptions = {}
 ): Promise<ChatResponse> {
+  const requestContext = createChatRequestContext(message.text, options);
   const routed = routeChatMessage(message, options);
-  const effectiveOptions = {
-    ...options,
-    defaultRepoPath: repoTargetForChatMessage(message, options, routed)
-  };
 
-  const modelName = effectiveOptions.defaultModel ?? DEFAULT_HARNESS_MODEL;
-  const timeoutMs = effectiveOptions.defaultTimeoutMs ?? DEFAULT_CHAT_AGENT_TIMEOUT_MS;
+  const modelName = requestContext.model ?? DEFAULT_HARNESS_MODEL;
+  const timeoutMs = requestContext.timeoutMs ?? DEFAULT_CHAT_AGENT_TIMEOUT_MS;
   const catalog = createToolCatalog({
-    tools: effectiveOptions.availableTools ?? readinessTools,
+    tools: options.availableTools ?? readinessTools,
     surface: message.platform,
-    enabledSources: effectiveOptions.enabledPluginSources
+    enabledSources: options.enabledPluginSources
   });
   const registry = catalog.registry;
-  const toolContext = createToolContext(message, effectiveOptions, modelName, timeoutMs);
+  const toolContext = createToolContext(message, requestContext, options, modelName, timeoutMs);
   const availableTools = [
     ...catalog.directTools,
     ...(catalog.catalogTools.length
@@ -63,8 +62,15 @@ export async function runChatAgentWorkflow(
     return { kind: "ignored", text: "No chat tools are available for this surface." };
   }
 
+  const deterministicReportRequest = parseReportRequest(requestContext);
+  if (
+    !("kind" in deterministicReportRequest) ||
+    deterministicReportRequest.kind !== "unsupported"
+  ) {
+    return runDeterministicTool(deterministicReportRequest, registry, toolContext);
+  }
+
   if (!process.env[MINIMAX_API_KEY_ENV]) {
-    const deterministicReportRequest = parseReportRequest(message.text, effectiveOptions);
     if (
       routed.kind === "unsupported" &&
       "kind" in deterministicReportRequest &&
@@ -72,7 +78,7 @@ export async function runChatAgentWorkflow(
     ) {
       return { kind: "ignored", text: routed.reason };
     }
-    return runWithoutRouterModel(message, effectiveOptions, registry, toolContext);
+    return runWithoutRouterModel(message, options, registry, toolContext, requestContext);
   }
 
   const workflowLogger = logger.child({
@@ -143,7 +149,7 @@ export async function runChatAgentWorkflow(
 
   try {
     await withWorkflowTimeout(
-      agent.prompt(buildChatAgentPrompt(message, effectiveOptions, routed)),
+      agent.prompt(buildChatAgentPrompt(message, options, routed, requestContext)),
       timeoutMs,
       () => {
         agent.abort();
@@ -200,9 +206,10 @@ async function runWithoutRouterModel(
   message: ChatMessage,
   options: ChatHandlerOptions,
   registry: ToolRegistry,
-  toolContext: RegisteredToolContext
+  toolContext: RegisteredToolContext,
+  requestContext: ChatRequestContext
 ): Promise<ChatResponse> {
-  const deterministicReportRequest = parseReportRequest(message.text, options);
+  const deterministicReportRequest = parseReportRequest(requestContext);
   if (
     !("kind" in deterministicReportRequest) ||
     deterministicReportRequest.kind !== "unsupported"
@@ -270,13 +277,14 @@ async function runDeterministicTool(
 
 function createToolContext(
   message: ChatMessage,
+  requestContext: ChatRequestContext,
   options: ChatHandlerOptions,
   model: string,
   timeoutMs: number
 ): RegisteredToolContext {
   return {
     surface: message.platform,
-    defaultRepoPath: options.defaultRepoPath,
+    requestContext,
     model,
     timeoutMs,
     onProgress: options.onProgress,
@@ -321,15 +329,14 @@ Do not invent repository paths, report paths, run IDs, or results.`;
 function buildChatAgentPrompt(
   message: ChatMessage,
   options: ChatHandlerOptions,
-  routed: ReturnType<typeof routeChatMessage>
+  routed: ReturnType<typeof routeChatMessage>,
+  requestContext: ChatRequestContext
 ): string {
   return JSON.stringify(
     {
       message: message.text,
       surface: message.platform,
-      default_repo_path: options.defaultRepoPath,
-      default_model: options.defaultModel,
-      default_timeout_ms: options.defaultTimeoutMs,
+      request_context: requestContext,
       routed_request: routed.kind === "run_workflow" ? routed : undefined
     },
     null,
@@ -407,22 +414,18 @@ function renderToolSummary(output: RegisteredToolResult<unknown>): string {
 }
 
 function parseReportRequest(
-  text: string,
-  options: ChatHandlerOptions
+  request: ChatRequestContext
 ):
   | { toolName: string; args: Record<string, unknown> }
   | { kind: "clarify"; question: string }
   | { kind: "unsupported" } {
-  const normalized = text.trim();
+  const normalized = request.sourceText;
   if (!/\breport\b/i.test(normalized)) return { kind: "unsupported" };
   const wantsRead = /\b(read|show|summarize|inspect|open)\b/i.test(normalized);
   const wantsLatest = /\blatest\b/i.test(normalized) || /\bwhere\b/i.test(normalized);
   if (!wantsRead && !wantsLatest) return { kind: "unsupported" };
 
-  const repoPath =
-    readOptionValue(normalized, "repo") ??
-    readTargetArgument(normalized) ??
-    options.defaultRepoPath;
+  const repoPath = request.repoTarget;
   if (!repoPath) {
     return {
       kind: "clarify",
@@ -435,8 +438,7 @@ function parseReportRequest(
         toolName: "readiness_read_report",
         args: {
           repo_path: repoPath,
-          report_path:
-            readOptionValue(normalized, "report") ?? readOptionValue(normalized, "report-path")
+          report_path: request.reportPath
         }
       }
     : {
@@ -445,56 +447,13 @@ function parseReportRequest(
       };
 }
 
-function readOptionValue(text: string, name: string): string | undefined {
-  const pattern = new RegExp(
-    String.raw`(?:--${escapeRegExp(name)}|${escapeRegExp(name)}[=:])\s*(?:"([^"]+)"|'([^']+)'|([^\s]+))`,
-    "i"
-  );
-  const match = pattern.exec(text);
-  return match?.[1] ?? match?.[2] ?? match?.[3];
-}
-
-function readTargetArgument(text: string): string | undefined {
-  const quotedPath = /(?:"([^"]*(?:\/|\.)[^"]*)"|'([^']*(?:\/|\.)[^']*)')/.exec(text);
-  const quotedTarget = quotedPath?.[1] ?? quotedPath?.[2];
-  if (quotedTarget) return cleanTargetToken(quotedTarget);
-  const token = text
-    .split(/\s+/)
-    .find(
-      (token) =>
-        token.startsWith("/") ||
-        token.startsWith("./") ||
-        token.startsWith("../") ||
-        isGitUrl(token)
-    );
-  return token ? cleanTargetToken(token) : undefined;
-}
-
-function isGitUrl(value: string): boolean {
-  return (
-    /^(?:https?|ssh|git|file):\/\//i.test(value) || /^[a-z0-9_.-]+@[a-z0-9_.-]+:.+/i.test(value)
-  );
-}
-
 export function repoTargetForChatMessage(
   message: ChatMessage,
   options: ChatRouterOptions,
   routed: ReturnType<typeof routeChatMessage> = routeChatMessage(message, options)
 ): string | undefined {
   if (routed.kind === "run_workflow") return routed.repoPath;
-  const repoOption = readOptionValue(message.text, "repo");
-  return (
-    (repoOption ? cleanTargetToken(repoOption) : undefined) ??
-    readTargetArgument(message.text) ??
-    options.defaultRepoPath
-  );
-}
-
-function cleanTargetToken(value: string): string {
-  return value
-    .trim()
-    .replace(/^<(.+)>$/, "$1")
-    .replace(/[),.;]+$/, "");
+  return createChatRequestContext(message.text, options).repoTarget;
 }
 
 function workflowResultTargetLogFields(result: WorkflowResult) {

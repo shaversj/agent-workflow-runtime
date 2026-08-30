@@ -1,43 +1,6 @@
-import fs from "node:fs";
 import path from "node:path";
 
-import { Type, type Static } from "typebox";
-
-import type { ToolContext, WorkflowTool } from "./types.js";
 import type { WorkspaceSummary } from "../workspaces/types.js";
-
-const SubmitReportParams = Type.Object({
-  markdown: Type.String({
-    description:
-      "Complete Markdown report. Include findings, passed signals, optional standards that may not be needed, and next steps."
-  })
-});
-
-type SubmitReportParamsType = Static<typeof SubmitReportParams>;
-
-export const submitReportTool: WorkflowTool<
-  typeof SubmitReportParams,
-  { report_path: string; bytes: number }
-> = {
-  name: "submit_readiness_report",
-  label: "Submit report",
-  description:
-    "Write the final readiness sweep report. Call this exactly once after inspecting enough repository evidence.",
-  parameters: SubmitReportParams,
-  execute(params: SubmitReportParamsType, context: ToolContext) {
-    fs.mkdirSync(path.dirname(context.reportPath), { recursive: true });
-    const markdown = renderReportEnvelope(context.repoPath, params.markdown, {
-      workspace: context.workspace
-    });
-    fs.writeFileSync(context.reportPath, markdown, "utf8");
-    const result = { report_path: context.reportPath, bytes: Buffer.byteLength(markdown) };
-    return {
-      result,
-      text: JSON.stringify(result, null, 2),
-      terminate: true
-    };
-  }
-};
 
 export function renderReportEnvelope(
   repoPath: string,

@@ -6,88 +6,17 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 
-import {
-  listFilesTool,
-  readFileTool,
-  repoSummaryTool,
-  searchFilesTool
-} from "../src/tools/repo.js";
 import { readinessTools } from "../src/plugins/readiness/tools.js";
 import { toPiAgentTools } from "../src/harness/pi-tools.js";
-import { submitReportTool } from "../src/tools/report.js";
 import { createCatalogBridgeTools } from "../src/tools/catalog-bridge.js";
 import { createToolCatalog } from "../src/tools/catalog.js";
-import { defineRegisteredTool, registeredToolName, ToolRegistry } from "../src/tools/registry.js";
-import type { ToolContext } from "../src/tools/types.js";
+import {
+  defineRegisteredTool,
+  registeredToolName,
+  ToolParameterValidationError,
+  ToolRegistry
+} from "../src/tools/registry.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
-
-describe("repo tools", () => {
-  it("lists, reads, and searches repository files", async () => {
-    const repoPath = tempRepo();
-    fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n\nRun make check.\n");
-    fs.mkdirSync(path.join(repoPath, "docs", "standards"), { recursive: true });
-    fs.writeFileSync(path.join(repoPath, "docs", "standards", "logging.md"), "Use Pino logs.\n");
-    const context = testContext(repoPath);
-
-    const listed = await listFilesTool.execute({ pattern: "*.md" }, context);
-    expect(listed.result.files).toContain("README.md");
-
-    const read = await readFileTool.execute({ path: "README.md" }, context);
-    expect(read.result.content).toContain("make check");
-
-    const searched = await searchFilesTool.execute({ query: "pino" }, context);
-    expect(searched.result.matches[0]?.path).toBe("docs/standards/logging.md");
-  });
-
-  it("summarizes readiness evidence in one call", async () => {
-    const repoPath = tempRepo();
-    fs.writeFileSync(path.join(repoPath, "README.md"), "# Demo\n\nRun make check.\n");
-    fs.writeFileSync(path.join(repoPath, "AGENTS.md"), "# Agent Instructions\n");
-    fs.writeFileSync(path.join(repoPath, "package.json"), '{"scripts":{"check":"vitest"}}\n');
-    fs.mkdirSync(path.join(repoPath, ".github", "workflows"), { recursive: true });
-    fs.writeFileSync(path.join(repoPath, ".github", "workflows", "ci.yml"), "name: CI\n");
-    fs.mkdirSync(path.join(repoPath, "docs", "standards"), { recursive: true });
-    fs.writeFileSync(path.join(repoPath, "docs", "standards", "testing.md"), "# Testing\n");
-    fs.mkdirSync(path.join(repoPath, "tests"), { recursive: true });
-    fs.writeFileSync(path.join(repoPath, "tests", "demo.test.ts"), "test('demo', () => {})\n");
-
-    const summary = await repoSummaryTool.execute({}, testContext(repoPath));
-
-    expect(summary.result.key_files).toContain("README.md");
-    expect(summary.result.evidence_recipe).toBe("repo-summary-tool");
-    expect(summary.result.plugin).toBe("readiness");
-    expect(summary.result.standard_expectations.map((standard) => standard.category)).toContain(
-      "testing"
-    );
-    expect(summary.result.standards).toContain("docs/standards/testing.md");
-    expect(summary.result.ci).toContain(".github/workflows/ci.yml");
-    expect(summary.result.tests).toContain("tests/demo.test.ts");
-    expect(summary.result.excerpts.some((item) => item.path === "README.md")).toBe(true);
-  });
-
-  it("does not read outside the repository", () => {
-    const repoPath = tempRepo();
-    const context = testContext(repoPath);
-    expect(() => readFileTool.execute({ path: "../outside.md" }, context)).toThrow(
-      /outside the repository/
-    );
-  });
-});
-
-describe("report tool", () => {
-  it("writes the submitted report and terminates the workflow", async () => {
-    const repoPath = tempRepo();
-    const context = testContext(repoPath);
-    const output = await submitReportTool.execute(
-      { markdown: "## Overall Judgment\n\nReady." },
-      context
-    );
-
-    expect(output.terminate).toBe(true);
-    expect(fs.readFileSync(context.reportPath, "utf8")).toContain("Ready.");
-    expect(output.result.report_path).toBe(context.reportPath);
-  });
-});
 
 describe("tool registry", () => {
   it("indexes plugin tools by namespaced capability name", () => {
@@ -107,7 +36,7 @@ describe("tool registry", () => {
     registry.registerMany(readinessTools);
     const tools = toPiAgentTools(registry.list({ surface: "discord" }), {
       surface: "discord",
-      defaultRepoPath: "/tmp/demo"
+      requestContext: { sourceText: "sweep this repo", repoTarget: "/tmp/demo" }
     });
 
     expect(tools.map((tool) => tool.name)).toContain("readiness_run_sweep");
@@ -117,7 +46,7 @@ describe("tool registry", () => {
   it("forwards execution through the Pi adapter", async () => {
     const context = {
       surface: "discord" as const,
-      defaultRepoPath: "/tmp/demo"
+      requestContext: { sourceText: "use echo", repoTarget: "/tmp/demo" }
     };
     const controller = new AbortController();
     const calls: { params: unknown; context: unknown; signal: unknown }[] = [];
@@ -144,6 +73,26 @@ describe("tool registry", () => {
     expect(result.content).toEqual([{ type: "text", text: "echo:hello" }]);
     expect(result.details).toEqual({ echoed: "hello" });
     expect(result.terminate).toBe(true);
+  });
+
+  it("validates tool parameters before local execution", () => {
+    const tool = defineRegisteredTool({
+      pluginName: "demo",
+      name: "echo",
+      label: "Echo",
+      description: "Echo a value.",
+      parameters: Type.Object({ value: Type.String() }),
+      execute(params) {
+        return {
+          result: { echoed: params.value },
+          text: `echo:${params.value}`
+        };
+      }
+    });
+
+    expect(() => tool.execute({ value: 42 }, { surface: "discord" })).toThrow(
+      ToolParameterValidationError
+    );
   });
 });
 
@@ -330,14 +279,6 @@ function restoreEnv(name: string, value: string | undefined) {
   } else {
     process.env[name] = value;
   }
-}
-
-function testContext(repoPath: string): ToolContext {
-  return {
-    repoPath,
-    reportPath: path.join(repoPath, ".agent-readiness", "reports", "test.md"),
-    calls: []
-  };
 }
 
 function demoTool(

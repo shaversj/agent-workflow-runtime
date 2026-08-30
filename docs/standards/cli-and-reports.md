@@ -37,6 +37,7 @@ The readiness sweep should be a workflow that loads a plugin, gathers determinis
 - Give each plugin a small manifest that names its authority and capabilities.
 - Keep deterministic evidence recipes with the plugin that uses them.
 - Define tool inputs and outputs with TypeBox.
+- Validate TypeBox tool inputs at the registered-tool execution boundary before invoking plugin code.
 - Put shared runtime contracts and helpers under `src/harness/`.
 - Put shared tool contracts and generic helpers under `src/tools/`.
 - Put durable prompts with the plugin or workflow that owns them.

@@ -8,7 +8,7 @@ export function git(args: string[], cwd?: string): string {
   }).trim();
 }
 
-export function tryGit(args: string[], cwd?: string): string | undefined {
+function tryGit(args: string[], cwd?: string): string | undefined {
   try {
     const output = git(args, cwd);
     return output || undefined;
@@ -27,9 +27,4 @@ export function resolveCommit(repoPath: string, ref = "HEAD"): string {
   const commit = tryGit(["rev-parse", "--verify", `${ref}^{commit}`], repoPath);
   if (!commit) throw new Error(`Could not resolve git ref '${ref}' in ${repoPath}`);
   return commit;
-}
-
-export function remoteDefaultBranch(repoPath: string): string | undefined {
-  const symbolic = tryGit(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoPath);
-  return symbolic?.replace(/^origin\//, "");
 }

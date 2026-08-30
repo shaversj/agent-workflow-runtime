@@ -172,7 +172,7 @@ export const readinessTools: RegisteredTool[] = [
 ];
 
 function resolveRepoTarget(repoTarget: string | undefined, context: RegisteredToolContext): string {
-  const resolved = repoTarget ?? context.defaultRepoPath;
+  const resolved = repoTarget ?? context.requestContext?.repoTarget;
   if (!resolved) {
     throw new Error("Repository target is required.");
   }

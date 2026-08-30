@@ -10,10 +10,6 @@ export function parseTargetRef(input: string, ref?: string): TargetRef {
   return { kind: "local-git", path: path.resolve(trimmed), ref };
 }
 
-export function targetDisplayName(target: TargetRef): string {
-  return target.kind === "git-url" ? target.url : path.resolve(target.path);
-}
-
 export function normalizedTargetRef(target: TargetRef): TargetRef {
   if (target.kind === "git-url") return target;
   return { ...target, path: resolveGitRoot(path.resolve(target.path)) };

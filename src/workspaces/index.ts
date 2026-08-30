@@ -1,9 +1,4 @@
 export { prepareWorkspace, safeGitUrlForDisplay, workspaceSummary } from "./prepare.js";
-export { parseTargetRef, normalizedTargetRef, targetDisplayName } from "./target.js";
-export { agentOpsHome, targetStatePath } from "./storage.js";
-export type {
-  TargetRef,
-  WorkspaceLease,
-  WorkspaceSummary,
-  WorkflowTargetSummary
-} from "./types.js";
+export { parseTargetRef, normalizedTargetRef } from "./target.js";
+export { targetStatePath } from "./storage.js";
+export type { TargetRef, WorkspaceLease, WorkflowTargetSummary } from "./types.js";

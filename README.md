@@ -86,5 +86,6 @@ make format
 make lint
 make test
 make typecheck
+make deadcode
 make check
 ```
