@@ -88,10 +88,13 @@ src/
 Evidence gathering is deterministic. Sweeps resolve a local git path or Git URL into a managed
 workspace lease, inspect that checkout, record the target ref and commit, then clean up the
 workspace. Local path sweeps inspect committed git state, not uncommitted working tree changes.
-Plugins bundle domain-specific manifests, recipes, tools, and skills. The registry
-indexes plugin tools, and the catalog exposes plugin sources to chat surfaces. Chat surfaces
-enable sources such as `readiness`; Pi sees stable bridge tools like `searchTools` and
-`executeTool`; workflows connect tool execution, model interpretation, persistence, and reporting.
+Plugins bundle domain-specific manifests, recipes, tools, and skills. The manifest
+defines plugin source identity, authority, default exposure, default approval policy,
+default surface policy, and tool summaries. Registered tools define TypeBox input/output
+schemas and execution. The registry indexes plugin tools, and the catalog exposes plugin
+sources to chat surfaces. Chat surfaces enable sources such as `readiness`; Pi sees stable
+bridge tools like `searchTools` and `executeTool`; workflows connect tool execution,
+model interpretation, persistence, and reporting.
 The CLI sweep remains a direct workflow path for predictable use. Run and report inspection
 read only Agent Ops Kit managed state; they do not prepare workspaces, clone repositories,
 read target files, or call MiniMax.

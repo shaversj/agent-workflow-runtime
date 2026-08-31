@@ -20,18 +20,13 @@ import {
 } from "../../db/inspection.js";
 import { isTargetQualifiedInspectionRunRef } from "../../db/run-ref.js";
 import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
+import { definePlugin } from "../manifest.js";
+import { readinessPluginManifest } from "./manifest.js";
 import {
   defineRegisteredTool,
   type RegisteredTool,
   type RegisteredToolContext
 } from "../../tools/registry.js";
-
-const PLUGIN_NAME = "readiness";
-const READINESS_TOOL_SOURCE = {
-  id: PLUGIN_NAME,
-  label: "Readiness",
-  description: "Repository readiness workflows and report inspection tools."
-};
 
 const RunSweepParams = Type.Object({
   repo_path: Type.Optional(
@@ -102,153 +97,133 @@ type ShowRunParamsType = Static<typeof ShowRunParams>;
 type GetLatestReportParamsType = Static<typeof GetLatestReportParams>;
 type ReadReportParamsType = Static<typeof ReadReportParams>;
 
-export const readinessTools: RegisteredTool[] = [
-  defineRegisteredTool({
-    pluginName: PLUGIN_NAME,
-    name: "list_runs",
-    label: "List Readiness Runs",
-    description:
-      "List recent readiness sweep runs from managed Agent Ops Kit state without reading repository files.",
-    parameters: ListRunsParams,
-    resultSchema: InspectionRunListResultSchema,
-    source: READINESS_TOOL_SOURCE,
-    exposure: "deferred",
-    readOnly: true,
-    requiresApproval: false,
-    allowedSurfaces: ["discord"],
-    execute(params: ListRunsParamsType, context: RegisteredToolContext) {
-      const repoTarget = resolveRepoTargetForRemote(params.repo_path, context);
-      const result = listInspectionRuns({ repoTarget, limit: params.limit });
-      return {
-        result,
-        text: renderRunListText(result.runs),
-        terminate: false
-      };
-    }
-  }),
-  defineRegisteredTool({
-    pluginName: PLUGIN_NAME,
-    name: "show_run",
-    label: "Show Readiness Run",
-    description:
-      "Show one readiness sweep run from managed Agent Ops Kit state without reading repository files.",
-    parameters: ShowRunParams,
-    resultSchema: InspectionRunShowResultSchema,
-    source: READINESS_TOOL_SOURCE,
-    exposure: "deferred",
-    readOnly: true,
-    requiresApproval: false,
-    allowedSurfaces: ["discord"],
-    execute(params: ShowRunParamsType, context: RegisteredToolContext) {
-      const repoTarget = resolveRepoTargetForRunRef(params.run_ref, params.repo_path, context);
-      const result = showInspectionRun(params.run_ref, { repoTarget });
-      return {
-        result,
-        text: renderRunShowText(result),
-        terminate: false
-      };
-    }
-  }),
-  defineRegisteredTool({
-    pluginName: PLUGIN_NAME,
-    name: "run_sweep",
-    label: "Run Readiness Sweep",
-    description:
-      "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
-    parameters: RunSweepParams,
-    resultSchema: WorkflowResultSchema,
-    source: READINESS_TOOL_SOURCE,
-    exposure: "deferred",
-    readOnly: false,
-    requiresApproval: false,
-    allowedSurfaces: ["discord"],
-    async execute(
-      params: RunSweepParamsType,
-      context: RegisteredToolContext,
-      signal?: AbortSignal
-    ) {
-      const repoTarget = resolveRepoTarget(params.repo_path, context);
-      const result = await runSweepWorkflow(repoTarget, {
-        ref: params.ref,
-        model: params.model ?? context.model ?? DEFAULT_HARNESS_MODEL,
-        timeoutMs: params.timeout_ms ?? context.timeoutMs,
-        onProgress: context.onProgress,
-        sourceContext: context.sourceContext,
-        signal
-      });
-      return {
-        result,
-        text: renderSweepToolText(result),
-        terminate: true
-      };
-    }
-  }),
-  defineRegisteredTool({
-    pluginName: PLUGIN_NAME,
-    name: "get_latest_report",
-    label: "Get Latest Readiness Report",
-    description:
-      "Return metadata for the newest readiness report in the repository without reading the full report body.",
-    parameters: GetLatestReportParams,
-    resultSchema: InspectionLatestReportResultSchema,
-    source: READINESS_TOOL_SOURCE,
-    exposure: "deferred",
-    readOnly: true,
-    requiresApproval: false,
-    allowedSurfaces: ["discord"],
-    execute(params: GetLatestReportParamsType, context: RegisteredToolContext) {
-      const repoTarget = resolveRepoTarget(params.repo_path, context);
-      const report = getLatestInspectionReport({ repoTarget });
-      const result = report
-        ? {
-            repo_path: report.target,
-            report_path: report.report_path,
-            bytes: report.bytes,
-            updated_at: report.updated_at,
-            run_ref: report.run_ref,
-            status: report.status,
-            token_count: report.token_count,
-            tool_call_count: report.tool_call_count,
-            failure_reason: report.failure_reason
-          }
-        : { repo_path: displayInspectionTarget(repoTarget), bytes: 0 };
-      return {
-        result,
-        text: report
-          ? `Latest readiness report: ${report.report_path}`
-          : `No readiness reports were found for ${displayInspectionTarget(repoTarget)}.`,
-        terminate: false
-      };
-    }
-  }),
-  defineRegisteredTool({
-    pluginName: PLUGIN_NAME,
-    name: "read_report",
-    label: "Read Readiness Report",
-    description:
-      "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report.",
-    parameters: ReadReportParams,
-    resultSchema: InspectionReadReportResultSchema,
-    source: READINESS_TOOL_SOURCE,
-    exposure: "deferred",
-    readOnly: true,
-    requiresApproval: false,
-    allowedSurfaces: ["discord"],
-    execute(params: ReadReportParamsType, context: RegisteredToolContext) {
-      const repoTarget = resolveRepoTarget(params.repo_path, context);
-      const result = readInspectionReport({
-        repoTarget,
-        reportPath: params.report_path,
-        maxBytes: params.max_bytes
-      });
-      return {
-        result,
-        text: JSON.stringify(result, null, 2),
-        terminate: false
-      };
-    }
-  })
-];
+const readinessPlugin = definePlugin({
+  manifest: readinessPluginManifest,
+  tools: [
+    defineRegisteredTool({
+      pluginName: readinessPluginManifest.name,
+      name: "list_runs",
+      label: "List Readiness Runs",
+      description:
+        "List recent readiness sweep runs from managed Agent Ops Kit state without reading repository files.",
+      parameters: ListRunsParams,
+      resultSchema: InspectionRunListResultSchema,
+      execute(params: ListRunsParamsType, context: RegisteredToolContext) {
+        const repoTarget = resolveRepoTargetForRemote(params.repo_path, context);
+        const result = listInspectionRuns({ repoTarget, limit: params.limit });
+        return {
+          result,
+          text: renderRunListText(result.runs),
+          terminate: false
+        };
+      }
+    }),
+    defineRegisteredTool({
+      pluginName: readinessPluginManifest.name,
+      name: "show_run",
+      label: "Show Readiness Run",
+      description:
+        "Show one readiness sweep run from managed Agent Ops Kit state without reading repository files.",
+      parameters: ShowRunParams,
+      resultSchema: InspectionRunShowResultSchema,
+      execute(params: ShowRunParamsType, context: RegisteredToolContext) {
+        const repoTarget = resolveRepoTargetForRunRef(params.run_ref, params.repo_path, context);
+        const result = showInspectionRun(params.run_ref, { repoTarget });
+        return {
+          result,
+          text: renderRunShowText(result),
+          terminate: false
+        };
+      }
+    }),
+    defineRegisteredTool({
+      pluginName: readinessPluginManifest.name,
+      name: "run_sweep",
+      label: "Run Readiness Sweep",
+      description:
+        "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
+      parameters: RunSweepParams,
+      resultSchema: WorkflowResultSchema,
+      async execute(
+        params: RunSweepParamsType,
+        context: RegisteredToolContext,
+        signal?: AbortSignal
+      ) {
+        const repoTarget = resolveRepoTarget(params.repo_path, context);
+        const result = await runSweepWorkflow(repoTarget, {
+          ref: params.ref,
+          model: params.model ?? context.model ?? DEFAULT_HARNESS_MODEL,
+          timeoutMs: params.timeout_ms ?? context.timeoutMs,
+          onProgress: context.onProgress,
+          sourceContext: context.sourceContext,
+          signal
+        });
+        return {
+          result,
+          text: renderSweepToolText(result),
+          terminate: true
+        };
+      }
+    }),
+    defineRegisteredTool({
+      pluginName: readinessPluginManifest.name,
+      name: "get_latest_report",
+      label: "Get Latest Readiness Report",
+      description:
+        "Return metadata for the newest readiness report in the repository without reading the full report body.",
+      parameters: GetLatestReportParams,
+      resultSchema: InspectionLatestReportResultSchema,
+      execute(params: GetLatestReportParamsType, context: RegisteredToolContext) {
+        const repoTarget = resolveRepoTarget(params.repo_path, context);
+        const report = getLatestInspectionReport({ repoTarget });
+        const result = report
+          ? {
+              repo_path: report.target,
+              report_path: report.report_path,
+              bytes: report.bytes,
+              updated_at: report.updated_at,
+              run_ref: report.run_ref,
+              status: report.status,
+              token_count: report.token_count,
+              tool_call_count: report.tool_call_count,
+              failure_reason: report.failure_reason
+            }
+          : { repo_path: displayInspectionTarget(repoTarget), bytes: 0 };
+        return {
+          result,
+          text: report
+            ? `Latest readiness report: ${report.report_path}`
+            : `No readiness reports were found for ${displayInspectionTarget(repoTarget)}.`,
+          terminate: false
+        };
+      }
+    }),
+    defineRegisteredTool({
+      pluginName: readinessPluginManifest.name,
+      name: "read_report",
+      label: "Read Readiness Report",
+      description:
+        "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report.",
+      parameters: ReadReportParams,
+      resultSchema: InspectionReadReportResultSchema,
+      execute(params: ReadReportParamsType, context: RegisteredToolContext) {
+        const repoTarget = resolveRepoTarget(params.repo_path, context);
+        const result = readInspectionReport({
+          repoTarget,
+          reportPath: params.report_path,
+          maxBytes: params.max_bytes
+        });
+        return {
+          result,
+          text: JSON.stringify(result, null, 2),
+          terminate: false
+        };
+      }
+    })
+  ]
+});
+
+export const readinessTools: RegisteredTool[] = readinessPlugin.tools;
 
 function resolveRepoTarget(repoTarget: string | undefined, context: RegisteredToolContext): string {
   const resolved = repoTarget ?? context.requestContext?.repoTarget;

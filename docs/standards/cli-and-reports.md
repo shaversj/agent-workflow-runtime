@@ -51,7 +51,13 @@ The readiness sweep should be a workflow that loads a plugin, gathers determinis
 ## Plugins, Tools, Skills, Workflows
 
 - Put domain-specific capabilities under `src/plugins/<domain>/`.
-- Give each plugin a small manifest that names its authority and capabilities.
+- Give each plugin a TypeBox-validated manifest that names its source identity,
+  authority, capabilities, default exposure, default approval policy, default surface policy,
+  and tool summaries.
+- Use the manifest for plugin-level defaults. Use registered tools for TypeBox input/output
+  schemas, execution, and only the metadata overrides that differ from the plugin default.
+- Model plugin authority separately for inspected target access, Agent Ops Kit managed-state
+  access, and network access.
 - Keep deterministic evidence recipes with the plugin that uses them.
 - Define tool inputs and outputs with TypeBox.
 - Validate TypeBox tool inputs before invoking plugin code, and validate tool results before returning them to the caller.
