@@ -59,8 +59,8 @@ The readiness sweep should be a workflow that loads a plugin, gathers determinis
 - Model plugin authority separately for inspected target access, Agent Ops Kit managed-state
   access, and network access.
 - Keep deterministic evidence recipes with the plugin that uses them.
-- Define tool inputs and outputs with TypeBox.
-- Validate TypeBox tool inputs before invoking plugin code, and validate tool results before returning them to the caller.
+- Follow [Runtime Contracts](runtime-contracts.md) for TypeBox boundary validation,
+  tool inputs, tool outputs, workflow results, and manual narrowing rules.
 - Put shared runtime contracts and helpers under `src/harness/`.
 - Put shared tool contracts and generic helpers under `src/tools/`.
 - Put durable prompts with the plugin or workflow that owns them.

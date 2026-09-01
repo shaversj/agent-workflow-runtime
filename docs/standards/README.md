@@ -9,7 +9,8 @@ Consult the relevant standard before changing the related surface:
 - [Dependency Management](dependency-management.md) - `pnpm`, Node.js versions, lockfile handling
 - [Formatting](formatting.md) - Prettier, ESLint, and TypeScript compiler formatting boundaries
 - [Testing](testing.md) - test organization, coverage expectations, verification evidence
-- [Database](database.md) - Drizzle, TypeBox-shaped data, SQLite state, schema review
+- [Runtime Contracts](runtime-contracts.md) - TypeBox validation, boundary parsing, workflow and tool result contracts
+- [Database](database.md) - Drizzle, SQLite state, schema review
 - [CLI and Reports](cli-and-reports.md) - CLI commands, local output, report behavior
 - [Logging](logging.md) - Pino events, levels, context, privacy
 - [Static Analysis](static-analysis.md) - TypeScript, ESLint, Knip, and future Semgrep checks

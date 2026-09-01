@@ -81,6 +81,7 @@ Consult these standards when making changes:
 - [Dependency Management](docs/standards/dependency-management.md)
 - [Formatting](docs/standards/formatting.md)
 - [Testing](docs/standards/testing.md)
+- [Runtime Contracts](docs/standards/runtime-contracts.md)
 - [Database](docs/standards/database.md)
 - [CLI and Reports](docs/standards/cli-and-reports.md)
 - [Logging](docs/standards/logging.md)

@@ -4,7 +4,8 @@
 
 Use Drizzle for persisted SQLite tables. Keep table definitions under `src/db/schema.ts`.
 
-Use TypeBox for tool input/output schemas and API-shaped data contracts. Do not duplicate schema definitions by hand when a TypeBox contract can be reused at a boundary.
+Use [Runtime Contracts](runtime-contracts.md) for TypeBox guidance at API-shaped
+boundaries and database-read projections.
 
 ## Schema Changes
 
