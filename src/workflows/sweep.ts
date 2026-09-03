@@ -10,6 +10,10 @@ import type { ToolCallRecord, WorkflowProgressEvent, WorkflowResult } from "../h
 import { assistantText, emptyUsage, usageFromAssistant } from "../harness/usage.js";
 import { withWorkflowTimeout } from "../harness/timeout.js";
 import { logger } from "../logger.js";
+import type { GitHubEvidenceClientOptions } from "../plugins/github/client.js";
+import { gatherGitHubEvidenceForWorkspace } from "../plugins/github/evidence.js";
+import { renderGitHubContext } from "../plugins/github/report.js";
+import type { GitHubEvidence } from "../plugins/github/schemas.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
   buildReadinessInterpretationPrompt,
@@ -30,6 +34,7 @@ const MODEL_PROVIDER = "minimax";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
+const DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS = 10_000;
 const WORKFLOW_LOG_NAME = "readiness_sweep";
 
 interface WorkflowSourceContext {
@@ -50,6 +55,7 @@ export async function runSweepWorkflow(
     onProgress?: (event: WorkflowProgressEvent) => void;
     sourceContext?: WorkflowSourceContext;
     signal?: AbortSignal;
+    github?: GitHubEvidenceClientOptions;
   } = {}
 ): Promise<WorkflowResult> {
   assertNotAborted(options.signal);
@@ -69,6 +75,7 @@ async function runSweepWorkspace(
     onProgress?: (event: WorkflowProgressEvent) => void;
     sourceContext?: WorkflowSourceContext;
     signal?: AbortSignal;
+    github?: GitHubEvidenceClientOptions;
   }
 ): Promise<WorkflowResult> {
   assertNotAborted(options.signal);
@@ -125,6 +132,25 @@ async function runSweepWorkspace(
     isError: false,
     result: evidence
   });
+  const githubEvidence = await gatherGitHubEvidenceForWorkspace(
+    workspace,
+    githubEvidenceOptions(options.github, timeoutMs, options.signal)
+  );
+  assertNotAborted(options.signal);
+  if (githubEvidence) {
+    calls.push({
+      name: "gather_github_evidence",
+      args: { plugin: "github", target: githubEvidenceTarget(githubEvidence) },
+      isError: false,
+      result: githubEvidence
+    });
+  }
+  const evidencePacket = githubEvidence
+    ? {
+        readiness: evidence,
+        github: githubEvidence
+      }
+    : evidence;
   emitProgress(
     options.onProgress,
     {
@@ -145,7 +171,7 @@ Repository evidence was collected, but LLM interpretation was skipped because \`
 ## Next Step
 
 Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`,
-      { workspace }
+      reportOptions(workspace, githubEvidence)
     );
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
@@ -202,7 +228,7 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`,
     interpretation = await interpretEvidence({
       harnessModel,
       repoPath: absoluteRepoPath,
-      evidence,
+      evidence: evidencePacket,
       timeoutMs,
       onProgress: options.onProgress,
       progressLogContext,
@@ -240,7 +266,9 @@ Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`,
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(
       reportPath,
-      renderReportEnvelope(absoluteRepoPath, interpretationText, { workspace }),
+      renderReportEnvelope(absoluteRepoPath, interpretationText, {
+        ...reportOptions(workspace, githubEvidence)
+      }),
       "utf8"
     );
     reportWasWritten = true;
@@ -274,7 +302,7 @@ ${finalOutput || "No assistant output was produced."}
 ## Error
 
 ${workflowError ?? "No explicit error was recorded."}`,
-      { workspace }
+      reportOptions(workspace, githubEvidence)
     );
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, markdown, "utf8");
@@ -418,6 +446,33 @@ function countedEvidenceFiles(evidence: {
   ]).size;
 }
 
+function githubEvidenceOptions(
+  options: GitHubEvidenceClientOptions | undefined,
+  workflowTimeoutMs: number,
+  signal: AbortSignal | undefined
+): GitHubEvidenceClientOptions {
+  const timeoutMs = Math.min(
+    options?.timeoutMs ?? DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS,
+    workflowTimeoutMs
+  );
+  return {
+    ...options,
+    signal: options?.signal ?? signal,
+    timeoutMs
+  };
+}
+
+function reportOptions(
+  workspace: ReturnType<typeof workspaceSummary>,
+  github: GitHubEvidence | undefined
+) {
+  const githubContext = renderGitHubContext(github);
+  return {
+    workspace,
+    contextSections: githubContext ? [githubContext] : []
+  };
+}
+
 function reportPathFor(statePath: string, runId: number): string {
   const timestamp = new Date()
     .toISOString()
@@ -437,4 +492,8 @@ function workflowTargetSummary(lease: WorkspaceLease): WorkflowTargetSummary {
     ref: lease.ref,
     commitSha: lease.commitSha
   };
+}
+
+function githubEvidenceTarget(evidence: GitHubEvidence): string {
+  return evidence.identity?.full_name ?? "github";
 }

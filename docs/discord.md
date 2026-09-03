@@ -11,9 +11,10 @@ DISCORD_ALLOWED_CHANNEL_IDS=
 DISCORD_DEFAULT_REPO_PATH=/path/to/repo
 DISCORD_DEFAULT_MODEL=MiniMax-M3
 DISCORD_TIMEOUT_MS=120000
-DISCORD_ENABLED_PLUGIN_SOURCES=readiness
+DISCORD_ENABLED_PLUGIN_SOURCES=readiness,github
 DISCORD_ALLOW_DMS=false
 MINIMAX_API_KEY=
+GITHUB_TOKEN=
 ```
 
 `DISCORD_BOT_TOKEN` is required. The allowlists are comma-separated Discord IDs. Empty allowlists mean the bot will accept any guild or channel it can see, so production use should set at least `DISCORD_ALLOWED_GUILD_IDS`.
@@ -21,9 +22,14 @@ MINIMAX_API_KEY=
 Direct messages are disabled unless `DISCORD_ALLOW_DMS=true`.
 
 `DISCORD_ENABLED_PLUGIN_SOURCES` controls which plugin sources Discord can expose to the
-chat-agent workflow. It defaults to `readiness`. Source selection stays at the plugin family
-level; individual tools carry metadata such as source, exposure, read-only intent, approval
-requirement, and allowed surfaces.
+chat-agent workflow. It defaults to `readiness,github`. Source selection stays at the plugin
+family level; individual tools carry metadata such as source, exposure, read-only intent,
+approval requirement, and allowed surfaces.
+
+`GITHUB_TOKEN` or `GH_TOKEN` is optional. Set one when the bot needs private GitHub repository
+context or higher API limits for a configured repository target. Explicit GitHub URLs supplied in
+chat are queried without the bot's ambient GitHub token unless a future trusted-target policy
+allows them.
 
 ## Discord App Settings
 
@@ -71,6 +77,9 @@ listing every managed target on the host.
 The Discord surface enables plugin sources for the chat-agent workflow. Pi sees a stable
 tool bridge (`searchTools` and `executeTool`) instead of every plugin function directly. The
 model searches enabled plugin tools, selects the exact tool name, and Agent Ops Kit executes
-that selected tool locally. The current readiness source can run a sweep, list runs, show a run,
-find the latest report, or read a report. Repeated delivery of the same Discord message ID is
-ignored in memory to avoid duplicate local runs.
+that selected tool locally. The readiness source can run a sweep, list runs, show a run, find
+the latest report, or read a report. The GitHub source can read repository metadata, recent
+Actions runs, open pull requests, open issues, and releases for GitHub-backed targets. GitHub tool
+discovery includes each tool's input schema so the model does not have to guess argument names.
+Repeated delivery of the same Discord message ID is ignored in memory to avoid duplicate local
+runs.

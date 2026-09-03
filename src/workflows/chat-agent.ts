@@ -12,7 +12,7 @@ import { assistantText } from "../harness/usage.js";
 import { createMinimaxHarnessModel } from "../harness/model.js";
 import { isTargetQualifiedInspectionRunRef } from "../db/run-ref.js";
 import { logger } from "../logger.js";
-import { readinessTools } from "../plugins/readiness/tools.js";
+import { defaultPluginTools } from "../plugins/index.js";
 import { createChatRequestContext } from "../surfaces/chat/request-context.js";
 import { routeChatMessage } from "../surfaces/chat/router.js";
 import type {
@@ -48,7 +48,7 @@ export async function runChatAgentWorkflow(
   const modelName = requestContext.model ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = requestContext.timeoutMs ?? DEFAULT_CHAT_AGENT_TIMEOUT_MS;
   const catalog = createToolCatalog({
-    tools: options.availableTools ?? readinessTools,
+    tools: options.availableTools ?? defaultPluginTools,
     surface: message.platform,
     enabledSources: options.enabledPluginSources
   });
@@ -299,7 +299,7 @@ function buildChatAgentSystemPrompt(
   const catalogToolList = catalogTools
     .map((tool) => {
       const metadata = describeTool(tool);
-      return `- ${metadata.name} [source=${metadata.source}, read_only=${metadata.read_only}, requires_approval=${metadata.requires_approval}]: ${metadata.description}`;
+      return `- ${metadata.name} [source=${metadata.source}, read_only=${metadata.read_only}, requires_approval=${metadata.requires_approval}, parameters=${JSON.stringify(metadata.parameters)}]: ${metadata.description}`;
     })
     .join("\n");
   return `You are Agent Ops Kit's chat tool router.

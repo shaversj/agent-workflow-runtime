@@ -4,7 +4,7 @@
 
 Agent Ops Kit is a TypeScript harness for running agent-facing repository operations through plugins, a small tool registry, deterministic evidence gathering, explicit interpretation skills, and auditable reports.
 
-The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, writes a Markdown report, and cleans up the checkout.
+The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, enriches GitHub-backed targets with optional read-only GitHub context, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, writes a Markdown report, and cleans up the checkout.
 
 The project should stay organized around six concepts:
 
@@ -18,13 +18,14 @@ The project should stay organized around six concepts:
 
 Plugins define capabilities. A plugin manifest owns source identity, authority, default exposure, default approval policy, default surface policy, and tool summaries. Registered tools own TypeBox input/output schemas and execution. The registry indexes capabilities, and the manifest applies shared metadata such as source, exposure, read-only intent, approval requirement, and allowed surfaces. Surfaces enable plugin sources, not individual functions, then the catalog exposes a small model-facing bridge such as `searchTools` and `executeTool`. Pi executes the selected capability locally. Keep direct CLI workflows simple when a deterministic command path is clearer than model-based routing.
 
-Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, but findings and recommendations belong to the interpretation step.
+Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, including optional GitHub repository intelligence, but findings and recommendations belong to the interpretation step.
 
 ## Technology Choices
 
 - Use TypeScript on Node.js 24.
 - Use `pnpm` for dependency management.
 - Use pi-ai's MiniMax provider for the default model path.
+- Use GitHub API access only for read-only repository intelligence.
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.
 - Use Drizzle for persisted SQLite tables.
 - Use Pino for structured logging.
@@ -51,6 +52,8 @@ make sweep REPO=https://github.com/org/repo REF=main
 make discord
 ```
 
+Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher GitHub API limits are needed.
+
 ## Development Workflow
 
 1. Bootstrap the environment with `make install`.
@@ -70,6 +73,7 @@ make discord
 - Inspect repositories through managed git workspaces so reports can identify the origin, ref, and commit SHA.
 - Keep secret values out of reports, logs, fixtures, and tests.
 - Redact secret-shaped values before evidence is sent to an LLM.
+- Keep raw Git credentials inside clone/fetch operations only; logs, reports, database metadata, and tool output must use sanitized display identities.
 - Skip known sensitive files such as `.env`, credentials files, private keys, and local package auth files during evidence gathering.
 
 ## Standards Reference

@@ -10,6 +10,7 @@ The current workflow is intentionally narrow:
 
 - accept requests through user-facing surfaces such as CLI and chat adapters
 - load the readiness plugin
+- enrich GitHub-backed targets with optional read-only repository context
 - expose enabled plugin sources through a small tool catalog for chat surfaces
 - deterministically gather a compact evidence packet from a repository
 - load the plugin's readiness interpretation skill for the LLM
@@ -35,6 +36,9 @@ make sweep REPO=https://github.com/org/repo REF=main
 ```
 
 The sweep still records a skipped report when `MINIMAX_API_KEY` is not configured.
+Set `GITHUB_TOKEN` or `GH_TOKEN` when sweeping private GitHub repositories or when
+you need higher GitHub API limits. GitHub access is read-only and credential values
+must not appear in reports, logs, database metadata, or tool output.
 
 Inspect prior runs without rerunning a sweep:
 
@@ -88,13 +92,15 @@ src/
 Evidence gathering is deterministic. Sweeps resolve a local git path or Git URL into a managed
 workspace lease, inspect that checkout, record the target ref and commit, then clean up the
 workspace. Local path sweeps inspect committed git state, not uncommitted working tree changes.
-Plugins bundle domain-specific manifests, recipes, tools, and skills. The manifest
-defines plugin source identity, authority, default exposure, default approval policy,
-default surface policy, and tool summaries. Registered tools define TypeBox input/output
-schemas and execution. The registry indexes plugin tools, and the catalog exposes plugin
-sources to chat surfaces. Chat surfaces enable sources such as `readiness`; Pi sees stable
-bridge tools like `searchTools` and `executeTool`; workflows connect tool execution,
-model interpretation, persistence, and reporting.
+Plugins bundle domain-specific manifests, recipes, tools, and skills. The readiness
+plugin owns repository readiness interpretation. The GitHub plugin owns read-only repository
+intelligence such as repository metadata, recent Actions runs, open pull requests, open issues,
+and releases. The manifest defines plugin source identity, authority, default exposure, default
+approval policy, default surface policy, and tool summaries. Registered tools define TypeBox
+input/output schemas and execution. The registry indexes plugin tools, and the catalog exposes
+plugin sources to chat surfaces. Chat surfaces enable sources such as `readiness` and `github`;
+Pi sees stable bridge tools like `searchTools` and `executeTool`; workflows connect tool
+execution, model interpretation, persistence, and reporting.
 The CLI sweep remains a direct workflow path for predictable use. Run and report inspection
 read only Agent Ops Kit managed state; they do not prepare workspaces, clone repositories,
 read target files, or call MiniMax.

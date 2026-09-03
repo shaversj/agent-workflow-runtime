@@ -32,6 +32,7 @@ Sweeps are read-only by default:
 - persist sweep state under `AGENT_OPS_HOME`, defaulting to `~/.agent-ops-kit/`
 - write Markdown reports under the target state `reports/` directory
 - record the target origin, ref, and commit SHA in the run/report metadata
+- include optional read-only GitHub context when the target is backed by `github.com`
 - clean up disposable workspaces after the run
 - do not edit source files, commit, push, or open pull requests unless the user explicitly asks
 
@@ -47,6 +48,13 @@ make sweep REPO=https://github.com/org/repo REF=main
 ```
 
 The readiness sweep should be a workflow that loads a plugin, gathers deterministic evidence, and asks the model to interpret that evidence; do not add deterministic findings logic back into the workflow.
+
+GitHub context is supporting evidence, not a hard readiness gate. If GitHub data is unavailable,
+record that fact safely and let the report explain it as informational unless the workflow itself
+depends on that context.
+
+Optional GitHub enrichment must be bounded. A slow or unavailable GitHub request should degrade to
+unavailable GitHub evidence instead of preventing the sweep report from being written.
 
 ## Plugins, Tools, Skills, Workflows
 
@@ -77,3 +85,5 @@ Reports should include harness status, model, token usage when available, and to
 Do not include secret values, access tokens, private keys, or sensitive personal data in reports.
 Do not include credentialed Git URLs in run/report inspection output, logs, tool results, or chat
 replies.
+Reports may include sanitized GitHub repository URLs, default branch, recent workflow-run counts,
+open pull request samples, open issue samples, release samples, and GitHub API warning summaries.

@@ -34,6 +34,7 @@ export interface RegisteredToolContext {
 
 export interface ToolRequestContext {
   sourceText?: string;
+  explicitRepoTarget?: string;
   repoTarget?: string;
   ref?: string;
   reportPath?: string;

@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 
+import { defaultPluginTools } from "../src/plugins/index.js";
 import { readinessTools } from "../src/plugins/readiness/tools.js";
 import { toPiAgentTools } from "../src/harness/pi-tools.js";
 import { createCatalogBridgeTools } from "../src/tools/catalog-bridge.js";
@@ -146,6 +147,21 @@ describe("tool registry", () => {
 });
 
 describe("tool catalog", () => {
+  it("exposes GitHub and readiness plugin sources by default", () => {
+    const catalog = createToolCatalog({
+      tools: defaultPluginTools,
+      surface: "discord"
+    });
+
+    expect(catalog.sourceSummaries.map((source) => source.id)).toEqual(["github", "readiness"]);
+    expect(catalog.catalogTools.map((tool) => registeredToolName(tool))).toContain(
+      "github_get_repository_context"
+    );
+    expect(catalog.catalogTools.map((tool) => registeredToolName(tool))).toContain(
+      "readiness_run_sweep"
+    );
+  });
+
   it("filters enabled plugin sources and exposes deferred tools through the catalog", () => {
     const directTool = demoTool("core", "status", "direct");
     const deferredTool = demoTool("readiness", "run", "deferred");
@@ -185,6 +201,8 @@ describe("tool catalog", () => {
 
     const searchResult = await searchTools!.execute({ query: "sweep" }, { surface: "discord" });
     expect(searchResult.text).toContain("readiness_run_sweep");
+    expect(searchResult.text).toContain("parameters");
+    expect(JSON.stringify(searchResult.result)).toContain("value");
 
     const executeResult = await executeTool!.execute(
       { tool_name: "readiness_run_sweep", arguments: { repo_path: "/tmp/demo" } },

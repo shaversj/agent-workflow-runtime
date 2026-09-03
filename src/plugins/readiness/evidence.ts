@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { redactEvidenceText, type EvidenceRedactionStats } from "../../harness/redaction.js";
 import { readinessEvidenceRecipe, type ReadinessEvidenceRecipe } from "./evidence-recipe.js";
 import { readinessPluginManifest } from "./manifest.js";
 
@@ -44,10 +45,9 @@ interface ReadinessEvidence {
   searches: Record<string, ReadinessEvidenceSearchResult[]>;
 }
 
-interface ReadinessEvidenceRedaction {
+interface ReadinessEvidenceRedaction extends EvidenceRedactionStats {
   ignored_file_count: number;
   ignored_files: string[];
-  redacted_occurrences: number;
 }
 
 export function gatherReadinessEvidence(
@@ -175,41 +175,6 @@ function matchesGlob(file: string, pattern: string): boolean {
     )
     .join(".*");
   return new RegExp(`^${expression}$`).test(file);
-}
-
-function redactEvidenceText(content: string, redaction: ReadinessEvidenceRedaction): string {
-  let redacted = content;
-  const patterns: { pattern: RegExp; replacement: string }[] = [
-    {
-      pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-      replacement: "[REDACTED_PRIVATE_KEY]"
-    },
-    {
-      pattern:
-        /^(\s*(?:export\s+)?[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL|PRIVATE[_-]?KEY|DATABASE_URL|DB_URL)[A-Z0-9_]*\s*=\s*)(.+)$/gim,
-      replacement: "$1[REDACTED]"
-    },
-    {
-      pattern:
-        /(["']?[\w.-]*(?:api[_-]?key|token|secret|password|credential|private[_-]?key)[\w.-]*["']?\s*:\s*["'])([^"',}]+)(["'])/gi,
-      replacement: "$1[REDACTED]$3"
-    },
-    {
-      pattern: /([a-z][a-z0-9+.-]*:\/\/)[^:\s/@]+:[^@\s/]+@/gi,
-      replacement: "$1[REDACTED_CREDENTIALS]@"
-    }
-  ];
-
-  for (const item of patterns) {
-    redaction.redacted_occurrences += countMatches(redacted, item.pattern);
-    redacted = redacted.replace(item.pattern, item.replacement);
-  }
-
-  return redacted;
-}
-
-function countMatches(content: string, pattern: RegExp): number {
-  return Array.from(content.matchAll(pattern)).length;
 }
 
 function isKeyFile(file: string): boolean {

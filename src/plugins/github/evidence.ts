@@ -1,0 +1,154 @@
+import path from "node:path";
+
+import { remoteUrl } from "../../repository.js";
+import type { WorkflowTargetSummary, WorkspaceSummary } from "../../workspaces/types.js";
+import {
+  collectGitHubEvidence,
+  collectGitHubIssues,
+  collectGitHubPullRequests,
+  collectGitHubReleases,
+  collectGitHubRepositoryContext,
+  collectGitHubWorkflowRuns,
+  type GitHubEvidenceClientOptions
+} from "./client.js";
+import type {
+  GitHubEvidence,
+  GitHubIdentity,
+  GitHubIssuesResult,
+  GitHubPullRequestsResult,
+  GitHubReleasesResult,
+  GitHubRepositoryContextResult,
+  GitHubWorkflowRunsResult
+} from "./schemas.js";
+
+interface OriginLike {
+  origin?: string;
+  displayOrigin?: string;
+}
+
+export async function gatherGitHubEvidenceForWorkspace(
+  workspace: WorkspaceSummary | WorkflowTargetSummary,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubEvidence | undefined> {
+  const origin = "displayOrigin" in workspace ? workspace.displayOrigin : workspace.origin;
+  const identity = resolveGitHubIdentity(origin);
+  if (!identity) return undefined;
+  return collectGitHubEvidence(identity, options);
+}
+
+export async function gatherGitHubRepositoryContextForTarget(
+  repoTarget: string,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubRepositoryContextResult> {
+  const identity = resolveGitHubIdentity(repoTarget);
+  if (!identity) return notGitHubResult(options);
+  return collectGitHubRepositoryContext(identity, options);
+}
+
+export async function gatherGitHubWorkflowRunsForTarget(
+  repoTarget: string,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubWorkflowRunsResult> {
+  const identity = resolveGitHubIdentity(repoTarget);
+  if (!identity) return notGitHubResult(options);
+  return collectGitHubWorkflowRuns(identity, options);
+}
+
+export async function gatherGitHubPullRequestsForTarget(
+  repoTarget: string,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubPullRequestsResult> {
+  const identity = resolveGitHubIdentity(repoTarget);
+  if (!identity) return notGitHubResult(options);
+  return collectGitHubPullRequests(identity, options);
+}
+
+export async function gatherGitHubIssuesForTarget(
+  repoTarget: string,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubIssuesResult> {
+  const identity = resolveGitHubIdentity(repoTarget);
+  if (!identity) return notGitHubResult(options);
+  return collectGitHubIssues(identity, options);
+}
+
+export async function gatherGitHubReleasesForTarget(
+  repoTarget: string,
+  options: GitHubEvidenceClientOptions = {}
+): Promise<GitHubReleasesResult> {
+  const identity = resolveGitHubIdentity(repoTarget);
+  if (!identity) return notGitHubResult(options);
+  return collectGitHubReleases(identity, options);
+}
+
+export function resolveGitHubIdentity(target: string | OriginLike): GitHubIdentity | undefined {
+  const candidates =
+    typeof target === "string"
+      ? [target, localRemoteUrl(target)]
+      : [target.displayOrigin, target.origin];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const identity = identityFromGitHubRemote(candidate);
+    if (identity) return identity;
+  }
+  return undefined;
+}
+
+function identityFromGitHubRemote(remote: string): GitHubIdentity | undefined {
+  const trimmed = remote.trim();
+  const httpsIdentity = identityFromUrl(trimmed);
+  if (httpsIdentity) return httpsIdentity;
+
+  const scpMatch = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i.exec(trimmed);
+  if (!scpMatch) return undefined;
+  const owner = scpMatch[1];
+  const repo = scpMatch[2];
+  if (!owner || !repo) return undefined;
+  return githubIdentity(owner, repo);
+}
+
+function identityFromUrl(value: string): GitHubIdentity | undefined {
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname.toLowerCase() !== "github.com") return undefined;
+    const [owner, rawRepo] = parsed.pathname.split("/").filter(Boolean);
+    if (!owner || !rawRepo) return undefined;
+    return githubIdentity(owner, rawRepo.replace(/\.git$/i, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+function githubIdentity(owner: string, repo: string): GitHubIdentity {
+  const normalizedOwner = owner.trim();
+  const normalizedRepo = repo.trim().replace(/\.git$/i, "");
+  return {
+    host: "github.com",
+    owner: normalizedOwner,
+    repo: normalizedRepo,
+    full_name: `${normalizedOwner}/${normalizedRepo}`,
+    display_url: `https://github.com/${normalizedOwner}/${normalizedRepo}`
+  };
+}
+
+function localRemoteUrl(target: string): string | undefined {
+  try {
+    return remoteUrl(path.resolve(target));
+  } catch {
+    return undefined;
+  }
+}
+
+function collectedAt(options: GitHubEvidenceClientOptions): string {
+  return (options.now ?? (() => new Date()))().toISOString();
+}
+
+function notGitHubResult(options: GitHubEvidenceClientOptions) {
+  return {
+    available: false as const,
+    reason: "not_github" as const,
+    message: "Repository target is not backed by github.com.",
+    collected_at: collectedAt(options)
+  };
+}

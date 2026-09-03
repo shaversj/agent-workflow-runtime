@@ -94,6 +94,7 @@ export function describeTool(tool: RegisteredTool) {
     source: toolSourceId(tool),
     label: tool.label,
     description: tool.description,
+    parameters: tool.parameters,
     exposure: toolExposure(tool),
     read_only: tool.readOnly ?? false,
     requires_approval: tool.requiresApproval ?? false,

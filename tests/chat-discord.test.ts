@@ -506,6 +506,14 @@ describe("Discord chat surface", () => {
     expect(config.allowDms).toBe(true);
   });
 
+  it("enables readiness and GitHub plugin sources by default", () => {
+    const config = loadDiscordBotConfig({
+      DISCORD_BOT_TOKEN: "token-value"
+    });
+
+    expect([...config.enabledPluginSources]).toEqual(["readiness", "github"]);
+  });
+
   it("accepts only allowed Discord messages", () => {
     const config = {
       allowedGuildIds: new Set(["guild-1"]),

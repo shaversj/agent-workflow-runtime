@@ -7,6 +7,7 @@ Rules:
 - Treat repository evidence as read-only.
 - Do not invent findings. Tie every issue to observed files, missing files, or search results.
 - Evidence gathering is deterministic. Interpretation is your responsibility.
+- When GitHub evidence is present, use it as repository context. GitHub unavailability is not a readiness failure by itself.
 - Missing optional standards may not be needed. Say that explicitly.
 - Use only the evidence packet. Tools are unavailable.
 

@@ -20,7 +20,7 @@ export function loadDiscordBotConfig(env: NodeJS.ProcessEnv = process.env): Disc
     defaultRepoPath: optionalEnv(env.DISCORD_DEFAULT_REPO_PATH),
     defaultModel: optionalEnv(env.DISCORD_DEFAULT_MODEL ?? env.HARNESS_MODEL),
     defaultTimeoutMs: positiveIntegerEnv(env.DISCORD_TIMEOUT_MS ?? env.TIMEOUT_MS),
-    enabledPluginSources: csvSet(env.DISCORD_ENABLED_PLUGIN_SOURCES ?? "readiness"),
+    enabledPluginSources: csvSet(env.DISCORD_ENABLED_PLUGIN_SOURCES ?? "readiness,github"),
     allowDms: booleanEnv(env.DISCORD_ALLOW_DMS)
   };
 }

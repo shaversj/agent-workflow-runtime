@@ -4,10 +4,43 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
+
+const sweepHarnessState = vi.hoisted(() => ({
+  prompts: [] as string[]
+}));
+
+vi.mock("../src/harness/model.js", () => ({
+  createMinimaxHarnessModel: () => ({
+    modelProvider: "minimax",
+    modelRuntime: "pi-ai",
+    name: "MiniMax-M3",
+    model: {},
+    models: {
+      completeSimple: (_model: unknown, input: { messages: { content: string }[] }) => {
+        sweepHarnessState.prompts.push(input.messages[0]?.content ?? "");
+        return Promise.resolve({
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "## Overall Judgment\n\nRepository is ready with GitHub context."
+            }
+          ],
+          usage: {
+            input: 10,
+            output: 20,
+            totalTokens: 30,
+            cost: { total: 0 }
+          }
+        });
+      }
+    }
+  })
+}));
 
 describe("sweep workflow", () => {
   it("records a skipped report when MiniMax credentials are missing", async () => {
@@ -154,6 +187,104 @@ describe("sweep workflow", () => {
       restoreEnv("MINIMAX_API_KEY", originalKey);
     }
   });
+
+  it("adds GitHub context when a local target has a GitHub remote", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    git(["remote", "add", "origin", "https://token:secret@github.com/example/demo.git"], repoPath);
+
+    try {
+      const result = await runSweepWorkflow(repoPath, {
+        github: {
+          token: "github-secret",
+          now: () => new Date("2026-09-03T12:00:00.000Z"),
+          fetch: (url) =>
+            Promise.resolve(new Response(JSON.stringify(githubResponseFor(fetchUrl(url)))))
+        }
+      });
+      const report = fs.readFileSync(result.reportPath, "utf8");
+      const serializedResult = JSON.stringify(result);
+
+      expect(result.status).toBe("skipped");
+      expect(result.toolCalls.map((call) => call.name)).toEqual([
+        "gather_readiness_evidence",
+        "gather_github_evidence"
+      ]);
+      expect(report).toContain("## GitHub Context");
+      expect(report).toContain("https://github.com/example/demo");
+      expect(report).not.toContain("token:secret");
+      expect(serializedResult).not.toContain("github-secret");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("passes GitHub evidence into the model interpretation path", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    process.env.MINIMAX_API_KEY = "test-key";
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    sweepHarnessState.prompts = [];
+    const repoPath = gitRepo();
+    git(["remote", "add", "origin", "https://github.com/example/demo.git"], repoPath);
+
+    try {
+      const result = await runSweepWorkflow(repoPath, {
+        github: {
+          now: () => new Date("2026-09-03T12:00:00.000Z"),
+          fetch: (url) =>
+            Promise.resolve(new Response(JSON.stringify(githubResponseFor(fetchUrl(url)))))
+        }
+      });
+      const prompt = sweepHarnessState.prompts.join("\n");
+      const report = fs.readFileSync(result.reportPath, "utf8");
+
+      expect(result.status).toBe("completed");
+      expect(prompt).toContain('"github"');
+      expect(prompt).toContain("https://github.com/example/demo");
+      expect(report).toContain("## GitHub Context");
+      expect(report).toContain("Open Pull Requests Sampled: 0");
+      expect(result.usage.totalTokens).toBe(30);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
+  it("degrades optional GitHub evidence instead of hanging the sweep", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    const originalHome = process.env.AGENT_OPS_HOME;
+    delete process.env.MINIMAX_API_KEY;
+    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+    const repoPath = gitRepo();
+    git(["remote", "add", "origin", "https://github.com/example/demo.git"], repoPath);
+
+    try {
+      const result = await runSweepWorkflow(repoPath, {
+        github: {
+          timeoutMs: 1,
+          now: () => new Date("2026-09-03T12:00:00.000Z"),
+          fetch: () => new Promise<Response>(() => undefined)
+        }
+      });
+      const githubCall = result.toolCalls.find((call) => call.name === "gather_github_evidence");
+      const report = fs.readFileSync(result.reportPath, "utf8");
+
+      expect(result.status).toBe("skipped");
+      expect(githubCall?.result).toMatchObject({
+        available: false,
+        reason: "request_failed"
+      });
+      expect(report).toContain("Status: unavailable (`request_failed`)");
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
 });
 
 function createPythonEraDatabase(statePath: string) {
@@ -241,4 +372,47 @@ function restoreEnv(name: string, value: string | undefined) {
   } else {
     process.env[name] = value;
   }
+}
+
+function githubResponseFor(url: string): unknown {
+  if (url.endsWith("/actions/runs?per_page=5")) {
+    return {
+      workflow_runs: [
+        {
+          name: "CI",
+          head_branch: "main",
+          event: "push",
+          status: "completed",
+          conclusion: "success",
+          html_url: "https://github.com/example/demo/actions/runs/1",
+          updated_at: "2026-09-03T11:00:00Z"
+        }
+      ]
+    };
+  }
+  if (url.endsWith("/pulls?state=open&per_page=5")) return [];
+  if (url.endsWith("/issues?state=open&per_page=20")) return [];
+  if (url.endsWith("/releases?per_page=3")) return [];
+  return {
+    full_name: "example/demo",
+    html_url: "https://github.com/example/demo",
+    description: "Demo repository",
+    default_branch: "main",
+    visibility: "public",
+    private: false,
+    archived: false,
+    fork: false,
+    language: "TypeScript",
+    topics: ["agents"],
+    stargazers_count: 12,
+    open_issues_count: 0,
+    pushed_at: "2026-09-03T11:00:00Z",
+    updated_at: "2026-09-03T11:00:00Z"
+  };
+}
+
+function fetchUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
 }

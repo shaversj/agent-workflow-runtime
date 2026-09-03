@@ -31,6 +31,7 @@ const ToolDescriptionSchema = Type.Object({
   source: Type.String(),
   label: Type.String(),
   description: Type.String(),
+  parameters: Type.Unknown(),
   exposure: Type.Union([Type.Literal("direct"), Type.Literal("deferred"), Type.Literal("hidden")]),
   read_only: Type.Boolean(),
   requires_approval: Type.Boolean(),

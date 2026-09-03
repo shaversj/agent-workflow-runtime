@@ -8,6 +8,7 @@ import {
   PluginToolManifestError,
   type AgentOpsPluginManifest
 } from "../src/plugins/manifest.js";
+import { githubTools } from "../src/plugins/github/tools.js";
 import { readinessTools } from "../src/plugins/readiness/tools.js";
 import { defineRegisteredTool } from "../src/tools/registry.js";
 
@@ -129,6 +130,31 @@ describe("plugin manifests", () => {
     expect(toolsByName.get("run_sweep")?.readOnly).toBe(false);
     expect(toolsByName.get("list_runs")?.readOnly).toBe(true);
     expect(toolsByName.get("read_report")?.requiresApproval).toBe(false);
+  });
+
+  it("applies manifest source and policy defaults to GitHub tools", () => {
+    expect(githubTools.map((tool) => tool.source?.id)).toEqual([
+      "github",
+      "github",
+      "github",
+      "github",
+      "github"
+    ]);
+    expect(githubTools.map((tool) => tool.exposure)).toEqual([
+      "deferred",
+      "deferred",
+      "deferred",
+      "deferred",
+      "deferred"
+    ]);
+    expect(githubTools.map((tool) => tool.readOnly)).toEqual([true, true, true, true, true]);
+    expect(githubTools.map((tool) => tool.allowedSurfaces)).toEqual([
+      ["discord"],
+      ["discord"],
+      ["discord"],
+      ["discord"],
+      ["discord"]
+    ]);
   });
 });
 
