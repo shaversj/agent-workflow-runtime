@@ -18,7 +18,7 @@ The project should stay organized around six concepts:
 
 Plugins define capabilities. A plugin manifest owns source identity, authority, default exposure, default approval policy, default surface policy, and tool summaries. Registered tools own TypeBox input/output schemas and execution. The registry indexes capabilities, and the manifest applies shared metadata such as source, exposure, read-only intent, approval requirement, and allowed surfaces. Surfaces enable plugin sources, not individual functions, then the catalog exposes a small model-facing bridge such as `searchTools` and `executeTool`. Pi executes the selected capability locally. Keep direct CLI workflows simple when a deterministic command path is clearer than model-based routing.
 
-Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, including optional GitHub repository intelligence, but findings and recommendations belong to the interpretation step.
+Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, including optional GitHub repository intelligence, but findings and recommendations belong to the interpretation step. Interpret GitHub context only through the lens of agent readiness; do not turn readiness sweeps into general repository health audits.
 
 ## Technology Choices
 

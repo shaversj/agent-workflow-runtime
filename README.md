@@ -19,6 +19,10 @@ The current workflow is intentionally narrow:
 - persist run metadata in a local SQLite database
 - avoid source edits unless a human explicitly asks
 
+GitHub context supports readiness interpretation only. Sweep reports should not become general
+repository health audits, issue triage, pull request review, release readiness, or productivity
+analysis.
+
 ## Setup
 
 ```bash

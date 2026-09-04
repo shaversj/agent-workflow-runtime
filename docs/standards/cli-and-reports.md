@@ -53,6 +53,10 @@ GitHub context is supporting evidence, not a hard readiness gate. If GitHub data
 record that fact safely and let the report explain it as informational unless the workflow itself
 depends on that context.
 
+Readiness sweeps should interpret GitHub data only when it affects agent-readiness confidence,
+blockers, or operational caveats. Do not let sweep reports drift into general repository health
+audits, issue triage, pull request review, release readiness, or productivity analysis.
+
 Optional GitHub enrichment must be bounded. A slow or unavailable GitHub request should degrade to
 unavailable GitHub evidence instead of preventing the sweep report from being written.
 
