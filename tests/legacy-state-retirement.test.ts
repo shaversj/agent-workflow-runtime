@@ -11,12 +11,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyRetirement, previewRetirement } from "../scripts/retire-legacy-state.js";
 
 const roots: string[] = [];
-const legacySource = execFileSync(
-  "git",
-  ["show", "93781d700a50dd893ac54641c57855e4726f4e67:src/db/index.ts"],
-  { encoding: "utf8", cwd: path.resolve(import.meta.dirname, "..") }
+const legacySql = fs.readFileSync(
+  new URL("./fixtures/legacy-state-schema.sql", import.meta.url),
+  "utf8"
 );
-const legacySql = /sqlite\.exec\(`([\s\S]*?)`\);/.exec(legacySource)![1]!;
 const target = "targets/example-0123456789abcdef";
 const database = `${target}/agent-ops.db`;
 const firstReport = `${target}/reports/20260909T060000Z-1-readiness-sweep.md`;
