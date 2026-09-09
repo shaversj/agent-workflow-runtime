@@ -1,4 +1,4 @@
-.PHONY: install format format-check lint test typecheck deadcode build check sweep discord
+.PHONY: install format format-check lint test typecheck deadcode build check sweep discord desktop
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
@@ -43,3 +43,6 @@ sweep:
 
 discord:
 	pnpm discord
+
+desktop:
+	pnpm desktop

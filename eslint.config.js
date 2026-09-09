@@ -13,6 +13,13 @@ export default tseslint.config(
     }
   },
   {
-    ignores: ["dist/**", "coverage/**", ".venv/**", "node_modules/**"]
+    ignores: [
+      "dist/**",
+      "dist-desktop/**",
+      "test-results/**",
+      "coverage/**",
+      ".venv/**",
+      "node_modules/**"
+    ]
   }
 );

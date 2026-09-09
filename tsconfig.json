@@ -10,8 +10,9 @@
     "rootDir": "src",
     "skipLibCheck": true,
     "strict": true,
+    "jsx": "react-jsx",
     "target": "ES2024"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["dist", "node_modules"]
 }

@@ -10,7 +10,7 @@ The project should stay organized around these concepts:
 
 - `harness/`: shared runtime contracts, model setup, Pi tool adapters, timeout handling, usage parsing, and progress emission
 - `plugins/`: domain capability bundles containing TypeBox-validated manifests, evidence recipes, tools, and skills
-- `surfaces/`: user-facing ways to interact with the harness, such as CLI and chat adapters
+- `surfaces/`: user-facing CLI, chat, and read-only desktop adapters
 - `tools/`: shared TypeBox tool contracts, the capability registry, the catalog bridge, and generic report helpers
 - `workspaces/`: target normalization, managed git checkouts, workspace leases, and managed storage locations
 - `workflows/`: orchestration that connects tools, evidence, models, skills, persistence, and user-facing surfaces
@@ -30,6 +30,7 @@ Do not reintroduce a deterministic readiness checker as the main sweep path. Evi
 - Use Drizzle for persisted SQLite tables.
 - Use Pino for structured logging.
 - Use `discord.js` for the Discord bot surface.
+- Use Electron and React for local desktop inspection; keep native SQLite reads in a separate normal Node process.
 - Use ESLint, Prettier, Vitest, and `tsc` for validation.
 
 ## Environment Setup
@@ -50,6 +51,8 @@ make check
 make sweep REPO=/path/to/repo
 make sweep REPO=https://github.com/org/repo REF=main
 make discord
+make desktop
+pnpm test:desktop
 ```
 
 Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher GitHub API limits are needed.
@@ -72,7 +75,8 @@ Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher 
 - Store shared history at `AGENT_OPS_HOME/history/agent-ops.db` and registered artifacts under `history/artifacts/`.
 - Record accepted interactions before work. Pass the recorder explicitly into workflows and tool execution; plugins must not open history databases.
 - Keep delivery outcomes separate from execution outcomes. A fatal recording error stops additional tool/model work.
-- Keep full interaction transcripts local to CLI inspection. Discord run/report tools expose narrow metadata and registered reports only.
+- Keep full interaction transcripts local to CLI and desktop inspection. Discord run/report tools expose narrow metadata and registered reports only.
+- Keep desktop IPC read-only, schema-validated, and scoped to the trusted history home. Never expose arbitrary paths, SQL, Node APIs, or execution controls to the renderer.
 - Do not reintroduce target-database discovery, legacy run-reference parsing, or filesystem report fallback.
 - Inspect repositories through managed git workspaces so reports can identify the origin, ref, and commit SHA.
 - Keep secret values out of reports, logs, fixtures, and tests.

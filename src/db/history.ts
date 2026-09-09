@@ -191,6 +191,16 @@ export function listHistory(options: unknown = {}): c.HistoryListResult {
     return c.parseHistory(c.HistoryListResultSchema, {
       store: "available",
       interactions: page.map((row) => {
+        const request = p.includePreview
+          ? drizzle(sqlite)
+              .select()
+              .from(messages)
+              .where(and(eq(messages.interactionId, row.id), eq(messages.role, "user")))
+              .orderBy(messages.sequence)
+              .limit(1)
+              .get()
+          : undefined;
+        const capture = request ? validateRecord(c.MessageRecordSchema, request).content : null;
         return {
           id: row.id,
           source: row.source,
@@ -199,6 +209,18 @@ export function listHistory(options: unknown = {}): c.HistoryListResult {
           startedAt: row.startedAt,
           finishedAt: row.finishedAt,
           incomplete: row.incomplete,
+          ...(p.includePreview
+            ? {
+                requestPreview: capture?.text.slice(0, 240) ?? null,
+                requestPreviewLimited:
+                  !capture ||
+                  capture.redacted ||
+                  capture.truncated ||
+                  capture.omitted ||
+                  capture.incomplete ||
+                  capture.text.length > 240
+              }
+            : {}),
           ...annotations(sqlite, row)
         };
       }),

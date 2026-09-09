@@ -267,6 +267,7 @@ const historyPageOptions = {
 };
 export const HistoryListOptionsSchema = object({
   ...historyPageOptions,
+  includePreview: Type.Optional(Type.Boolean()),
   target: optionalText,
   source: Type.Optional(historySource),
   outcome: Type.Optional(ExecutionStatusSchema),
@@ -319,6 +320,8 @@ const historyAnnotations = {
 };
 const HistorySummarySchema = object({
   ...Type.Omit(HistorySummaryRowSchema, ["ownerPid", "ownerHost"]).properties,
+  requestPreview: Type.Optional(nullable(Type.String({ maxLength: 240 }))),
+  requestPreviewLimited: Type.Optional(Type.Boolean()),
   ...historyAnnotations
 });
 const HistoryActivityKindSchema = Type.Union([

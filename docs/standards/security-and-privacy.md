@@ -53,3 +53,16 @@ identity, and source message ID. Duplicate requests do not replay work or expose
 Keep user-specific conversation grouping and full transcripts local; existing Discord tools may
 return only request-scoped run metadata and registered report content. Reject symlinked or
 unregistered report paths. Read-only queries must not recover or mutate interaction state.
+
+## Desktop Inspection
+
+Treat saved transcripts and Markdown as untrusted display data. Keep the renderer sandboxed with
+context isolation and no Node integration. Expose only bounded, TypeBox-validated reads through
+preload; validate the owning window and top frame before handling IPC. Renderer requests must not
+choose the history home, arbitrary paths, SQL, or executable operations.
+
+Run SQLite reads in the regular Node runtime with a minimal environment, not the Electron native
+ABI. Do not load `.env`, forward model credentials, log captured content, or expose an HTTP server.
+Read only registered artifacts owned by the selected interaction; reject symlinks and paths outside
+the artifact directory. Bound file reads through the verified descriptor. Render raw HTML, links,
+and images inertly; block network requests, navigation, new windows, and permission grants.

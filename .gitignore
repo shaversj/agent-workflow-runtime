@@ -1,6 +1,9 @@
 # Node-generated files
 node_modules/
 dist/
+dist-desktop/
+test-results/
+playwright-report/
 coverage/
 
 # Python-generated files

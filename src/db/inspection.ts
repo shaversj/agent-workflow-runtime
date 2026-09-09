@@ -214,8 +214,8 @@ function selectedReport(repoTarget?: string, reportPath?: string) {
   }
 }
 
-function openReport(file: string): number {
-  const home = fs.realpathSync(agentOpsHome());
+export function openRegisteredReport(file: string, configuredHome = agentOpsHome()): number {
+  const home = fs.realpathSync(configuredHome);
   const root = historyArtifactsPath(home);
   const candidate = path.resolve(file);
   const relative = path.relative(root, candidate);
@@ -269,7 +269,7 @@ export function resolveInspectionReportPath(input: {
       selected.run.interaction_id !== input.expectedInteractionId)
   )
     throw new Error("No registered readiness report was found for this workflow/target/path.");
-  const fd = openReport(selected.artifact.path);
+  const fd = openRegisteredReport(selected.artifact.path);
   try {
     return selected.artifact.path;
   } finally {
@@ -283,7 +283,7 @@ export function getLatestInspectionReport(
   parseHistory(OptionsSchema, options);
   const selected = selectedReport(options.repoTarget);
   if (!selected) return undefined;
-  const fd = openReport(selected.artifact.path);
+  const fd = openRegisteredReport(selected.artifact.path);
   try {
     const stat = fs.fstatSync(fd);
     const run = selected.run;
@@ -326,7 +326,7 @@ export function readInspectionReport(input: {
   );
   const selected = selectedReport(input.repoTarget, input.reportPath);
   if (!selected) throw new Error("No registered readiness report was found for this target/path.");
-  const fd = openReport(selected.artifact.path);
+  const fd = openRegisteredReport(selected.artifact.path);
   try {
     const size = fs.fstatSync(fd).size;
     const max = input.maxBytes ?? 12000;

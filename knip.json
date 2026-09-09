@@ -1,3 +1,8 @@
 {
-  "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "entry": [
+    "src/surfaces/desktop/{main,preload,worker}.ts",
+    "src/surfaces/desktop/renderer/app.tsx",
+    "scripts/*.ts"
+  ],
+  "project": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "scripts/**/*.ts"]
 }

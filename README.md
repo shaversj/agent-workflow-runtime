@@ -67,7 +67,34 @@ agent-ops history show <interaction-id> --limit 50 --json
 Use `--cursor` with the returned cursor to continue a page with the same filters. Lists cap at
 100 interactions; detail pages cap at 100 activities. Inspection is read-only and never calls a
 model, creates a checkout, initializes missing state, or recovers unfinished work. Missing history
-is empty; corrupt or unsupported history is an error. Full transcripts are local CLI only.
+is empty; corrupt or unsupported history is an error. Full transcripts stay local to CLI and
+desktop inspection; Discord inspection tools do not expose them.
+
+### Desktop Inspector
+
+```bash
+make desktop
+# Inspect a different runtime home:
+AGENT_OPS_HOME=/path/to/agent-ops-home pnpm desktop
+```
+
+The macOS-first desktop opens an interaction list beside saved requests, responses, linked runs,
+model usage, delivery attempts, and expandable tool inputs/results. Filters use an exact target,
+source, outcome, and local date range. Lists show 20 requests per page; activity pages show 50
+records. Activity counts describe that page, while model usage covers the interaction.
+
+The visible page refreshes every three seconds after the previous read finishes (ten seconds while
+hidden). Selection, expanded records, and reading position remain unchanged. Failed reads are
+labeled stale; a saved `running` status is not proof that work is progressing.
+
+Registered Markdown reports open in a wider reader. Raw HTML is omitted, links are inert, images
+do not load, and reads stop at 256 KiB with a truncation notice. Missing reports do not hide the
+owning interaction. The desktop never runs tools/models, recovers history, or performs cleanup.
+
+This release launches from an installed checkout with Node 24; signed installers are not included.
+Electron uses a sandboxed renderer and a narrow validated bridge to a separate read-only Node
+worker. SQLite stays on the regular Node ABI, without an Electron native rebuild affecting the CLI
+or Discord. The launcher does not load `.env` or forward model keys.
 
 Run the Discord bot surface:
 
@@ -119,7 +146,7 @@ src/
   db/          Drizzle schema and local SQLite persistence
   harness/     shared runtime contracts, model setup, Pi tool adapters, progress, timeouts, and usage helpers
   plugins/     domain bundles with manifests, evidence recipes, tools, and skills
-  surfaces/    user-facing entry surfaces such as CLI and Discord chat adapters
+  surfaces/    CLI, Discord chat, and local desktop inspection
   tools/       shared TypeBox tool contracts, tool registry, catalog bridge, and report helpers
   workspaces/  target normalization, managed git checkouts, and workspace leases
   workflows/   orchestration such as the readiness sweep and chat tool router
@@ -150,4 +177,9 @@ make test
 make typecheck
 make deadcode
 make check
+pnpm test:desktop
 ```
+
+The desktop suite launches real Electron windows against temporary local history. Linux requires
+a graphical session or `xvfb-run`; CI installs the Chromium system dependencies and runs it under
+Xvfb. Test screenshots remain under the ignored `test-results/` directory.
