@@ -15,6 +15,10 @@ const legacySql = fs.readFileSync(
   new URL("./fixtures/legacy-state-schema.sql", import.meta.url),
   "utf8"
 );
+const olderLegacySql = fs.readFileSync(
+  new URL("./fixtures/legacy-state-schema-before-usage.sql", import.meta.url),
+  "utf8"
+);
 const target = "targets/example-0123456789abcdef";
 const database = `${target}/agent-ops.db`;
 const firstReport = `${target}/reports/20260909T060000Z-1-readiness-sweep.md`;
@@ -35,11 +39,11 @@ function write(root: string, relative: string, body: string | Buffer) {
   return file;
 }
 
-function legacyFixture() {
+function legacyFixture(sql = legacySql) {
   const root = temporaryRoot();
   fs.mkdirSync(path.join(root, target), { recursive: true });
   const db = new Database(path.join(root, database));
-  db.exec(legacySql);
+  db.exec(sql);
   db.exec(`
     INSERT INTO repository (name, local_path) VALUES ('synthetic', '/synthetic/repo');
     INSERT INTO task (stable_key, repository_id, type, title, objective)
@@ -114,6 +118,35 @@ afterEach(() => {
 });
 
 describe("legacy-state retirement", () => {
+  it("previews the older schema without migration and applies only its reviewed files", () => {
+    const root = legacyFixture(olderLegacySql);
+    const before = fs.readFileSync(path.join(root, database));
+    const manifest = previewRetirement(root);
+    expect(manifest.files.map((entry) => entry.path)).toEqual([firstReport, database]);
+    expect(fs.readFileSync(path.join(root, database))).toEqual(before);
+    expect(applyRetirement(root, manifest, true)).toMatchObject({
+      ok: true,
+      removed: [firstReport, database],
+      remaining: []
+    });
+  });
+
+  it.each([
+    "ALTER TABLE run ADD COLUMN token_count INTEGER",
+    "ALTER TABLE run ADD COLUMN failure_reason TEXT",
+    "ALTER TABLE run ADD COLUMN extra TEXT",
+    "CREATE TABLE unexpected (id INTEGER)"
+  ])("rejects unrecognized variants of the older schema: %s", (sql) => {
+    const root = legacyFixture(olderLegacySql);
+    const db = new Database(path.join(root, database));
+    db.exec(sql);
+    db.close();
+    const before = fs.readFileSync(path.join(root, database));
+    expect(() => previewRetirement(root)).toThrow("Unexpected legacy schema");
+    expect(fs.readFileSync(path.join(root, database))).toEqual(before);
+    expect(fs.existsSync(path.join(root, firstReport))).toBe(true);
+  });
+
   it("previews without creating state and requires stopped writers before apply", () => {
     const root = temporaryRoot();
     const manifest = previewRetirement(root);

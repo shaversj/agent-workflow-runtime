@@ -56,6 +56,9 @@ cleanup automatically during install, startup, sweep, or inspection.
 
 Use a canonical, non-symlinked managed-state root and install `lsof` so the script can verify
 there are no open database handles. Preview also refuses busy or unrecognized databases.
+The schema allowlist covers the frozen pre-cutover schema and its earlier version without
+`run.token_count` and `run.failure_reason`. Other variants remain blocked; preview never
+migrates a database to make it eligible for deletion.
 
 ```bash
 pnpm --silent retire-legacy-state preview --root "$HOME/.agent-ops-kit" > /tmp/legacy-retirement.json

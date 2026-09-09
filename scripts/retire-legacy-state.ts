@@ -55,9 +55,13 @@ type Manifest = Static<typeof manifestSchema>;
 type Entry = Static<typeof fileSchema>;
 type Fingerprint = Static<typeof fingerprintSchema>;
 
-// Frozen pre-cutover contract from 93781d700a50dd893ac54641c57855e4726f4e67,
-// src/db/index.ts ensureSchema. No imports from the replacement runtime.
-const legacySchemaDigest = "44a89e9790d6df96e2b7563ccbfbc0905e0fb433b9f701003998b06ee6e79327";
+// Frozen contracts, not migrations: reject every schema outside these exact versions.
+const legacySchemaDigests = new Set([
+  // Pre-cutover ensureSchema from 93781d700a50dd893ac54641c57855e4726f4e67.
+  "44a89e9790d6df96e2b7563ccbfbc0905e0fb433b9f701003998b06ee6e79327",
+  // Earlier schema without run.token_count and run.failure_reason.
+  "c35485e56dbdb799bcff8cf257b6ae343930206d3944a9fe9046fe26e58cde70"
+]);
 const sidecars = ["agent-ops.db-journal", "agent-ops.db-wal", "agent-ops.db-shm"];
 const reportPattern = /^\d{8}T\d{6}Z-[1-9]\d*-readiness-sweep\.md$/;
 const keyPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
@@ -196,12 +200,14 @@ function verifyLegacySchema(db: Database.Database, relative: string) {
     .all();
   if (
     !Value.Check(rowsSchema, rows) ||
-    digest(
-      rows.map((row) => ({
-        ...row,
-        sql: row.sql.replace(/\s+/g, " ").trim()
-      }))
-    ) !== legacySchemaDigest
+    !legacySchemaDigests.has(
+      digest(
+        rows.map((row) => ({
+          ...row,
+          sql: row.sql.replace(/\s+/g, " ").trim()
+        }))
+      )
+    )
   )
     throw new Error(`Unexpected legacy schema: ${relative}`);
   if (db.pragma("quick_check", { simple: true }) !== "ok")
