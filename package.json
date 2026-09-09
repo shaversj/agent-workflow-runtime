@@ -16,10 +16,11 @@
     "discord": "tsx src/surfaces/chat/discord/main.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint src tests drizzle.config.ts",
+    "lint": "eslint src tests scripts drizzle.config.ts",
+    "retire-legacy-state": "tsx scripts/retire-legacy-state.ts",
     "sweep": "tsx src/cli.ts sweep",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.scripts.json"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.84.3",

@@ -10,13 +10,12 @@ export const WorkspaceSummarySchema = Type.Object({
   ref: Type.String(),
   commitSha: Type.String(),
   path: Type.String(),
-  statePath: Type.String(),
   cleanupPolicy: Type.Literal("delete")
 });
 
 export const WorkflowTargetSummarySchema = Type.Object({
   source: WorkspaceSourceSchema,
   origin: Type.String(),
-  ref: Type.String(),
-  commitSha: Type.String()
+  ref: Type.Optional(Type.String()),
+  commitSha: Type.Optional(Type.String())
 });

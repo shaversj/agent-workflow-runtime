@@ -41,6 +41,7 @@ describe("logger", () => {
       {
         workflow_name: "readiness_sweep",
         run_id: 123,
+        interaction_id: "interaction-123",
         status: "completed",
         token_count: 456,
         report_path: "/tmp/reports/report.md"
@@ -52,10 +53,11 @@ describe("logger", () => {
 
     expect(output).toContain("INFO");
     expect(output).toContain(
-      "readiness_sweep.started run=123 status=completed tokens=456 report=report.md"
+      "readiness_sweep.started run=123 interaction=interaction-123 status=completed tokens=456 report=report.md"
     );
     expect(output).not.toContain('workflow_name: "readiness_sweep"');
     expect(output).not.toContain("run_id: 123");
+    expect(output).not.toContain('interaction_id: "interaction-123"');
     expect(output).not.toContain('status: "completed"');
     expect(output).not.toContain("token_count: 456");
     expect(output).not.toContain('report_path: "/tmp/reports/report.md"');

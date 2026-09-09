@@ -16,7 +16,7 @@ The current workflow is intentionally narrow:
 - load the plugin's readiness interpretation skill for the LLM
 - ask MiniMax to interpret the collected evidence
 - write a Markdown report
-- persist run metadata in a local SQLite database
+- record accepted interactions, tool activity, model usage, and delivery in shared local SQLite history
 - avoid source edits unless a human explicitly asks
 
 GitHub context supports readiness interpretation only. Sweep reports should not become general
@@ -49,15 +49,25 @@ Inspect prior runs without rerunning a sweep:
 ```bash
 agent-ops runs list
 agent-ops runs list /path/to/repo
-agent-ops runs show <target-key>:<run-id>
+agent-ops runs show <run-id>
 agent-ops reports latest
 agent-ops reports latest /path/to/repo
 ```
 
-Run references are target-scoped because each managed target has its own SQLite database.
-Use the `<target-key>:<run-id>` value from `runs list` when inspecting across all managed
-state. Bare run IDs are only safe when a repo target is supplied or the ID is globally
-unambiguous.
+Run IDs are globally scoped integers. Old `<target-key>:<run-id>` references are not supported.
+
+Inspect all accepted interactions locally, including conversations without reports:
+
+```bash
+pnpm exec tsx src/cli.ts history list --limit 20 --json
+agent-ops history list --source discord --outcome failed --since 2026-09-01T00:00:00Z
+agent-ops history show <interaction-id> --limit 50 --json
+```
+
+Use `--cursor` with the returned cursor to continue a page with the same filters. Lists cap at
+100 interactions; detail pages cap at 100 activities. Inspection is read-only and never calls a
+model, creates a checkout, initializes missing state, or recovers unfinished work. Missing history
+is empty; corrupt or unsupported history is an error. Full transcripts are local CLI only.
 
 Run the Discord bot surface:
 
@@ -74,11 +84,33 @@ Sweep output is written under Agent Ops Kit managed state. Override the default 
 ~/.agent-ops-kit/
   cache/git/
   workspaces/
-  targets/
-    <target-key>/
-      agent-ops.db
-      reports/
+  history/
+    agent-ops.db
+    artifacts/
 ```
+
+Each accepted CLI workflow or authorized Discord request is recorded before work starts.
+Messages, logical tool calls, model calls, optional child runs, and optional artifacts belong to
+that interaction. Rejected and ambient messages and passive local inspections are not recorded.
+Discord source-message claims survive restarts and do not automatically rerun or resend work.
+
+Execution status, capture completeness, and delivery status are independent. Tokens are summed
+from model-call records once; unknown usage is labeled unknown, not measured zero. Capability
+calls, catalog dispatch/discovery, and deterministic workflow activities are separate categories.
+
+History lives on a local filesystem with owner-only permissions. Captures are redacted and bounded
+to 64 KiB per serialized envelope, depth 12, and 2,000 visited nodes; metadata strings cap at 2 KiB.
+Omissions are labeled. Hidden reasoning and raw provider/environment objects are excluded. Full
+Markdown artifacts are redacted separately and are not truncated to the transcript capture limit.
+Redaction is heuristic, and per-record limits do not bound total disk usage.
+
+Recording failure aborts further work. Recovery marks unfinished work interrupted only when a
+same-host owner is provably absent; live, foreign, or uncertain owners are not overwritten.
+Pending delivery for an absent owner becomes uncertain without changing a completed execution.
+
+This is a clean cutover: old target databases and Markdown reports are not migrated or read.
+Legacy removal is a separate preview/review/apply maintenance operation, never a startup action.
+See [Database](docs/standards/database.md) before cleanup. Do not run the old binary after cutover.
 
 ## Project Shape
 

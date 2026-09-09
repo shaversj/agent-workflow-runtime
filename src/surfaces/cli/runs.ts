@@ -98,12 +98,18 @@ function formatRunDetail(run: InspectionRunDetail): string {
     `Harness provider: ${run.harness_provider ?? "unknown"}`
   ];
   if (run.failure_reason) lines.push(`Failure reason: ${run.failure_reason}`);
-  if (run.summary) lines.push(`Summary: ${run.summary}`);
+  lines.push(
+    `Interaction: ${run.interaction_id}`,
+    `Usage completeness: ${run.usage_completeness}`,
+    `Workflow activities: ${run.workflow_activity_count}`
+  );
   if (run.tool_calls.length) {
     lines.push("", "Tool call details:");
     for (const call of run.tool_calls) {
       lines.push(`- ${call.name} ${call.is_error ? "error" : "ok"}`);
     }
+    if (run.tool_calls_truncated)
+      lines.push("Additional activity is available through history show.");
   }
   return lines.join("\n");
 }

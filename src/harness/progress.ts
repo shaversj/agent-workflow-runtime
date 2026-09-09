@@ -18,8 +18,7 @@ export function emitWorkflowProgress(
         workspace_source: event.workspace.source,
         workspace_path: event.workspace.path,
         workspace_ref: event.workspace.ref,
-        workspace_commit_sha: event.workspace.commitSha,
-        state_path: event.workspace.statePath
+        workspace_commit_sha: event.workspace.commitSha
       },
       `${workflowName}.workspace_prepared`
     );

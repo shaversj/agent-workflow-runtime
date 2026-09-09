@@ -25,15 +25,15 @@ describe("inspection CLI", () => {
     try {
       const result = await runSweepWorkflow(repoPath);
       const listOutput = captureStdout(() => runRunsCli(["list", repoPath]));
-      const runRef = listOutput.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
+      const runRef = String(result.runId);
 
       expect(listOutput).toContain("Recent readiness sweep runs:");
       expect(listOutput).toContain("status=skipped");
-      expect(listOutput).toContain("tokens=0");
-      expect(listOutput).toContain("tools=1");
+      expect(listOutput).toContain("tokens=unknown");
+      expect(listOutput).toContain("tools=0");
       expect(runRef).toBeDefined();
 
-      const showOutput = captureStdout(() => runRunsCli(["show", runRef!]));
+      const showOutput = captureStdout(() => runRunsCli(["show", runRef]));
       expect(showOutput).toContain(`Run: ${runRef}`);
       expect(showOutput).toContain("Status: skipped");
       expect(showOutput).toContain(`Report: ${result.reportPath}`);
@@ -45,7 +45,7 @@ describe("inspection CLI", () => {
     }
   });
 
-  it("prints ambiguity for duplicate bare run IDs", async () => {
+  it("resolves global run IDs without target qualification", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     const originalHome = process.env.AGENT_OPS_HOME;
     delete process.env.MINIMAX_API_KEY;
@@ -57,9 +57,9 @@ describe("inspection CLI", () => {
 
       const output = captureStdout(() => runRunsCli(["show", "1"]));
 
-      expect(output).toContain("ambiguous");
-      expect(output).toContain("Recent readiness sweep runs:");
-      expect(process.exitCode).toBe(1);
+      expect(output).toContain("Run: 1");
+      expect(output).not.toContain("ambiguous");
+      expect(process.exitCode).toBeUndefined();
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
@@ -90,11 +90,11 @@ describe("inspection CLI", () => {
       const output = captureStdout(() => runReportsCli(["latest", repoPath]));
 
       expect(output).toContain("Latest readiness report");
-      expect(output).toContain(`Report: ${fs.realpathSync(result.reportPath)}`);
-      expect(output).toContain("Run: local-git-");
+      expect(output).toContain(`Report: ${fs.realpathSync(result.reportPath!)}`);
+      expect(output).toContain(`Run: ${result.runId}`);
       expect(output).toContain("Status: skipped");
-      expect(output).toContain("Tokens: 0");
-      expect(output).toContain("Tool calls: 1");
+      expect(output).not.toContain("Tokens: 0");
+      expect(output).toContain("Tool calls: 0");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);

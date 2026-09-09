@@ -16,8 +16,9 @@ export function toPiAgentTools(
     description: tool.description,
     parameters: tool.parameters,
     executionMode: "sequential",
-    execute: async (_toolCallId, params, signal) => {
-      const output = await tool.execute(params, context, signal);
+    execute: async (toolCallId, params, signal) => {
+      context.recording?.assertHealthy();
+      const output = await tool.execute(params, { ...context, providerCallId: toolCallId }, signal);
       return {
         content: [{ type: "text", text: output.text }],
         details: output.result,

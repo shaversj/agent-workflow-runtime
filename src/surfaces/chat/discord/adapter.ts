@@ -1,6 +1,6 @@
-import fs from "node:fs";
 import path from "node:path";
 
+import { resolveInspectionReportPath } from "../../../db/inspection.js";
 import type { ChatMessage, ChatResponse } from "../types.js";
 
 const DISCORD_MESSAGE_LIMIT = 2000;
@@ -13,6 +13,7 @@ export interface DiscordInboundMessage {
   authorId: string;
   content: string;
   botUserId?: string;
+  applicationId?: string;
   isBot?: boolean;
 }
 
@@ -34,6 +35,7 @@ export function normalizeDiscordMessage(input: DiscordInboundMessage): ChatMessa
   const text = stripBotMention(input.content, input.botUserId).trim();
   return {
     platform: "discord",
+    applicationId: input.applicationId ?? input.botUserId,
     workspaceId: input.guildId,
     channelId: input.channelId,
     threadId: input.threadId,
@@ -80,52 +82,20 @@ function chunkDiscordMessage(content: string): string[] {
 
 function discordAttachmentsForResponse(response: ChatResponse): DiscordOutboundAttachment[] {
   if (response.kind !== "message") return [];
-  const repoPath = response.result?.repoPath;
-  const reportPath = response.result?.reportPath;
-  if (!repoPath || !reportPath) return [];
-  const safeReportPath = response.result?.workspace
-    ? safeReportAttachmentPath(
-        path.join(response.result.workspace.statePath, "reports"),
-        reportPath
-      )
-    : safeLegacyReportAttachmentPath(repoPath, reportPath);
-  if (!safeReportPath) return [];
-  return [
-    {
-      path: safeReportPath,
-      name: path.basename(safeReportPath)
-    }
-  ];
-}
-
-function safeReportAttachmentPath(reportDir: string, reportPath: string): string | undefined {
+  const result = response.result;
+  if (result?.reportPath === undefined) return [];
   try {
-    if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) return undefined;
-    const realReportDir = fs.realpathSync(reportDir);
-    const realReportPath = fs.realpathSync(reportPath);
-    const relativePath = path.relative(realReportDir, realReportPath);
-    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) return undefined;
-    if (!realReportPath.endsWith(".md")) return undefined;
-    if (!fs.statSync(realReportPath).isFile()) return undefined;
-    return realReportPath;
+    if (!result.runId || !result.interactionId || !result.target?.origin)
+      throw new Error("Report workflow identity is missing");
+    const reportPath = resolveInspectionReportPath({
+      reportPath: result.reportPath,
+      repoTarget: result.target.origin,
+      expectedRunId: result.runId,
+      expectedInteractionId: result.interactionId
+    });
+    return [{ path: reportPath, name: path.basename(reportPath) }];
   } catch {
-    return undefined;
-  }
-}
-
-function safeLegacyReportAttachmentPath(repoPath: string, reportPath: string): string | undefined {
-  try {
-    const realRepoPath = fs.realpathSync(path.resolve(repoPath));
-    const reportDir = path.join(realRepoPath, ".agent-readiness", "reports");
-    if (!fs.existsSync(reportDir) || !fs.statSync(reportDir).isDirectory()) return undefined;
-    const realReportDir = fs.realpathSync(reportDir);
-    const reportDirRelativePath = path.relative(realRepoPath, realReportDir);
-    if (reportDirRelativePath.startsWith("..") || path.isAbsolute(reportDirRelativePath)) {
-      return undefined;
-    }
-    return safeReportAttachmentPath(realReportDir, reportPath);
-  } catch {
-    return undefined;
+    throw new Error("Report attachment is missing, unsafe, or not registered for this workflow.");
   }
 }
 

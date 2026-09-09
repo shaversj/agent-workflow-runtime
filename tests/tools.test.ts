@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 
 import { defaultPluginTools } from "../src/plugins/index.js";
@@ -21,7 +21,19 @@ import {
   ToolRegistry,
   UnvalidatedToolError
 } from "../src/tools/registry.js";
-import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
+import { displayInspectionTarget } from "../src/db/inspection.js";
+import { openHistoryStore } from "../src/db/index.js";
+import { historyArtifactsPath } from "../src/workspaces/storage.js";
+
+let testHome: string;
+beforeEach(() => {
+  testHome = fs.mkdtempSync(path.join(os.tmpdir(), "tools-history-"));
+  vi.stubEnv("AGENT_OPS_HOME", testHome);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(testHome, { recursive: true, force: true });
+});
 
 describe("tool registry", () => {
   it("indexes plugin tools by namespaced capability name", () => {
@@ -77,7 +89,13 @@ describe("tool registry", () => {
     const [piTool] = toPiAgentTools([tool], context);
     const result = await piTool!.execute("tool-call-1", { value: "hello" }, controller.signal);
 
-    expect(calls).toEqual([{ params: { value: "hello" }, context, signal: controller.signal }]);
+    expect(calls).toEqual([
+      {
+        params: { value: "hello" },
+        context: { ...context, providerCallId: "tool-call-1" },
+        signal: controller.signal
+      }
+    ]);
     expect(result.content).toEqual([{ type: "text", text: "echo:hello" }]);
     expect(result.details).toEqual({ echoed: "hello" });
     expect(result.terminate).toBe(true);
@@ -143,6 +161,26 @@ describe("tool registry", () => {
     expect(() => tool.execute({ value: "hello" }, { surface: "discord" })).toThrow(
       ToolResultValidationError
     );
+  });
+
+  it.each([
+    null,
+    undefined,
+    { result: { ok: true } },
+    { result: { ok: true }, text: 42 },
+    { result: { ok: true }, text: "ok", terminate: "yes" },
+    { result: { ok: "yes" }, text: "ok" }
+  ])("validates the full result envelope: %j", (output) => {
+    const tool = defineRegisteredTool({
+      pluginName: "test",
+      name: "envelope",
+      label: "Envelope",
+      description: "Exercise the runtime result boundary.",
+      parameters: Type.Object({}),
+      resultSchema: Type.Object({ ok: Type.Boolean() }),
+      execute: () => output as { result: { ok: boolean }; text: string }
+    });
+    expect(() => tool.execute({}, { surface: "cli" })).toThrow(ToolResultValidationError);
   });
 });
 
@@ -233,7 +271,7 @@ describe("readiness plugin tools", () => {
       const runRef = (list.result as { runs: { run_ref: string }[] }).runs[0]!.run_ref;
       const show = await registry
         .get("readiness_show_run")!
-        .execute({ run_ref: runRef }, { surface: "discord" });
+        .execute({ run_ref: runRef, repo_path: repoPath }, { surface: "discord" });
 
       expect(list.text).toContain("status=skipped");
       expect(list.result).toMatchObject({
@@ -241,7 +279,7 @@ describe("readiness plugin tools", () => {
         runs: [
           {
             run_id: sweep.runId,
-            token_count: 0,
+            usage_completeness: "unknown",
             failure_reason: "missing_minimax_api_key"
           }
         ]
@@ -250,7 +288,8 @@ describe("readiness plugin tools", () => {
         found: true,
         run: {
           run_ref: runRef,
-          tool_call_count: 1
+          tool_call_count: 0,
+          workflow_activity_count: 1
         }
       });
     } finally {
@@ -308,7 +347,7 @@ describe("readiness plugin tools", () => {
         .get("readiness_get_latest_report")!
         .execute({ repo_path: repoPath }, { surface: "discord" });
 
-      expect(latest.result).toEqual({ repo_path: repoPath, bytes: 0 });
+      expect(latest.result).toEqual({ repo_path: displayInspectionTarget(repoPath), bytes: 0 });
       expect(latest.text).toContain("No readiness reports were found");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
@@ -369,7 +408,7 @@ describe("readiness plugin tools", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoPath = gitRepo();
-    const reportDir = path.join(statePathForRepo(repoPath), "reports");
+    const reportDir = historyArtifactsPath();
     fs.mkdirSync(reportDir, { recursive: true });
     const secretPath = path.join(repoPath, "secret.md");
     fs.writeFileSync(secretPath, "private\n");
@@ -383,7 +422,7 @@ describe("readiness plugin tools", () => {
         registry
           .get("readiness_read_report")!
           .execute({ repo_path: repoPath, report_path: symlinkPath }, { surface: "discord" })
-      ).toThrow(/outside the readiness reports directory/);
+      ).toThrow(/registered readiness report/);
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
     }
@@ -400,7 +439,9 @@ describe("readiness plugin tools", () => {
       registry
         .get("readiness_run_sweep")!
         .execute({ repo_path: repoPath }, { surface: "discord" }, controller.signal)
-    ).rejects.toThrow(/workflow_aborted/);
+    ).resolves.toMatchObject({
+      result: { status: "cancelled", error: "workflow_aborted", toolCalls: [] }
+    });
     expect(fs.existsSync(path.join(repoPath, ".agent-readiness"))).toBe(false);
   });
 });
@@ -410,11 +451,28 @@ function tempRepo() {
 }
 
 function writeReport(repoPath: string, name: string, content: string): string {
-  const reportDir = path.join(statePathForRepo(repoPath), "reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, name);
-  fs.writeFileSync(reportPath, content);
-  return reportPath;
+  const store = openHistoryStore();
+  try {
+    const accepted = store.acceptInteraction({
+      source: "cli",
+      kind: "readiness_sweep",
+      userMessage: "fixture",
+      target: displayInspectionTarget(repoPath)
+    });
+    const reportPath = path.join(fs.realpathSync(historyArtifactsPath()), name);
+    fs.writeFileSync(reportPath, content);
+    store.registerArtifact({
+      interactionId: accepted.interactionId,
+      runId: accepted.runId,
+      path: reportPath,
+      type: "markdown"
+    });
+    store.finishRun({ id: accepted.runId, status: "completed" });
+    store.finishInteraction({ id: accepted.interactionId, status: "completed" });
+    return reportPath;
+  } finally {
+    store.close();
+  }
 }
 
 function gitRepo() {
@@ -426,10 +484,6 @@ function gitRepo() {
   git(["add", "README.md"], repoPath);
   git(["commit", "-m", "Initial commit"], repoPath);
   return repoPath;
-}
-
-function statePathForRepo(repoPath: string): string {
-  return targetStatePath(normalizedTargetRef(parseTargetRef(repoPath)));
 }
 
 function git(args: string[], cwd: string): string {

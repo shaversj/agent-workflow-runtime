@@ -20,7 +20,7 @@ Do not configure Pino in individual modules. Add new configuration in `src/logge
 
 Keep JSON as the default format for machine consumption. Pretty logs are for local terminal use only.
 
-Pretty logs should optimize for human scanning. Common correlation fields, paths, and counters such as `run_id`, `task_id`, `model`, `report_path`, `file_count`, and `token_count` may be summarized inline in the event message and hidden from the expanded field block. Do not remove those fields from JSON logs.
+Pretty logs should optimize for human scanning. Common correlation fields, paths, and counters such as `run_id`, `interaction_id`, `model`, `report_path`, `file_count`, and `token_count` may be summarized inline in the event message and hidden from the expanded field block. Do not remove those fields from JSON logs.
 
 CLI progress text should not duplicate info-level lifecycle logs. When info logs are enabled, prefer the log stream for progress and keep CLI text to the final command result.
 
@@ -30,16 +30,16 @@ Logs should be structured and queryable:
 
 - Use stable event messages such as `readiness_sweep.started` and `readiness_sweep.completed`.
 - Add context as object fields instead of interpolated strings.
-- Include durable IDs when available, such as `task_id`, `run_id`, and `repository_id`.
+- Include `interaction_id` and `run_id` when available; do not emit retired task/repository IDs.
 - Include safe repository context, such as `repo_name` or sanitized path fields, when it helps connect logs to reports.
 - Use consistent field names across workflows and plugins.
-- Avoid repeating the full run context on every event. Put target, workspace, state, and source metadata on boundary events such as `workflow_run.created` and `readiness_sweep.workspace_prepared`; later phase events should carry IDs plus only the new facts they introduce.
+- Avoid repeating the full run context on every event. Put target, workspace, and source metadata on boundary events such as `readiness_sweep.workspace_prepared`; later phase events should carry IDs plus only the new facts they introduce.
 
 Example shape:
 
 ```ts
 logger.info(
-  { task_id: taskId, run_id: runId, tool_call_count: calls.length },
+  { interaction_id: interactionId, run_id: runId, tool_call_count: capabilityCalls },
   "readiness_sweep.completed"
 );
 ```
@@ -57,8 +57,7 @@ Prefer these field names when the concept applies:
 | Local target path         | `target_path`      |
 | Git target URL            | `target_url`       |
 | Disposable workspace path | `workspace_path`   |
-| Managed state path        | `state_path`       |
-| Task ID                   | `task_id`          |
+| Interaction ID            | `interaction_id`   |
 | Run ID                    | `run_id`           |
 | Harness provider          | `harness_provider` |
 | Model runtime             | `model_runtime`    |
@@ -88,29 +87,29 @@ Workflows should log these process events when they apply:
 - evidence gathering started and completed
 - model call started, completed, failed, or timed out
 - report written
-- database run created
+- interaction recording failure or recovery
 - recoverable fallback or degraded-mode behavior
 
 Plugins should log lifecycle events at the workflow boundary, not every internal branch. Prefer counts and status fields over noisy per-file logs.
 
 Use full context sparingly:
 
-- `workflow_run.created`: include repository identity, target identity, state path, source, and model configuration.
-- `readiness_sweep.workspace_prepared`: include the disposable workspace path, source, ref, commit SHA, and managed state path.
+- `readiness_sweep.workspace_prepared`: include the disposable workspace path, source, ref, and commit SHA.
 - `readiness_sweep.started`: include run IDs and timeout.
 - `readiness_sweep.model_completed`: include run IDs, model identity, and token count.
 - `readiness_sweep.report_written`: include run IDs and report path.
-- `workflow_run.completed`: log at `debug` with run IDs, status, state path, report path, and counts when database lifecycle troubleshooting is needed.
 - `readiness_sweep.completed`: include run IDs, status, report path, token count, and tool call count.
 
 ## Error Logging
 
-When logging an exception, include the error object under `err` so Pino can serialize it, and include a stable `error_type` field for querying.
+When logging an exception, include a sanitized error under `err` and a stable `error_type` field.
+Never pass raw provider/database exceptions or their attached response objects to the logger.
+Recording-failure fallback diagnostics contain only safe categories and interaction/run identity.
 
 ```ts
 logger.error(
   {
-    err: error,
+    err: sanitizedError,
     error_type: error instanceof Error ? error.name : typeof error,
     run_id: runId,
     workflow_name: "readiness_sweep"
@@ -140,3 +139,4 @@ Tests should cover:
 - secret-shaped fields are redacted
 - failure logs include `error_type`
 - normal workflow lifecycle logs include `run_id`, `workflow_name`, `model`, and `status` when available
+- recording failures and delivery uncertainty are distinguishable without logging payloads

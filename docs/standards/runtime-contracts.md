@@ -48,3 +48,10 @@ Use Drizzle for persisted table definitions.
 
 Use TypeBox for data once it crosses into tool results, report inspection results,
 workflow results, plugin manifests, or other API-shaped contracts.
+
+History records and public inspection projections have owning schemas in
+`src/harness/history-schemas.ts`. Validate captured envelopes separately from operational tool
+results: redaction, omission, and truncation may change the stored shape but must not modify the
+input or result used by plugin execution. Validate cursor values together with their filter
+context, not just as opaque strings. Never return captured payloads through narrow run/report
+tool schemas.

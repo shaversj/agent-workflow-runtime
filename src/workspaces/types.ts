@@ -25,7 +25,6 @@ export interface WorkspaceLease {
   ref: string;
   commitSha: string;
   path: string;
-  statePath: string;
   cleanupPolicy: "delete";
   cleanup: () => Promise<void>;
 }

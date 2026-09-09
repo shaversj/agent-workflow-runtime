@@ -9,8 +9,12 @@ import {
 } from "discord.js";
 
 import type { WorkflowProgressEvent } from "../../../harness/types.js";
+import { RecordingFailure } from "../../../harness/interaction.js";
+import type { InteractionRecorder } from "../../../harness/interaction.js";
 import { logger } from "../../../logger.js";
+import { beginChatInteraction } from "../../../workflows/chat-agent.js";
 import { handleChatMessage } from "../runner.js";
+import type { ChatHandlerOptions } from "../types.js";
 import {
   normalizeDiscordMessage,
   renderDiscordResponse,
@@ -27,16 +31,9 @@ interface DiscordMessagePolicyInput {
   botUserId: string;
 }
 
-interface DiscordDuplicateGuard {
-  claim(messageId: string): boolean;
-}
-
-interface DiscordBotOptions {
-  duplicateGuard?: DiscordDuplicateGuard;
-}
+type DiscordBotOptions = Pick<ChatHandlerOptions, "availableTools" | "signal">;
 
 export function createDiscordClient(config: DiscordBotConfig, options: DiscordBotOptions = {}) {
-  const duplicateGuard = options.duplicateGuard ?? createDiscordDuplicateGuard();
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -59,12 +56,10 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
   });
 
   client.on(Events.MessageCreate, (message) => {
-    void handleDiscordMessage(message, config, { duplicateGuard }).catch((error: unknown) => {
+    void handleDiscordMessage(message, config, options).catch(() => {
       logger.error(
         {
-          err: error,
-          error_type: error instanceof Error ? error.name : typeof error,
-          error: error instanceof Error ? error.message : String(error)
+          message_id: message.id
         },
         "discord_bot.message_failed"
       );
@@ -74,7 +69,7 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
   return client;
 }
 
-async function handleDiscordMessage(
+export async function handleDiscordMessage(
   message: Message,
   botConfig: DiscordBotConfig,
   options: DiscordBotOptions = {}
@@ -84,18 +79,6 @@ async function handleDiscordMessage(
 
   const policyInput = discordPolicyInput(message, botUser.id);
   if (!shouldAcceptDiscordMessage(policyInput, botConfig)) return;
-  if (options.duplicateGuard && !options.duplicateGuard.claim(message.id)) {
-    logger.info(
-      {
-        surface: "discord",
-        guild_id: message.guildId,
-        channel_id: message.channelId,
-        message_id: message.id
-      },
-      "discord_bot.duplicate_ignored"
-    );
-    return;
-  }
 
   const inbound = buildDiscordInboundMessage(message, botUser.id);
   const chatMessage = normalizeDiscordMessage(inbound);
@@ -113,50 +96,173 @@ async function handleDiscordMessage(
     "discord_bot.message_accepted"
   );
 
-  const statusMessage = await message.reply("Accepted. Routing request...");
-  const response = await handleChatMessage(chatMessage, {
-    defaultRepoPath: botConfig.defaultRepoPath,
-    defaultModel: botConfig.defaultModel,
-    defaultTimeoutMs: botConfig.defaultTimeoutMs,
-    enabledPluginSources: botConfig.enabledPluginSources,
-    onProgress: (event) => {
-      void updateDiscordStatus(statusMessage, formatDiscordProgress(event));
-    }
-  });
-
+  let recording: InteractionRecorder;
   try {
-    const replies = renderDiscordResponse(response, inbound);
-    for (const reply of replies) {
-      await sendDiscordReply(message, reply);
+    recording = beginChatInteraction(chatMessage, {
+      ...options,
+      defaultRepoPath: botConfig.defaultRepoPath
+    });
+  } catch {
+    await message.reply("history_recording_failed: request was not started");
+    return;
+  }
+  let statusMessage: Message | undefined;
+  let progressing = true;
+  try {
+    if (!recording.claimed) return;
+    const acknowledgment = recording.deliveryStart({
+      messageId: recording.userMessageId,
+      part: 1,
+      attempt: 1
+    });
+    try {
+      statusMessage = await message.reply("Accepted. Routing request...");
+      recording.deliveryFinish({
+        id: acknowledgment,
+        status: "acknowledged",
+        surfaceMessageId: statusMessage.id
+      });
+    } catch (error) {
+      recording.deliveryFinish({
+        id: acknowledgment,
+        status: deliveryFailureStatus(error),
+        error: "initial_acknowledgment_failed"
+      });
+      recording.finishRun({ status: "skipped", error: "initial_acknowledgment_failed" });
+      recording.finishInteraction({ status: "skipped", error: "initial_acknowledgment_failed" });
+      logger.warn({ interaction_id: recording.interactionId }, "discord_bot.acknowledgment_failed");
+      return;
+    }
+    let answerId: number | undefined;
+    const response = await handleChatMessage(chatMessage, {
+      ...options,
+      recording,
+      onResponseRecorded: (id) => {
+        answerId = id;
+      },
+      defaultRepoPath: botConfig.defaultRepoPath,
+      defaultModel: botConfig.defaultModel,
+      defaultTimeoutMs: botConfig.defaultTimeoutMs,
+      enabledPluginSources: botConfig.enabledPluginSources,
+      onProgress: (event) => {
+        if (progressing && statusMessage && !recording.signal.aborted)
+          void updateDiscordStatus(statusMessage, formatDiscordProgress(event));
+      }
+    });
+
+    progressing = false;
+    recording.assertHealthy();
+    if (answerId === undefined) throw new Error("chat_response_not_recorded");
+    let replies: DiscordOutboundMessage[];
+    try {
+      replies = renderDiscordResponse(response, inbound);
+    } catch {
+      const attempt = recording.deliveryStart({ messageId: answerId, part: 1, attempt: 1 });
+      recording.deliveryFinish({ id: attempt, status: "failed", error: "response_render_failed" });
+      return;
+    }
+    for (const [index, reply] of replies.entries()) {
+      await sendDiscordReply(message, reply, { recording, messageId: answerId, part: index + 1 });
+    }
+  } catch (error) {
+    logger.warn({ interaction_id: recording.interactionId }, "discord_bot.delivery_failed");
+    if (error instanceof RecordingFailure) {
+      // Storage failure must be visible even when its terminal metadata is pending recovery.
+      try {
+        await message.reply(error.message);
+      } catch {
+        /* Local diagnostic remains. */
+      }
     }
   } finally {
-    await deleteDiscordStatus(statusMessage);
+    progressing = false;
+    if (statusMessage) await deleteDiscordStatus(statusMessage);
+    recording.close();
   }
 }
 
 export async function sendDiscordReply(
   message: Pick<Message, "id" | "reply">,
-  reply: Pick<DiscordOutboundMessage, "content" | "attachments">
+  reply: Pick<DiscordOutboundMessage, "content" | "attachments">,
+  delivery?: { recording: InteractionRecorder; messageId: number; part: number }
 ) {
   const files = reply.attachments?.map(
     (attachment) => new AttachmentBuilder(attachment.path, { name: attachment.name })
   );
+  const attempt = delivery?.recording.deliveryStart({
+    messageId: delivery.messageId,
+    part: delivery.part,
+    attempt: 1
+  });
+  let sent: Message;
   try {
-    await message.reply({ content: reply.content, files });
+    sent = await message.reply({ content: reply.content, files });
   } catch (error) {
-    if (!files?.length) throw error;
-    logger.warn(
-      {
-        surface: "discord",
-        message_id: message.id,
-        attachment_count: files.length,
-        error_type: error instanceof Error ? error.name : typeof error,
-        error: error instanceof Error ? error.message : String(error)
-      },
-      "discord_bot.attachment_reply_failed"
-    );
-    await message.reply({ content: reply.content });
+    const fallback = !!files?.length && definiteAttachmentRejection(error);
+    if (delivery && attempt !== undefined)
+      delivery.recording.deliveryFinish({
+        id: attempt,
+        status: deliveryFailureStatus(error),
+        error: fallback ? "attachment_rejected:attachment_omitted" : "discord_send_failed"
+      });
+    if (!fallback) throw error;
+    const retry = delivery?.recording.deliveryStart({
+      messageId: delivery.messageId,
+      part: delivery.part,
+      attempt: 2
+    });
+    try {
+      sent = await message.reply({ content: reply.content });
+    } catch (retryError) {
+      if (delivery && retry !== undefined)
+        delivery.recording.deliveryFinish({
+          id: retry,
+          status: deliveryFailureStatus(retryError),
+          error: "discord_text_fallback_failed:attachment_omitted"
+        });
+      throw retryError;
+    }
+    if (delivery && retry !== undefined)
+      delivery.recording.deliveryFinish({
+        id: retry,
+        status: "acknowledged",
+        surfaceMessageId: sent.id
+      });
+    return sent;
   }
+  if (delivery && attempt !== undefined)
+    delivery.recording.deliveryFinish({
+      id: attempt,
+      status: "acknowledged",
+      surfaceMessageId: sent.id
+    });
+  return sent;
+}
+
+function deliveryFailureStatus(error: unknown): "failed" | "uncertain" {
+  return typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    error.status >= 400 &&
+    error.status < 500
+    ? "failed"
+    : "uncertain";
+}
+
+function definiteAttachmentRejection(error: unknown): boolean {
+  if (deliveryFailureStatus(error) !== "failed" || typeof error !== "object" || error === null)
+    return false;
+  if ("status" in error && error.status === 413) return true;
+  if (!("code" in error)) return false;
+  if (error.code === 40005) return true;
+  if (error.code !== 50035 || !("rawError" in error)) return false;
+  const raw = error.rawError;
+  if (typeof raw !== "object" || raw === null || !("errors" in raw)) return false;
+  const errors = raw.errors;
+  return (
+    typeof errors === "object" && errors !== null && ("attachments" in errors || "files" in errors)
+  );
 }
 
 export function shouldAcceptDiscordMessage(
@@ -179,23 +285,9 @@ function buildDiscordInboundMessage(message: Message, botUserId: string): Discor
     messageId: message.id,
     authorId: message.author.id,
     botUserId,
+    applicationId: message.client.application?.id ?? botUserId,
     isBot: message.author.bot,
     content: message.content
-  };
-}
-
-export function createDiscordDuplicateGuard(ttlMs = 10 * 60 * 1000): DiscordDuplicateGuard {
-  const claimedMessages = new Map<string, number>();
-  return {
-    claim(messageId: string) {
-      const now = Date.now();
-      for (const [seenMessageId, expiresAt] of claimedMessages) {
-        if (expiresAt <= now) claimedMessages.delete(seenMessageId);
-      }
-      if (claimedMessages.has(messageId)) return false;
-      claimedMessages.set(messageId, now + ttlMs);
-      return true;
-    }
   };
 }
 

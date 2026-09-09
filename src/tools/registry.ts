@@ -1,6 +1,8 @@
+import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
+import type { InteractionRecorder, RecordedToolInput } from "../harness/interaction.js";
 import type { WorkflowProgressEvent } from "../harness/types.js";
 
 const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
@@ -25,6 +27,8 @@ export interface ToolSourceContext {
 
 export interface RegisteredToolContext {
   surface: ToolSurface;
+  recording?: InteractionRecorder;
+  providerCallId?: string;
   requestContext?: ToolRequestContext;
   model?: string;
   timeoutMs?: number;
@@ -61,6 +65,7 @@ export interface RegisteredTool<
   description: string;
   parameters: TParameters;
   resultSchema: TResultSchema;
+  recordingKind?: RecordedToolInput["kind"];
   source?: ToolSource;
   exposure?: ToolExposure;
   readOnly?: boolean;
@@ -81,6 +86,7 @@ interface TypedRegisteredTool<TParameters extends TSchema, TResultSchema extends
   description: string;
   parameters: TParameters;
   resultSchema: TResultSchema;
+  recordingKind?: RecordedToolInput["kind"];
   source?: ToolSource;
   exposure?: ToolExposure;
   readOnly?: boolean;
@@ -98,15 +104,35 @@ interface TypedRegisteredTool<TParameters extends TSchema, TResultSchema extends
 export function defineRegisteredTool<TParameters extends TSchema, TResultSchema extends TSchema>(
   tool: TypedRegisteredTool<TParameters, TResultSchema>
 ): RegisteredTool<TParameters, Static<TResultSchema>, TResultSchema> {
+  const envelope = Type.Object({
+    result: tool.resultSchema,
+    text: Type.String(),
+    terminate: Type.Optional(Type.Boolean())
+  });
   return {
     ...tool,
     [registeredToolBrand]: true,
     execute(params, context, signal) {
-      const output = tool.execute(validateToolParameters(tool, params), context, signal);
-      if (isPromiseLike(output)) {
-        return output.then((result) => validateToolResult(tool, result));
-      }
-      return validateToolResult(tool, output);
+      const execute = (toolContext: RegisteredToolContext, toolSignal?: AbortSignal) => {
+        const output = tool.execute(validateToolParameters(tool, params), toolContext, toolSignal);
+        if (isPromiseLike(output)) {
+          return output.then((result) => validateToolResult(tool, envelope, result));
+        }
+        return validateToolResult(tool, envelope, output);
+      };
+      if (!context.recording) return execute(context, signal);
+      return context.recording.recordTool(
+        {
+          name: registeredToolName(tool),
+          source: toolSourceId(tool),
+          kind: tool.recordingKind ?? "capability",
+          providerCallId: context.providerCallId,
+          input: params
+        },
+        (recording, combinedSignal) =>
+          execute({ ...context, recording, providerCallId: undefined }, combinedSignal),
+        signal
+      );
     }
   };
 }
@@ -154,10 +180,11 @@ function validateToolParameters<TParameters extends TSchema, TResultSchema exten
 
 function validateToolResult<TParameters extends TSchema, TResultSchema extends TSchema>(
   tool: TypedRegisteredTool<TParameters, TResultSchema>,
+  envelope: TSchema,
   output: RegisteredToolResult<Static<TResultSchema>>
 ): RegisteredToolResult<Static<TResultSchema>> {
-  if (Value.Check(tool.resultSchema, output.result)) return output;
-  const errors = Value.Errors(tool.resultSchema, output.result)
+  if (Value.Check(envelope, output)) return output;
+  const errors = Value.Errors(envelope, output)
     .slice(0, 5)
     .map((error) => {
       const path = error.instancePath || "/";

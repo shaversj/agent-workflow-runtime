@@ -1,50 +1,44 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
-import { completeWorkflowRun, createWorkflowRun } from "../db/index.js";
-import { createMinimaxHarnessModel, type HarnessModel } from "../harness/model.js";
+import { beginInteraction } from "../harness/interaction.js";
+import type { InteractionRecorder } from "../harness/interaction.js";
+import { captureHistory } from "../harness/history-capture.js";
+import { createMinimaxHarnessModel } from "../harness/model.js";
 import { emitWorkflowProgress } from "../harness/progress.js";
 import type { ToolCallRecord, WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
-import { assistantText, emptyUsage, usageFromAssistant } from "../harness/usage.js";
-import { withWorkflowTimeout } from "../harness/timeout.js";
+import {
+  assistantText,
+  emptyUsage,
+  observedModelUsage,
+  usageFromAssistant
+} from "../harness/usage.js";
+import { combineAbortSignals, withWorkflowTimeout } from "../harness/timeout.js";
 import { logger } from "../logger.js";
 import type { GitHubEvidenceClientOptions } from "../plugins/github/client.js";
-import { gatherGitHubEvidenceForWorkspace } from "../plugins/github/evidence.js";
+import {
+  gatherGitHubEvidenceForWorkspace,
+  resolveGitHubIdentity
+} from "../plugins/github/evidence.js";
 import { renderGitHubContext } from "../plugins/github/report.js";
-import type { GitHubEvidence } from "../plugins/github/schemas.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
   buildReadinessInterpretationPrompt,
   readinessSweepSkill
 } from "../plugins/readiness/skill.js";
-import { renderReportEnvelope } from "../tools/report.js";
+import { renderReportEnvelope, writeSweepReport } from "../tools/report.js";
+import type { ToolSourceContext } from "../tools/registry.js";
 import {
+  isGitUrl,
   prepareWorkspace,
-  workspaceSummary,
-  type TargetRef,
-  type WorkflowTargetSummary,
-  type WorkspaceLease
+  safeGitUrlForDisplay,
+  workspaceSummary
 } from "../workspaces/index.js";
+import type { TargetRef, WorkspaceLease } from "../workspaces/index.js";
 
 const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
-const MODEL_RUNTIME = "pi-ai";
-const MODEL_PROVIDER = "minimax";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
-const MINIMAX_API_KEY_ENV = "MINIMAX_API_KEY";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
 const DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS = 10_000;
-const WORKFLOW_LOG_NAME = "readiness_sweep";
-
-interface WorkflowSourceContext {
-  source: "cli" | "discord" | "slack";
-  guildId?: string;
-  channelId?: string;
-  threadId?: string;
-  messageId?: string;
-  userId?: string;
-}
 
 export async function runSweepWorkflow(
   target: string | TargetRef,
@@ -53,352 +47,352 @@ export async function runSweepWorkflow(
     ref?: string;
     timeoutMs?: number;
     onProgress?: (event: WorkflowProgressEvent) => void;
-    sourceContext?: WorkflowSourceContext;
+    sourceContext?: ToolSourceContext;
     signal?: AbortSignal;
     github?: GitHubEvidenceClientOptions;
+    recording?: InteractionRecorder;
   } = {}
 ): Promise<WorkflowResult> {
-  assertNotAborted(options.signal);
-  const lease = prepareWorkspace(target, options.ref);
-  try {
-    return await runSweepWorkspace(lease, options);
-  } finally {
-    await lease.cleanup();
-  }
-}
-
-async function runSweepWorkspace(
-  lease: WorkspaceLease,
-  options: {
-    model?: string;
-    timeoutMs?: number;
-    onProgress?: (event: WorkflowProgressEvent) => void;
-    sourceContext?: WorkflowSourceContext;
-    signal?: AbortSignal;
-    github?: GitHubEvidenceClientOptions;
-  }
-): Promise<WorkflowResult> {
-  assertNotAborted(options.signal);
-  const absoluteRepoPath = path.resolve(lease.path);
+  const origin =
+    typeof target === "string" ? target : target.kind === "git-url" ? target.url : target.path;
+  const source =
+    typeof target === "string" ? (isGitUrl(target) ? "git-url" : "local-git") : target.kind;
+  const displayOrigin = captureHistory(
+    source === "git-url" ? safeGitUrlForDisplay(origin) : origin
+  ).text;
+  const requestedRef = options.ref ?? (typeof target === "string" ? undefined : target.ref);
+  const recording =
+    options.recording ??
+    beginInteraction(
+      {
+        source: "cli",
+        kind: "readiness_sweep",
+        userMessage: {
+          command: "sweep",
+          target: origin,
+          ...(requestedRef ? { ref: requestedRef } : {})
+        },
+        target: displayOrigin,
+        metadata: options.sourceContext
+      },
+      { signal: options.signal }
+    );
+  const ownsInteraction = !options.recording;
+  const signal = combineAbortSignals(recording.signal, options.signal)!;
   const modelName = options.model ?? DEFAULT_HARNESS_MODEL;
   const timeoutMs = options.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
-  const workspace = workspaceSummary(lease);
-  const target = workflowTargetSummary(lease);
-  emitProgress(options.onProgress, { type: "workspace_prepared", target, workspace });
-  const runStore = createWorkflowRun({
-    repoPath: absoluteRepoPath,
-    statePath: lease.statePath,
-    repositoryIdentity: lease.displayOrigin,
-    repositoryName: repositoryNameFromOrigin(lease.displayOrigin),
-    repositoryRemoteUrl: lease.source === "git-url" ? lease.displayOrigin : undefined,
-    harnessProvider: DEFAULT_HARNESS_PROVIDER,
-    modelRuntime: MODEL_RUNTIME,
-    modelProvider: MODEL_PROVIDER,
-    model: modelName,
-    workspace,
-    sourceContext: options.sourceContext ? { ...options.sourceContext } : undefined
-  });
-  runStore.sqlite.close();
-
-  const reportPath = reportPathFor(lease.statePath, runStore.run.id);
   const calls: ToolCallRecord[] = [];
-  const workflowLogger = logger.child({
-    workflow_name: WORKFLOW_LOG_NAME,
-    task_id: runStore.task.id,
-    run_id: runStore.run.id
-  });
-  const progressLogContext = { task_id: runStore.task.id, run_id: runStore.run.id };
-
-  workflowLogger.info(
-    {
-      timeout_ms: timeoutMs
-    },
-    "readiness_sweep.started"
-  );
-  emitProgress(options.onProgress, {
-    type: "started",
-    runId: runStore.run.id,
-    repoPath: absoluteRepoPath,
-    model: modelName,
-    timeoutMs
-  });
-
-  emitProgress(options.onProgress, { type: "evidence_started" }, progressLogContext);
-  const evidence = gatherReadinessEvidence(absoluteRepoPath);
-  assertNotAborted(options.signal);
-  calls.push({
-    name: "gather_readiness_evidence",
-    args: { plugin: evidence.plugin, recipe: evidence.evidence_recipe },
-    isError: false,
-    result: evidence
-  });
-  const githubEvidence = await gatherGitHubEvidenceForWorkspace(
-    workspace,
-    githubEvidenceOptions(options.github, timeoutMs, options.signal)
-  );
-  assertNotAborted(options.signal);
-  if (githubEvidence) {
-    calls.push({
-      name: "gather_github_evidence",
-      args: { plugin: "github", target: githubEvidenceTarget(githubEvidence) },
-      isError: false,
-      result: githubEvidence
-    });
-  }
-  const evidencePacket = githubEvidence
-    ? {
-        readiness: evidence,
-        github: githubEvidence
-      }
-    : evidence;
-  emitProgress(
-    options.onProgress,
-    {
-      type: "evidence_completed",
-      fileCount: countedEvidenceFiles(evidence)
-    },
-    progressLogContext
-  );
-
-  if (!process.env[MINIMAX_API_KEY_ENV]) {
-    assertNotAborted(options.signal);
-    const markdown = renderReportEnvelope(
-      absoluteRepoPath,
-      `## Overall Judgment
-
-Repository evidence was collected, but LLM interpretation was skipped because \`${MINIMAX_API_KEY_ENV}\` is not set.
-
-## Next Step
-
-Set \`${MINIMAX_API_KEY_ENV}\` and rerun the sweep.`,
-      reportOptions(workspace, githubEvidence)
-    );
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(reportPath, markdown, "utf8");
-    completeWorkflowRun({
-      repoPath: absoluteRepoPath,
-      statePath: lease.statePath,
-      runId: runStore.run.id,
-      taskId: runStore.task.id,
-      status: "skipped",
-      harnessProvider: DEFAULT_HARNESS_PROVIDER,
-      modelRuntime: MODEL_RUNTIME,
-      modelProvider: MODEL_PROVIDER,
-      model: modelName,
-      tokenCount: 0,
-      failureReason: `missing_${MINIMAX_API_KEY_ENV.toLowerCase()}`,
-      summary: "Sweep interpretation skipped because MiniMax credentials are not configured.",
-      reportPath,
-      calls,
-      workspace
-    });
-    workflowLogger.warn(
-      { status: "skipped", reason: `missing_${MINIMAX_API_KEY_ENV}` },
-      "readiness_sweep.skipped"
-    );
-    return {
-      target,
-      repoPath: absoluteRepoPath,
-      runId: runStore.run.id,
-      reportPath,
-      status: "skipped",
-      provider: DEFAULT_HARNESS_PROVIDER,
-      model: modelName,
-      usage: emptyUsage(),
-      toolCalls: calls,
-      workspace,
-      error: `missing_${MINIMAX_API_KEY_ENV.toLowerCase()}`
-    };
-  }
-
-  let workflowError: string | undefined;
-  let interpretation: AssistantMessage | undefined;
-  try {
-    const harnessModel = createMinimaxHarnessModel(modelName);
-    emitProgress(
-      options.onProgress,
-      {
-        type: "model_started",
-        modelProvider: harnessModel.modelProvider,
-        modelRuntime: harnessModel.modelRuntime,
-        model: modelName
-      },
-      progressLogContext
-    );
-    interpretation = await interpretEvidence({
-      harnessModel,
-      repoPath: absoluteRepoPath,
-      evidence: evidencePacket,
-      timeoutMs,
-      onProgress: options.onProgress,
-      progressLogContext,
-      signal: options.signal
-    });
-    workflowLogger.info(
-      {
-        model_provider: harnessModel.modelProvider,
-        model_runtime: harnessModel.modelRuntime,
-        model: modelName,
-        token_count: interpretation.usage.totalTokens
-      },
-      "readiness_sweep.model_completed"
-    );
-    assertNotAborted(options.signal);
-  } catch (error) {
-    if (isAbortError(error)) {
-      workflowLogger.warn({ status: "aborted" }, "readiness_sweep.aborted");
-      throw error;
-    }
-    workflowError = error instanceof Error ? error.message : String(error);
-    workflowLogger.error(
-      {
-        err: error,
-        error_type: error instanceof Error ? error.name : typeof error,
-        error: workflowError
-      },
-      "readiness_sweep.failed"
-    );
-  }
-
-  const interpretationText = interpretation ? assistantText(interpretation) : "";
-  let reportWasWritten = false;
-  if (interpretationText) {
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(
-      reportPath,
-      renderReportEnvelope(absoluteRepoPath, interpretationText, {
-        ...reportOptions(workspace, githubEvidence)
-      }),
-      "utf8"
-    );
-    reportWasWritten = true;
-    emitProgress(options.onProgress, { type: "report_submitted", reportPath });
-  } else if (!workflowError) {
-    workflowError = "interpretation_returned_no_text";
-    workflowLogger.error(
-      {
-        error_type: "EmptyModelResponse",
-        error: workflowError
-      },
-      "readiness_sweep.failed"
-    );
-  }
-
-  const usage = usageFromAssistant(interpretation);
-  const finalOutput = interpretationText;
-  const status = workflowError ? "failed" : reportWasWritten ? "completed" : "failed";
-
-  if (!reportWasWritten) {
-    const markdown = renderReportEnvelope(
-      absoluteRepoPath,
-      `## Overall Judgment
-
-The workflow did not submit a report.
-
-## Harness Output
-
-${finalOutput || "No assistant output was produced."}
-
-## Error
-
-${workflowError ?? "No explicit error was recorded."}`,
-      reportOptions(workspace, githubEvidence)
-    );
-    fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(reportPath, markdown, "utf8");
-  }
-  workflowLogger.info({ report_path: reportPath }, "readiness_sweep.report_written");
-
-  completeWorkflowRun({
-    repoPath: absoluteRepoPath,
-    statePath: lease.statePath,
-    runId: runStore.run.id,
-    taskId: runStore.task.id,
-    status,
-    harnessProvider: DEFAULT_HARNESS_PROVIDER,
-    modelRuntime: MODEL_RUNTIME,
-    modelProvider: MODEL_PROVIDER,
-    model: modelName,
-    tokenCount: usage.totalTokens,
-    failureReason: workflowError,
-    summary: status === "completed" ? "Sweep workflow completed." : "Sweep workflow failed.",
-    reportPath,
-    calls,
-    workspace
-  });
-
-  workflowLogger.info(
-    {
-      report_path: reportPath,
-      status,
-      token_count: usage.totalTokens,
-      tool_call_count: calls.length
-    },
-    "readiness_sweep.completed"
-  );
-  emitProgress(options.onProgress, { type: "completed", status, reportPath });
-
-  return {
-    target,
-    repoPath: absoluteRepoPath,
-    runId: runStore.run.id,
-    reportPath,
-    status,
+  const result: WorkflowResult = {
+    target: { source, origin: displayOrigin, ...(requestedRef ? { ref: requestedRef } : {}) },
+    interactionId: recording.interactionId,
+    runId: recording.runId,
+    status: "failed",
     provider: DEFAULT_HARNESS_PROVIDER,
     model: modelName,
-    usage,
-    toolCalls: calls,
-    workspace,
-    error: workflowError
+    usage: emptyUsage(),
+    toolCalls: calls
   };
-}
+  const logContext = { interaction_id: recording.interactionId, run_id: recording.runId };
+  const progress = (event: WorkflowProgressEvent) =>
+    emitWorkflowProgress("readiness_sweep", options.onProgress, event, logContext);
+  let lease: WorkspaceLease | undefined;
+  let primaryError: unknown;
+  const assertActive = () => {
+    recording.assertHealthy();
+    if (signal.aborted) throw new Error("workflow_aborted");
+  };
 
-async function interpretEvidence(input: {
-  harnessModel: HarnessModel;
-  repoPath: string;
-  evidence: unknown;
-  timeoutMs: number;
-  onProgress?: (event: WorkflowProgressEvent) => void;
-  progressLogContext?: Record<string, unknown>;
-  signal?: AbortSignal;
-}): Promise<AssistantMessage> {
-  const completion = input.harnessModel.models.completeSimple(
-    input.harnessModel.model,
-    {
-      systemPrompt: `${readinessSweepSkill}
-
-Evidence gathering is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.`,
-      messages: [
-        {
-          role: "user",
-          content: buildReadinessInterpretationPrompt(input.repoPath, input.evidence),
-          timestamp: Date.now()
+  try {
+    try {
+      logger.info(
+        { ...logContext, workflow_name: "readiness_sweep", timeout_ms: timeoutMs },
+        "readiness_sweep.started"
+      );
+      assertActive();
+      lease = prepareWorkspace(target, options.ref);
+      assertActive();
+      const workspace = workspaceSummary(lease);
+      result.workspace = workspace;
+      result.repoPath = lease.path;
+      result.target = {
+        source: lease.source,
+        origin: lease.displayOrigin,
+        ref: lease.ref,
+        commitSha: lease.commitSha
+      };
+      recording.updateRun({
+        target: lease.displayOrigin,
+        ref: lease.ref,
+        commitSha: lease.commitSha,
+        metadata: {
+          workspace,
+          ...(options.sourceContext ? { source: options.sourceContext } : {}),
+          harnessProvider: DEFAULT_HARNESS_PROVIDER,
+          modelProvider: "minimax",
+          modelRuntime: "pi-ai",
+          model: modelName
         }
-      ],
-      tools: []
-    },
-    {
-      toolChoice: "none",
-      reasoning: "low",
-      maxTokens: 3000,
-      timeoutMs: input.timeoutMs
+      });
+      progress({ type: "workspace_prepared", target: result.target, workspace });
+      progress({
+        type: "started",
+        runId: recording.runId,
+        repoPath: lease.path,
+        model: modelName,
+        timeoutMs
+      });
+      progress({ type: "evidence_started" });
+      const readinessInput = { repoPath: lease.path };
+      const evidence = recording.recordTool(
+        {
+          name: "gather_readiness_evidence",
+          kind: "workflow",
+          source: "readiness",
+          input: readinessInput
+        },
+        () => gatherReadinessEvidence(lease!.path),
+        signal
+      );
+      calls.push({
+        name: "gather_readiness_evidence",
+        args: readinessInput,
+        isError: false,
+        result: evidence
+      });
+      assertActive();
+      // Avoid counting a non-GitHub target as a second evidence collection.
+      const githubIdentity = resolveGitHubIdentity(workspace.origin);
+      const githubInput = { target: githubIdentity?.full_name };
+      const github = githubIdentity
+        ? await recording.recordTool(
+            {
+              name: "gather_github_evidence",
+              kind: "workflow",
+              source: "github",
+              input: githubInput
+            },
+            (_recording, evidenceSignal) =>
+              gatherGitHubEvidenceForWorkspace(workspace, {
+                ...options.github,
+                useAmbientToken:
+                  options.github?.useAmbientToken ??
+                  (!options.sourceContext || options.sourceContext.source === "cli"),
+                signal: combineAbortSignals(evidenceSignal, options.github?.signal),
+                timeoutMs: Math.min(
+                  options.github?.timeoutMs ?? DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS,
+                  timeoutMs
+                )
+              }),
+            signal
+          )
+        : undefined;
+      if (github)
+        calls.push({
+          name: "gather_github_evidence",
+          args: githubInput,
+          isError: false,
+          result: github
+        });
+      assertActive();
+      progress({
+        type: "evidence_completed",
+        fileCount: new Set([
+          ...evidence.key_files,
+          ...evidence.docs,
+          ...evidence.tests,
+          ...evidence.ci,
+          ...evidence.likely_entrypoints
+        ]).size
+      });
+      const context = renderGitHubContext(github);
+      let body: string;
+      if (!process.env.MINIMAX_API_KEY) {
+        result.status = "skipped";
+        result.error = "missing_minimax_api_key";
+        body =
+          "## Overall Judgment\n\nRepository evidence was collected, but LLM interpretation was skipped because `MINIMAX_API_KEY` is not set.\n\n## Next Step\n\nSet `MINIMAX_API_KEY` and rerun the sweep.";
+      } else {
+        assertActive();
+        const harnessModel = createMinimaxHarnessModel(modelName);
+        progress({
+          type: "model_started",
+          modelProvider: "minimax",
+          modelRuntime: "pi-ai",
+          model: modelName
+        });
+        assertActive();
+        const id = recording.modelStart({ provider: "minimax", model: modelName });
+        result.usage = { requests: 1, completeness: "unknown" };
+        const modelController = new AbortController();
+        const modelSignal = combineAbortSignals(signal, modelController.signal)!;
+        let interpretation: AssistantMessage | undefined;
+        try {
+          const completion = harnessModel.models.completeSimple(
+            harnessModel.model,
+            {
+              systemPrompt:
+                readinessSweepSkill +
+                "\n\nEvidence gathering is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.",
+              messages: [
+                {
+                  role: "user",
+                  content: buildReadinessInterpretationPrompt(
+                    lease.path,
+                    github ? { readiness: evidence, github } : evidence
+                  ),
+                  timestamp: Date.now()
+                }
+              ],
+              tools: []
+            },
+            {
+              toolChoice: "none",
+              reasoning: "low",
+              maxTokens: 3000,
+              timeoutMs,
+              signal: modelSignal
+            }
+          );
+          interpretation = await withWorkflowTimeout(
+            withAbort(completion, signal),
+            timeoutMs,
+            () => {
+              // Request provider cancellation; a rejected wrapper does not prove the provider stopped.
+              modelController.abort(new Error("workflow_timeout"));
+              progress({ type: "timeout", timeoutMs });
+            }
+          );
+          assertActive();
+          result.usage = usageFromAssistant(interpretation);
+          if (interpretation.stopReason === "error" || interpretation.stopReason === "aborted")
+            throw new Error(
+              interpretation.errorMessage ?? "model_returned_" + interpretation.stopReason
+            );
+        } catch (error) {
+          recording.modelFinish({
+            id,
+            status: signal.aborted ? "cancelled" : "failed",
+            usage: observedModelUsage(interpretation),
+            error: safeError(error)
+          });
+          throw error;
+        }
+        recording.modelFinish({
+          id,
+          status: "completed",
+          usage: observedModelUsage(interpretation)
+        });
+        logger.info(
+          {
+            ...logContext,
+            model_provider: "minimax",
+            model_runtime: "pi-ai",
+            model: modelName,
+            token_count: result.usage.totalTokens
+          },
+          "readiness_sweep.model_completed"
+        );
+        body = assistantText(interpretation);
+        if (!body) throw new Error("interpretation_returned_no_text");
+        result.status = "completed";
+      }
+      assertActive();
+      const reportPath = writeSweepReport(
+        recording.runId,
+        renderReportEnvelope(lease.path, body, {
+          workspace,
+          contextSections: context ? [context] : []
+        })
+      );
+      recording.registerArtifact({ path: reportPath, type: "markdown", title: "Readiness sweep" });
+      result.reportPath = reportPath;
+      logger.info({ ...logContext, report_path: reportPath }, "readiness_sweep.report_written");
+      progress({ type: "report_submitted", reportPath });
+      assertActive();
+    } catch (error) {
+      primaryError = error;
+      result.status = signal.aborted ? "cancelled" : "failed";
+      result.error = safeError(error);
+    } finally {
+      // Cleanup must run even when cancellation or the fatal recording latch prevents new work.
+      if (lease) {
+        try {
+          await lease.cleanup();
+        } catch (error) {
+          result.cleanupError = safeError(error);
+          logger.error(
+            { ...logContext, error: result.cleanupError },
+            "readiness_sweep.cleanup_failed"
+          );
+          if (!primaryError) {
+            primaryError = error;
+            result.error = result.cleanupError;
+            result.status = "failed";
+          }
+        }
+      }
     }
-  );
-  return await withWorkflowTimeout(withAbort(completion, input.signal), input.timeoutMs, () => {
-    emitProgress(
-      input.onProgress,
-      { type: "timeout", timeoutMs: input.timeoutMs },
-      input.progressLogContext
+    recording.assertHealthy();
+    if (signal.aborted && !primaryError) {
+      result.status = "cancelled";
+      result.error = "workflow_aborted";
+    }
+    const error = result.cleanupError
+      ? { message: result.error, cleanupError: result.cleanupError }
+      : result.error;
+    recording.finishRun({ status: result.status, error });
+    if (ownsInteraction) {
+      recording.appendMessage({
+        role: "assistant",
+        content: {
+          status: result.status,
+          target: result.target,
+          ...(result.reportPath ? { reportPath: result.reportPath } : {}),
+          ...(result.error ? { error: result.error } : {}),
+          ...(result.cleanupError ? { cleanupError: result.cleanupError } : {})
+        }
+      });
+      recording.finishInteraction({ status: result.status, error });
+    }
+    recording.assertHealthy();
+    if (result.status === "failed" || result.status === "cancelled") {
+      logger.error(
+        {
+          ...logContext,
+          status: result.status,
+          error: result.error,
+          error_type:
+            primaryError instanceof Error ? captureHistory(primaryError.name).text : "WorkflowError"
+        },
+        "readiness_sweep.failed"
+      );
+    }
+    logger.info(
+      {
+        ...logContext,
+        status: result.status,
+        report_path: result.reportPath,
+        token_count: result.usage.totalTokens,
+        workflow_activity_count: calls.length
+      },
+      "readiness_sweep.completed"
     );
-  });
+    progress({ type: "completed", status: result.status, reportPath: result.reportPath });
+    return result;
+  } finally {
+    if (ownsInteraction) recording.close();
+  }
 }
 
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(abortError());
+function safeError(error: unknown): string {
+  return captureHistory(error instanceof Error ? error.message : String(error)).text;
+}
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(abortError());
-    signal.addEventListener("abort", onAbort, { once: true });
+    const onAbort = () => reject(new Error("workflow_aborted"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (value) => {
         signal.removeEventListener("abort", onAbort);
@@ -406,94 +400,8 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
       },
       (error: unknown) => {
         signal.removeEventListener("abort", onAbort);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(error instanceof Error ? error : new Error(safeError(error)));
       }
     );
   });
-}
-
-function assertNotAborted(signal: AbortSignal | undefined) {
-  if (signal?.aborted) throw abortError();
-}
-
-function abortError(): Error {
-  return new Error("workflow_aborted");
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.message === "workflow_aborted";
-}
-
-const emitProgress = (
-  onProgress: ((event: WorkflowProgressEvent) => void) | undefined,
-  event: WorkflowProgressEvent,
-  logContext?: Record<string, unknown>
-) => emitWorkflowProgress(WORKFLOW_LOG_NAME, onProgress, event, logContext);
-
-function countedEvidenceFiles(evidence: {
-  key_files: string[];
-  docs: string[];
-  tests: string[];
-  ci: string[];
-  likely_entrypoints: string[];
-}): number {
-  return new Set([
-    ...evidence.key_files,
-    ...evidence.docs,
-    ...evidence.tests,
-    ...evidence.ci,
-    ...evidence.likely_entrypoints
-  ]).size;
-}
-
-function githubEvidenceOptions(
-  options: GitHubEvidenceClientOptions | undefined,
-  workflowTimeoutMs: number,
-  signal: AbortSignal | undefined
-): GitHubEvidenceClientOptions {
-  const timeoutMs = Math.min(
-    options?.timeoutMs ?? DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS,
-    workflowTimeoutMs
-  );
-  return {
-    ...options,
-    signal: options?.signal ?? signal,
-    timeoutMs
-  };
-}
-
-function reportOptions(
-  workspace: ReturnType<typeof workspaceSummary>,
-  github: GitHubEvidence | undefined
-) {
-  const githubContext = renderGitHubContext(github);
-  return {
-    workspace,
-    contextSections: githubContext ? [githubContext] : []
-  };
-}
-
-function reportPathFor(statePath: string, runId: number): string {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z");
-  return path.join(statePath, "reports", `${timestamp}-${runId}-readiness-sweep.md`);
-}
-
-function repositoryNameFromOrigin(origin: string): string {
-  return path.basename(origin.replace(/\/$/, "").replace(/\.git$/, ""));
-}
-
-function workflowTargetSummary(lease: WorkspaceLease): WorkflowTargetSummary {
-  return {
-    source: lease.source,
-    origin: lease.displayOrigin,
-    ref: lease.ref,
-    commitSha: lease.commitSha
-  };
-}
-
-function githubEvidenceTarget(evidence: GitHubEvidence): string {
-  return evidence.identity?.full_name ?? "github";
 }

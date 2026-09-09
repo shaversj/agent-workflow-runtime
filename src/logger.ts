@@ -64,7 +64,7 @@ function pinoPrettyStream(destination?: DestinationStream): DestinationStream {
     colorize: process.stdout.isTTY && process.env.NO_COLOR !== "1",
     errorProps: "stack,message,code",
     ignore:
-      "pid,hostname,workflow_name,task_id,run_id,harness_provider,model_runtime,model_provider,model,status,repo_name,repository_id,target_path,target_url,workspace_source,workspace_path,workspace_ref,workspace_commit_sha,state_path,report_path,timeout_ms,file_count,token_count,tool_call_count",
+      "pid,hostname,workflow_name,interaction_id,run_id,harness_provider,model_runtime,model_provider,model,status,repo_name,target_path,target_url,workspace_source,workspace_path,workspace_ref,workspace_commit_sha,report_path,timeout_ms,file_count,token_count,tool_call_count",
     levelFirst: true,
     messageFormat: prettyMessageFormat,
     singleLine: false,
@@ -78,7 +78,7 @@ function prettyMessageFormat(log: PrettyLogRecord, messageKey: string): string {
   const message = primitiveLogValue(log[messageKey]) ?? "";
   const context = [
     formatContextValue("run", log.run_id),
-    formatContextValue("task", log.task_id),
+    formatContextValue("interaction", log.interaction_id),
     formatContextValue("repo", log.repo_name),
     formatPathBasenameValue("target", log.target_path ?? log.target_url),
     formatContextValue("source", log.workspace_source),

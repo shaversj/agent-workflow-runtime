@@ -54,7 +54,7 @@ The bot responds when mentioned in an allowed guild channel:
 @agent-ops where is the latest readiness report?
 @agent-ops read the latest readiness report
 @agent-ops runs list
-@agent-ops show run <target-key>:<run-id>
+@agent-ops show run <run-id> repo=https://github.com/org/repo
 @agent-ops reports latest
 ```
 

@@ -6,15 +6,15 @@ Agent Ops Kit is a TypeScript harness for running agent-facing repository operat
 
 The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, enriches GitHub-backed targets with optional read-only GitHub context, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, writes a Markdown report, and cleans up the checkout.
 
-The project should stay organized around six concepts:
+The project should stay organized around these concepts:
 
 - `harness/`: shared runtime contracts, model setup, Pi tool adapters, timeout handling, usage parsing, and progress emission
 - `plugins/`: domain capability bundles containing TypeBox-validated manifests, evidence recipes, tools, and skills
 - `surfaces/`: user-facing ways to interact with the harness, such as CLI and chat adapters
 - `tools/`: shared TypeBox tool contracts, the capability registry, the catalog bridge, and generic report helpers
-- `workspaces/`: target normalization, managed git checkouts, workspace leases, and target-scoped state paths
+- `workspaces/`: target normalization, managed git checkouts, workspace leases, and managed storage locations
 - `workflows/`: orchestration that connects tools, evidence, models, skills, persistence, and user-facing surfaces
-- `db/`: local SQLite persistence for workflow runs and artifacts
+- `db/`: shared local SQLite interaction history and read-only inspection
 
 Plugins define capabilities. A plugin manifest owns source identity, authority, default exposure, default approval policy, default surface policy, and tool summaries. Registered tools own TypeBox input/output schemas and execution. The registry indexes capabilities, and the manifest applies shared metadata such as source, exposure, read-only intent, approval requirement, and allowed surfaces. Surfaces enable plugin sources, not individual functions, then the catalog exposes a small model-facing bridge such as `searchTools` and `executeTool`. Pi executes the selected capability locally. Keep direct CLI workflows simple when a deterministic command path is clearer than model-based routing.
 
@@ -69,7 +69,11 @@ Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher 
 
 - Read source repositories by default.
 - Do not edit, commit, push, open PRs, delete files, or mutate external systems unless a user explicitly asks.
-- Store sweep output under Agent Ops Kit managed state, defaulting to `~/.agent-ops-kit/targets/<target-key>/`.
+- Store shared history at `AGENT_OPS_HOME/history/agent-ops.db` and registered artifacts under `history/artifacts/`.
+- Record accepted interactions before work. Pass the recorder explicitly into workflows and tool execution; plugins must not open history databases.
+- Keep delivery outcomes separate from execution outcomes. A fatal recording error stops additional tool/model work.
+- Keep full interaction transcripts local to CLI inspection. Discord run/report tools expose narrow metadata and registered reports only.
+- Do not reintroduce target-database discovery, legacy run-reference parsing, or filesystem report fallback.
 - Inspect repositories through managed git workspaces so reports can identify the origin, ref, and commit SHA.
 - Keep secret values out of reports, logs, fixtures, and tests.
 - Redact secret-shaped values before evidence is sent to an LLM.

@@ -1,4 +1,5 @@
 import type { WorkflowProgressEvent, WorkflowResult } from "../../harness/types.js";
+import type { InteractionRecorder } from "../../harness/interaction.js";
 import type { RegisteredTool, ToolRequestContext, ToolSurface } from "../../tools/registry.js";
 
 export type ChatPlatform = Extract<ToolSurface, "discord" | "slack">;
@@ -6,6 +7,7 @@ export type ChatWorkflowName = "readiness_sweep";
 
 export interface ChatMessage {
   platform: ChatPlatform;
+  applicationId?: string;
   workspaceId?: string;
   channelId: string;
   threadId?: string;
@@ -47,6 +49,9 @@ export interface ChatRequestContext extends ToolRequestContext {
 }
 
 export interface ChatHandlerOptions extends ChatRouterOptions {
+  recording?: InteractionRecorder;
+  signal?: AbortSignal;
+  onResponseRecorded?: (messageId: number) => void;
   availableTools?: RegisteredTool[];
   enabledPluginSources?: Iterable<string>;
   onProgress?: (event: WorkflowProgressEvent) => void;
@@ -55,7 +60,7 @@ export interface ChatHandlerOptions extends ChatRouterOptions {
 export type ChatResponse =
   | {
       kind: "message";
-      status: "accepted" | "completed" | "failed" | "skipped";
+      status: "accepted" | "completed" | "failed" | "skipped" | "cancelled" | "interrupted";
       text: string;
       result?: WorkflowResult;
     }

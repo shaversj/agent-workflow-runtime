@@ -3,14 +3,21 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 
 import { defineRegisteredTool } from "../src/tools/registry.js";
 import { runChatAgentWorkflow } from "../src/workflows/chat-agent.js";
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import type { ChatMessage } from "../src/surfaces/chat/types.js";
-import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
+import { openHistoryStore } from "../src/db/index.js";
+import { historyArtifactsPath } from "../src/workspaces/storage.js";
+
+beforeEach(() => {
+  vi.stubEnv("AGENT_OPS_HOME", fs.mkdtempSync(path.join(os.tmpdir(), "chat-agent-history-")));
+  vi.stubEnv("MINIMAX_API_KEY", "");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 const mockAgentState = vi.hoisted(() => ({
   toolNames: [] as string[],
@@ -391,7 +398,7 @@ describe("chat agent workflow", () => {
       expect(mockAgentState.prompts).toEqual([]);
       expect(response.kind).toBe("message");
       expect(response.text).toContain("status=skipped");
-      expect(response.text).toContain("tokens=0");
+      expect(response.text).toContain("tokens=unknown");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
@@ -418,66 +425,47 @@ describe("chat agent workflow", () => {
     }
   });
 
-  it("shows target-qualified run references without repo context", async () => {
-    const originalKey = process.env.MINIMAX_API_KEY;
-    const originalHome = process.env.AGENT_OPS_HOME;
-    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
-    delete process.env.MINIMAX_API_KEY;
-    const repoPath = gitRepo();
-
-    try {
-      await runSweepWorkflow(repoPath);
-      const list = await runChatAgentWorkflow(chatMessage("runs list"), {
-        defaultRepoPath: repoPath
-      });
-      const runRef = list.text.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
-      expect(runRef).toBeDefined();
-
-      process.env.MINIMAX_API_KEY = "test-key";
-      mockAgentState.toolNames = [];
+  it.each(["42", "local-git-deadbeef:42"])(
+    "requires repository context for remote run reference %s",
+    async (runRef) => {
+      process.env.MINIMAX_API_KEY = "fake-model-must-not-run";
       mockAgentState.prompts = [];
       const response = await runChatAgentWorkflow(chatMessage(`show run ${runRef}`));
-
-      expect(response.kind).toBe("message");
-      expect(response.text).toContain(`Run: ${runRef}`);
-      expect(response.text).toContain("Status: skipped");
-      expect(mockAgentState.toolNames).toEqual([]);
-      expect(mockAgentState.prompts).toEqual([]);
-    } finally {
-      restoreEnv("AGENT_OPS_HOME", originalHome);
-      restoreEnv("MINIMAX_API_KEY", originalKey);
-    }
-  });
-
-  it("accepts target-qualified run references with trailing sentence punctuation", async () => {
-    const originalKey = process.env.MINIMAX_API_KEY;
-    const originalHome = process.env.AGENT_OPS_HOME;
-    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
-    delete process.env.MINIMAX_API_KEY;
-    const repoPath = gitRepo();
-
-    try {
-      await runSweepWorkflow(repoPath);
-      const list = await runChatAgentWorkflow(chatMessage("runs list"), {
-        defaultRepoPath: repoPath
+      expect(response).toEqual({
+        kind: "clarify",
+        text: "Which repository should I use to show that readiness run?"
       });
-      const runRef = list.text.match(/(local-git-[a-f0-9]+:\d+)/)?.[1];
-      expect(runRef).toBeDefined();
-
-      const response = await runChatAgentWorkflow(chatMessage(`show run ${runRef}.`));
-
-      expect(response.kind).toBe("message");
-      expect(response.text).toContain(`Run: ${runRef}`);
-    } finally {
-      restoreEnv("AGENT_OPS_HOME", originalHome);
-      restoreEnv("MINIMAX_API_KEY", originalKey);
+      expect(mockAgentState.prompts).toEqual([]);
     }
+  );
+
+  it("passes global run IDs with the configured repository to remote inspection", async () => {
+    const calls: unknown[] = [];
+    const tool = defineRegisteredTool({
+      pluginName: "readiness",
+      name: "show_run",
+      label: "Show Run",
+      description: "Inspect a run",
+      parameters: Type.Object({ run_ref: Type.String(), repo_path: Type.String() }),
+      resultSchema: Type.Object({ found: Type.Boolean() }),
+      execute(params) {
+        calls.push(params);
+        return { result: { found: false }, text: "not found" };
+      }
+    });
+    const response = await runChatAgentWorkflow(chatMessage("show run 42"), {
+      availableTools: [tool],
+      defaultRepoPath: "/scoped/repo"
+    });
+    expect(response).toMatchObject({ kind: "message", status: "completed", text: "not found" });
+    expect(calls).toEqual([{ run_ref: "42", repo_path: "/scoped/repo" }]);
   });
 });
 
 function chatMessage(text: string): ChatMessage {
   return {
     platform: "discord",
+    applicationId: "bot-1",
     channelId: "channel-1",
     messageId: "message-1",
     userId: "user-1",
@@ -487,6 +475,7 @@ function chatMessage(text: string): ChatMessage {
 
 function workflowDetails() {
   return {
+    interactionId: "fixture-interaction",
     target: {
       source: "local-git",
       origin: "/tmp/demo",
@@ -501,6 +490,7 @@ function workflowDetails() {
     model: "MiniMax-M3",
     usage: {
       requests: 1,
+      completeness: "complete",
       inputTokens: 10,
       outputTokens: 20,
       totalTokens: 30
@@ -528,14 +518,28 @@ function gitRepo() {
 }
 
 function writeManagedReport(repoPath: string, name: string, content: string): string {
-  const reportDir = path.join(
-    targetStatePath(normalizedTargetRef(parseTargetRef(repoPath))),
-    "reports"
-  );
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, name);
-  fs.writeFileSync(reportPath, content);
-  return reportPath;
+  const store = openHistoryStore();
+  try {
+    const accepted = store.acceptInteraction({
+      source: "cli",
+      kind: "readiness_sweep",
+      userMessage: "fixture",
+      target: fs.realpathSync(repoPath)
+    });
+    const reportPath = path.join(fs.realpathSync(historyArtifactsPath()), name);
+    fs.writeFileSync(reportPath, content);
+    store.registerArtifact({
+      interactionId: accepted.interactionId,
+      runId: accepted.runId,
+      path: reportPath,
+      type: "markdown"
+    });
+    store.finishRun({ id: accepted.runId, status: "completed" });
+    store.finishInteraction({ id: accepted.interactionId, status: "completed" });
+    return reportPath;
+  } finally {
+    store.close();
+  }
 }
 
 function git(args: string[], cwd: string): string {

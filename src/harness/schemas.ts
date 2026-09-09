@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 import { WorkflowTargetSummarySchema, WorkspaceSummarySchema } from "../workspaces/schemas.js";
+import { TerminalStatusSchema } from "./history-schemas.js";
 
 export const ToolCallRecordSchema = Type.Object({
   name: Type.String(),
@@ -13,7 +14,9 @@ const RunStatusSchema = Type.Union([
   Type.Literal("running"),
   Type.Literal("completed"),
   Type.Literal("failed"),
-  Type.Literal("skipped")
+  Type.Literal("skipped"),
+  Type.Literal("cancelled"),
+  Type.Literal("interrupted")
 ]);
 
 const InspectionToolCallSummarySchema = Type.Object({
@@ -23,10 +26,9 @@ const InspectionToolCallSummarySchema = Type.Object({
 });
 
 export const InspectionRunSummarySchema = Type.Object({
-  target_key: Type.String(),
+  interaction_id: Type.String(),
   run_ref: Type.String(),
   run_id: Type.Number(),
-  task_id: Type.Number(),
   status: RunStatusSchema,
   target: Type.String(),
   ref: Type.Optional(Type.String()),
@@ -35,6 +37,8 @@ export const InspectionRunSummarySchema = Type.Object({
   report_path: Type.Optional(Type.String()),
   token_count: Type.Optional(Type.Number()),
   tool_call_count: Type.Number(),
+  workflow_activity_count: Type.Number(),
+  usage_completeness: Type.Union([Type.Literal("complete"), Type.Literal("unknown")]),
   failure_reason: Type.Optional(Type.String()),
   harness_provider: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
@@ -43,29 +47,13 @@ export const InspectionRunSummarySchema = Type.Object({
 });
 
 export const InspectionRunDetailSchema = Type.Object({
-  target_key: Type.String(),
-  run_ref: Type.String(),
-  run_id: Type.Number(),
-  task_id: Type.Number(),
-  status: RunStatusSchema,
-  target: Type.String(),
-  ref: Type.Optional(Type.String()),
-  commit_sha: Type.Optional(Type.String()),
-  short_commit: Type.Optional(Type.String()),
-  report_path: Type.Optional(Type.String()),
-  token_count: Type.Optional(Type.Number()),
-  tool_call_count: Type.Number(),
-  failure_reason: Type.Optional(Type.String()),
-  harness_provider: Type.Optional(Type.String()),
-  model: Type.Optional(Type.String()),
-  summary: Type.Optional(Type.String()),
-  started_at: Type.String(),
-  finished_at: Type.Optional(Type.String()),
-  tool_calls: Type.Array(InspectionToolCallSummarySchema)
+  ...InspectionRunSummarySchema.properties,
+  tool_calls: Type.Array(InspectionToolCallSummarySchema, { maxItems: 100 }),
+  tool_calls_truncated: Type.Boolean()
 });
 
 export const InspectionReportSummarySchema = Type.Object({
-  target_key: Type.Optional(Type.String()),
+  interaction_id: Type.String(),
   run_ref: Type.Optional(Type.String()),
   run_id: Type.Optional(Type.Number()),
   status: Type.Optional(RunStatusSchema),
@@ -119,22 +107,25 @@ export const InspectionReadReportResultSchema = Type.Object({
 
 export const HarnessUsageSchema = Type.Object({
   requests: Type.Number(),
-  inputTokens: Type.Number(),
-  outputTokens: Type.Number(),
-  totalTokens: Type.Number(),
+  inputTokens: Type.Optional(Type.Number()),
+  outputTokens: Type.Optional(Type.Number()),
+  totalTokens: Type.Optional(Type.Number()),
+  completeness: Type.Optional(Type.Union([Type.Literal("complete"), Type.Literal("unknown")])),
   cost: Type.Optional(Type.Number())
 });
 
 export const WorkflowResultSchema = Type.Object({
   target: WorkflowTargetSummarySchema,
-  repoPath: Type.String(),
+  repoPath: Type.Optional(Type.String()),
   runId: Type.Number(),
-  reportPath: Type.String(),
-  status: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("skipped")]),
+  interactionId: Type.String(),
+  reportPath: Type.Optional(Type.String()),
+  status: TerminalStatusSchema,
   provider: Type.String(),
   model: Type.String(),
   usage: HarnessUsageSchema,
   toolCalls: Type.Array(ToolCallRecordSchema),
   workspace: Type.Optional(WorkspaceSummarySchema),
-  error: Type.Optional(Type.String())
+  error: Type.Optional(Type.String()),
+  cleanupError: Type.Optional(Type.String())
 });

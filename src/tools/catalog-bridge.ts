@@ -76,6 +76,7 @@ function createSearchToolsTool(tools: RegisteredTool[], surface: ToolSurface): R
       "Search available plugin tools by source, name, label, and description before choosing a tool to execute.",
     parameters: SearchToolsParams,
     resultSchema: SearchToolsResult,
+    recordingKind: "discovery",
     source: {
       id: "tool-catalog",
       label: "Tool Catalog",
@@ -110,6 +111,7 @@ function createExecuteToolTool(tools: RegisteredTool[], surface: ToolSurface): R
       "Execute one exact tool name returned by searchTools. Use only after selecting the intended plugin tool.",
     parameters: ExecuteToolParams,
     resultSchema: ExecuteToolResult,
+    recordingKind: "dispatch",
     source: {
       id: "tool-catalog",
       label: "Tool Catalog",

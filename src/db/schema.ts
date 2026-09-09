@@ -1,93 +1,208 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex
+} from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
-export const repositories = sqliteTable(
-  "repository",
+import type {
+  AppendMessageInput,
+  CaptureEnvelope,
+  ExecutionStatus,
+  StartToolCallInput
+} from "../harness/history-schemas.js";
+
+const capture = (name: string) => text(name, { mode: "json" }).$type<CaptureEnvelope>();
+const lifecycle = () => ({
+  status: text("status").$type<ExecutionStatus>().notNull().default("running"),
+  startedAt: text("started_at").notNull(),
+  finishedAt: text("finished_at"),
+  error: capture("error")
+});
+
+export const interactions = sqliteTable(
+  "interaction",
+  {
+    id: text("id").primaryKey(),
+    source: text("source").notNull(),
+    applicationId: text("application_id"),
+    sourceMessageId: text("source_message_id"),
+    conversationKey: text("conversation_key"),
+    target: text("target"),
+    ownerToken: text("owner_token").notNull(),
+    ownerPid: integer("owner_pid").notNull(),
+    ownerHost: text("owner_host").notNull(),
+    incomplete: integer("incomplete", { mode: "boolean" }).notNull().default(false),
+    metadata: capture("metadata").notNull(),
+    ...lifecycle()
+  },
+  (t) => [
+    uniqueIndex("ux_interaction_source").on(t.source, t.applicationId, t.sourceMessageId),
+    index("ix_interaction_time").on(t.startedAt, t.id),
+    index("ix_interaction_target").on(t.target, t.startedAt, t.id),
+    index("ix_interaction_source_time").on(t.source, t.startedAt, t.id),
+    index("ix_interaction_status").on(t.status, t.startedAt, t.id),
+    index("ix_interaction_owner").on(t.ownerHost, t.ownerPid),
+    check(
+      "ck_interaction_source",
+      sql`(${t.source} = 'cli' AND ${t.applicationId} IS NULL AND ${t.sourceMessageId} IS NULL) OR (${t.source} = 'discord' AND ${t.applicationId} IS NOT NULL AND ${t.sourceMessageId} IS NOT NULL)`
+    )
+  ]
+);
+
+export const runs = sqliteTable(
+  "run",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => interactions.id),
+    parentRunId: integer("parent_run_id"),
+    triggeringToolCallId: integer("triggering_tool_call_id").references(
+      (): AnySQLiteColumn => toolCalls.id
+    ),
+    kind: text("kind").notNull(),
+    target: text("target"),
+    ref: text("ref"),
+    commitSha: text("commit_sha"),
+    metadata: capture("metadata").notNull(),
+    ...lifecycle()
+  },
+  (t) => [
+    uniqueIndex("ux_run_interaction").on(t.id, t.interactionId),
+    uniqueIndex("ux_run_root")
+      .on(t.interactionId)
+      .where(sql`${t.parentRunId} IS NULL`),
+    foreignKey({
+      columns: [t.parentRunId, t.interactionId],
+      foreignColumns: [t.id, t.interactionId]
+    }),
+    index("ix_run_activity").on(t.interactionId, t.startedAt, t.id)
+  ]
+);
+
+export const messages = sqliteTable(
+  "message",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => interactions.id),
+    runId: integer("run_id"),
+    sequence: integer("sequence").notNull(),
+    role: text("role").$type<AppendMessageInput["role"]>().notNull(),
+    content: capture("content").notNull(),
+    createdAt: text("created_at").notNull()
+  },
+  (t) => [
+    uniqueIndex("ux_message_sequence").on(t.interactionId, t.sequence),
+    foreignKey({
+      columns: [t.runId, t.interactionId],
+      foreignColumns: [runs.id, runs.interactionId]
+    })
+  ]
+);
+
+export const toolCalls = sqliteTable(
+  "tool_call",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    runId: integer("run_id")
+      .notNull()
+      .references(() => runs.id),
+    parentCallId: integer("parent_call_id").references((): AnySQLiteColumn => toolCalls.id),
+    ordinal: integer("ordinal").notNull(),
+    providerCallId: text("provider_call_id"),
+    source: text("source"),
     name: text("name").notNull(),
-    localPath: text("local_path").notNull().unique(),
-    remoteUrl: text("remote_url"),
-    defaultBranch: text("default_branch"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+    kind: text("kind").$type<StartToolCallInput["kind"]>().notNull(),
+    input: capture("input").notNull(),
+    result: capture("result"),
+    ...lifecycle()
   },
-  (table) => [index("ix_repository_local_path").on(table.localPath)]
+  (t) => [
+    uniqueIndex("ux_tool_ordinal").on(t.runId, t.ordinal),
+    index("ix_tool_activity").on(t.runId, t.startedAt, t.id)
+  ]
 );
 
-export const tasks = sqliteTable(
-  "task",
+export const modelCalls = sqliteTable(
+  "model_call",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    stableKey: text("stable_key").notNull().unique(),
-    repositoryId: integer("repository_id")
+    runId: integer("run_id")
       .notNull()
-      .references(() => repositories.id),
-    type: text("type").notNull(),
-    title: text("title").notNull(),
-    objective: text("objective").notNull(),
-    status: text("status").notNull().default("open"),
-    source: text("source").notNull().default("cli"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`CURRENT_TIMESTAMP`)
+      .references(() => runs.id),
+    ordinal: integer("ordinal").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    usageState: text("usage_state").$type<"unknown" | "known">().notNull().default("unknown"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    totalTokens: integer("total_tokens"),
+    ...lifecycle()
   },
-  (table) => [index("ix_task_stable_key").on(table.stableKey)]
+  (t) => [
+    uniqueIndex("ux_model_ordinal").on(t.runId, t.ordinal),
+    index("ix_model_activity").on(t.runId, t.startedAt, t.id),
+    check(
+      "ck_model_usage",
+      sql`(${t.usageState} = 'unknown' AND ${t.inputTokens} IS NULL AND ${t.outputTokens} IS NULL AND ${t.totalTokens} IS NULL) OR (${t.usageState} = 'known' AND ${t.inputTokens} IS NOT NULL AND ${t.outputTokens} IS NOT NULL AND ${t.totalTokens} IS NOT NULL AND ${t.inputTokens} >= 0 AND ${t.outputTokens} >= 0 AND ${t.totalTokens} >= 0)`
+    )
+  ]
 );
 
-export const runs = sqliteTable("run", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  taskId: integer("task_id")
-    .notNull()
-    .references(() => tasks.id),
-  attemptNumber: integer("attempt_number").notNull().default(1),
-  status: text("status").notNull().default("running"),
-  provider: text("provider"),
-  model: text("model"),
-  tokenCount: integer("token_count"),
-  failureReason: text("failure_reason"),
-  summary: text("summary"),
-  context: text("context", { mode: "json" }).notNull().default({}),
-  startedAt: text("started_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`),
-  finishedAt: text("finished_at")
-});
+export const artifacts = sqliteTable(
+  "artifact",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => interactions.id),
+    runId: integer("run_id"),
+    path: text("path").notNull(),
+    type: text("type").notNull(),
+    title: text("title"),
+    availability: text("availability").$type<"available" | "missing">().notNull(),
+    createdAt: text("created_at").notNull()
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.runId, t.interactionId],
+      foreignColumns: [runs.id, runs.interactionId]
+    }),
+    index("ix_artifact_interaction").on(t.interactionId, t.id),
+    index("ix_artifact_run").on(t.runId, t.id)
+  ]
+);
 
-export const artifacts = sqliteTable("artifact", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  taskId: integer("task_id")
-    .notNull()
-    .references(() => tasks.id),
-  runId: integer("run_id")
-    .notNull()
-    .references(() => runs.id),
-  type: text("type").notNull(),
-  title: text("title").notNull(),
-  pathOrUrl: text("path_or_url").notNull(),
-  metadata: text("metadata", { mode: "json" }).notNull().default({}),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
-});
-
-export const toolCalls = sqliteTable("tool_call", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  runId: integer("run_id")
-    .notNull()
-    .references(() => runs.id),
-  name: text("name").notNull(),
-  args: text("args", { mode: "json" }).notNull().default({}),
-  isError: integer("is_error", { mode: "boolean" }).notNull().default(false),
-  result: text("result", { mode: "json" }).notNull().default({}),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`CURRENT_TIMESTAMP`)
-});
+export const deliveryAttempts = sqliteTable(
+  "delivery_attempt",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => messages.id),
+    part: integer("part").notNull(),
+    attempt: integer("attempt").notNull(),
+    status: text("status")
+      .$type<"pending" | "acknowledged" | "failed" | "uncertain">()
+      .notNull()
+      .default("pending"),
+    surfaceMessageId: text("surface_message_id"),
+    error: capture("error"),
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at")
+  },
+  (t) => [
+    uniqueIndex("ux_delivery_attempt").on(t.messageId, t.part, t.attempt),
+    index("ix_delivery_pending")
+      .on(t.messageId)
+      .where(sql`${t.status} = 'pending'`)
+  ]
+);

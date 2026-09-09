@@ -19,5 +19,5 @@ export type WorkflowProgressEvent =
   | { type: "tool_started"; name: string }
   | { type: "tool_completed"; name: string; isError: boolean }
   | { type: "report_submitted"; reportPath: string }
-  | { type: "completed"; status: WorkflowResult["status"]; reportPath: string }
+  | { type: "completed"; status: WorkflowResult["status"]; reportPath?: string }
   | { type: "timeout"; timeoutMs: number };

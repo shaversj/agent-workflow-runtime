@@ -4,13 +4,21 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import Database from "better-sqlite3";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Value } from "typebox/value";
 
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
-import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
+import { historyDatabasePath, historyArtifactsPath } from "../src/workspaces/storage.js";
+import { openHistoryReader } from "../src/db/index.js";
+import { beginInteraction, flushPendingInteractionFailures } from "../src/harness/interaction.js";
+import { WorkflowResultSchema } from "../src/harness/schemas.js";
+import * as workspaceTools from "../src/workspaces/index.js";
+import * as readinessEvidence from "../src/plugins/readiness/evidence.js";
+import { readinessTools } from "../src/plugins/readiness/tools.js";
 
 const sweepHarnessState = vi.hoisted(() => ({
-  prompts: [] as string[]
+  prompts: [] as string[],
+  complete: vi.fn()
 }));
 
 vi.mock("../src/harness/model.js", () => ({
@@ -20,8 +28,14 @@ vi.mock("../src/harness/model.js", () => ({
     name: "MiniMax-M3",
     model: {},
     models: {
-      completeSimple: (_model: unknown, input: { messages: { content: string }[] }) => {
+      completeSimple: (
+        _model: unknown,
+        input: { messages: { content: string }[] },
+        options: { signal: AbortSignal }
+      ) => {
         sweepHarnessState.prompts.push(input.messages[0]?.content ?? "");
+        const override: unknown = sweepHarnessState.complete(input, options);
+        if (override !== undefined) return override;
         return Promise.resolve({
           role: "assistant",
           content: [
@@ -41,6 +55,23 @@ vi.mock("../src/harness/model.js", () => ({
     }
   })
 }));
+
+let isolatedHome: string;
+beforeEach(() => {
+  isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "sweep-failure-"));
+  vi.stubEnv("AGENT_OPS_HOME", isolatedHome);
+  vi.stubEnv("HOME", isolatedHome);
+  vi.stubEnv("MINIMAX_API_KEY", "");
+  vi.stubEnv("GH_TOKEN", "");
+  vi.stubEnv("GITHUB_TOKEN", "");
+  sweepHarnessState.complete.mockReset();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  flushPendingInteractionFailures();
+  vi.unstubAllEnvs();
+  fs.rmSync(isolatedHome, { recursive: true, force: true });
+});
 
 describe("sweep workflow", () => {
   it("records a skipped report when MiniMax credentials are missing", async () => {
@@ -66,10 +97,11 @@ describe("sweep workflow", () => {
       expect(result.workspace?.path && fs.existsSync(result.workspace.path)).toBe(false);
       expect(result.toolCalls).toHaveLength(1);
       expect(result.toolCalls[0]?.name).toBe("gather_readiness_evidence");
-      expect(fs.existsSync(result.reportPath)).toBe(true);
-      expect(fs.readFileSync(result.reportPath, "utf8")).toContain("MINIMAX_API_KEY");
-      expect(result.reportPath.startsWith(agentOpsHome)).toBe(true);
-      expect(fs.existsSync(path.join(statePathForRepo(repoPath), "agent-ops.db"))).toBe(true);
+      expect(fs.existsSync(result.reportPath!)).toBe(true);
+      expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("MINIMAX_API_KEY");
+      expect(result.reportPath!.startsWith(fs.realpathSync(historyArtifactsPath()))).toBe(true);
+      expect(fs.existsSync(historyDatabasePath())).toBe(true);
+      expect(fs.existsSync(path.join(agentOpsHome, "targets"))).toBe(false);
       expect(fs.existsSync(path.join(repoPath, ".agent-readiness"))).toBe(false);
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
@@ -81,85 +113,27 @@ describe("sweep workflow", () => {
     }
   });
 
-  it("upgrades an existing Python-era sweep database", async () => {
-    const originalKey = process.env.MINIMAX_API_KEY;
-    delete process.env.MINIMAX_API_KEY;
+  it("records preparation failure in shared history without an artifact", async () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
-    const repoPath = gitRepo();
-    createPythonEraDatabase(statePathForRepo(repoPath));
-
     try {
-      const result = await runSweepWorkflow(repoPath);
-
-      expect(result.status).toBe("skipped");
-      const sqlite = new Database(path.join(statePathForRepo(repoPath), "agent-ops.db"));
-      const runColumns = sqlite.prepare("PRAGMA table_info(run)").all() as { name: string }[];
-      expect(runColumns.map((column) => column.name)).toContain("provider");
-      expect(sqlite.prepare("select count(*) as count from run").get()).toEqual({ count: 1 });
-      sqlite.close();
+      const result = await runSweepWorkflow(path.join(process.env.AGENT_OPS_HOME, "missing"));
+      expect(result.status).toBe("failed");
+      expect(result.repoPath).toBeUndefined();
+      expect(result.workspace).toBeUndefined();
+      expect(result.target.commitSha).toBeUndefined();
+      expect(result.reportPath).toBeUndefined();
+      const reader = openHistoryReader()!;
+      try {
+        const interaction = reader.listInteractions()[0]!;
+        expect(interaction.status).toBe("failed");
+        expect(reader.getRun(result.runId)?.status).toBe("failed");
+        expect(reader.listArtifacts(interaction.id)).toEqual([]);
+      } finally {
+        reader.close();
+      }
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
-      if (originalKey) {
-        process.env.MINIMAX_API_KEY = originalKey;
-      } else {
-        delete process.env.MINIMAX_API_KEY;
-      }
-    }
-  });
-
-  it("persists workflow source context on the run", async () => {
-    const originalKey = process.env.MINIMAX_API_KEY;
-    delete process.env.MINIMAX_API_KEY;
-    const originalHome = process.env.AGENT_OPS_HOME;
-    process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
-    const repoPath = gitRepo();
-
-    try {
-      const result = await runSweepWorkflow(repoPath, {
-        sourceContext: {
-          source: "discord",
-          guildId: "guild-1",
-          channelId: "channel-1",
-          threadId: "thread-1",
-          messageId: "message-1",
-          userId: "user-1"
-        }
-      });
-
-      const sqlite = new Database(path.join(statePathForRepo(repoPath), "agent-ops.db"));
-      const row = sqlite.prepare("select context from run where id = ?").get(result.runId) as {
-        context: string;
-      };
-      const context = JSON.parse(row.context) as {
-        workspace: { origin: string; commitSha: string };
-        source: {
-          source: string;
-          guildId: string;
-          channelId: string;
-          threadId: string;
-          messageId: string;
-          userId: string;
-        };
-      };
-      expect(context.workspace.origin).toBe(fs.realpathSync(repoPath));
-      expect(context.workspace.commitSha).toMatch(/^[a-f0-9]{40}$/);
-      expect(context.source).toEqual({
-        source: "discord",
-        guildId: "guild-1",
-        channelId: "channel-1",
-        threadId: "thread-1",
-        messageId: "message-1",
-        userId: "user-1"
-      });
-      sqlite.close();
-    } finally {
-      restoreEnv("AGENT_OPS_HOME", originalHome);
-      if (originalKey) {
-        process.env.MINIMAX_API_KEY = originalKey;
-      } else {
-        delete process.env.MINIMAX_API_KEY;
-      }
     }
   });
 
@@ -180,8 +154,8 @@ describe("sweep workflow", () => {
       expect(result.workspace?.source).toBe("git-url");
       expect(result.workspace?.origin).toBe(`file://${repoPath}`);
       expect(result.workspace?.path && fs.existsSync(result.workspace.path)).toBe(false);
-      expect(result.reportPath.startsWith(agentOpsHome)).toBe(true);
-      expect(fs.readFileSync(result.reportPath, "utf8")).toContain("Commit:");
+      expect(result.reportPath!.startsWith(fs.realpathSync(historyArtifactsPath()))).toBe(true);
+      expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("Commit:");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
@@ -205,7 +179,7 @@ describe("sweep workflow", () => {
             Promise.resolve(new Response(JSON.stringify(githubResponseFor(fetchUrl(url)))))
         }
       });
-      const report = fs.readFileSync(result.reportPath, "utf8");
+      const report = fs.readFileSync(result.reportPath!, "utf8");
       const serializedResult = JSON.stringify(result);
 
       expect(result.status).toBe("skipped");
@@ -241,7 +215,7 @@ describe("sweep workflow", () => {
         }
       });
       const prompt = sweepHarnessState.prompts.join("\n");
-      const report = fs.readFileSync(result.reportPath, "utf8");
+      const report = fs.readFileSync(result.reportPath!, "utf8");
 
       expect(result.status).toBe("completed");
       expect(prompt).toContain('"github"');
@@ -272,7 +246,7 @@ describe("sweep workflow", () => {
         }
       });
       const githubCall = result.toolCalls.find((call) => call.name === "gather_github_evidence");
-      const report = fs.readFileSync(result.reportPath, "utf8");
+      const report = fs.readFileSync(result.reportPath!, "utf8");
 
       expect(result.status).toBe("skipped");
       expect(githubCall?.result).toMatchObject({
@@ -287,64 +261,309 @@ describe("sweep workflow", () => {
   });
 });
 
-function createPythonEraDatabase(statePath: string) {
-  const stateDir = statePath;
-  fs.mkdirSync(stateDir, { recursive: true });
-  const sqlite = new Database(path.join(stateDir, "agent-ops.db"));
-  sqlite.exec(`
-    CREATE TABLE repository (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name VARCHAR NOT NULL,
-      local_path VARCHAR NOT NULL,
-      remote_url VARCHAR,
-      default_branch VARCHAR,
-      created_at DATETIME NOT NULL,
-      updated_at DATETIME NOT NULL
-    );
-    CREATE UNIQUE INDEX ix_repository_local_path ON repository(local_path);
+describe("sweep failure and ownership boundaries", () => {
+  it("retains direct-call source context as metadata without inventing Discord identity", async () => {
+    const result = await runSweepWorkflow(gitRepo(), {
+      sourceContext: { source: "discord", guildId: "test-guild", channelId: "test-channel" }
+    });
+    expect(result.status).toBe("skipped");
+    const snapshot = historySnapshot();
+    expect(snapshot.interaction.source).toBe("cli");
+    expect(snapshot.interaction.metadata.text).toContain("test-channel");
+    expect(snapshot.runs[0]?.metadata.text).toContain("test-channel");
+    expect(snapshot.interaction.incomplete).toBe(false);
+  });
 
-    CREATE TABLE task (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      stable_key VARCHAR NOT NULL,
-      repository_id INTEGER NOT NULL,
-      type VARCHAR NOT NULL,
-      title VARCHAR NOT NULL,
-      objective VARCHAR NOT NULL,
-      status VARCHAR NOT NULL,
-      source VARCHAR NOT NULL,
-      created_at DATETIME NOT NULL,
-      updated_at DATETIME NOT NULL,
-      FOREIGN KEY(repository_id) REFERENCES repository (id)
-    );
-    CREATE UNIQUE INDEX ix_task_stable_key ON task(stable_key);
+  it("commits the request and root run before workspace preparation", async () => {
+    const prepare = workspaceTools.prepareWorkspace;
+    vi.spyOn(workspaceTools, "prepareWorkspace").mockImplementation((...args) => {
+      const snapshot = historySnapshot();
+      expect(snapshot.interaction.status).toBe("running");
+      expect(snapshot.runs).toHaveLength(1);
+      expect(snapshot.messages[0]?.role).toBe("user");
+      return prepare(...args);
+    });
+    const result = await runSweepWorkflow(gitRepo());
+    expect(Value.Check(WorkflowResultSchema, result)).toBe(true);
+    const snapshot = historySnapshot();
+    expect(snapshot.artifacts).toMatchObject([{ runId: result.runId, path: result.reportPath }]);
+    expect(fs.statSync(result.reportPath!).mode & 0o777).toBe(0o600);
+    expect(snapshot.models).toEqual([]);
+    expect(snapshot.interaction.incomplete).toBe(false);
+  });
 
-    CREATE TABLE run (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      attempt_number INTEGER NOT NULL,
-      status VARCHAR NOT NULL,
-      model VARCHAR,
-      summary VARCHAR,
-      context JSON NOT NULL,
-      started_at DATETIME NOT NULL,
-      finished_at DATETIME,
-      FOREIGN KEY(task_id) REFERENCES task (id)
-    );
+  it("commits evidence start and failure incrementally, then cleans up", async () => {
+    vi.spyOn(readinessEvidence, "gatherReadinessEvidence").mockImplementation(() => {
+      expect(historySnapshot().calls).toMatchObject([
+        { name: "gather_readiness_evidence", kind: "workflow", status: "running" }
+      ]);
+      throw new Error("evidence_failed");
+    });
+    const result = await runSweepWorkflow(gitRepo());
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("evidence_failed");
+    expect(historySnapshot().calls[0]?.status).toBe("failed");
+    expect(fs.existsSync(result.workspace!.path)).toBe(false);
+    expect(sweepHarnessState.complete).not.toHaveBeenCalled();
+  });
 
-    CREATE TABLE artifact (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id INTEGER NOT NULL,
-      run_id INTEGER NOT NULL,
-      type VARCHAR NOT NULL,
-      title VARCHAR NOT NULL,
-      path_or_url VARCHAR NOT NULL,
-      metadata JSON NOT NULL,
-      created_at DATETIME NOT NULL,
-      FOREIGN KEY(task_id) REFERENCES task (id),
-      FOREIGN KEY(run_id) REFERENCES run (id)
+  it("starts a model record before dispatch and records measured usage once", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    sweepHarnessState.complete.mockImplementationOnce(
+      (_input: unknown, options: { signal: AbortSignal }) => {
+        expect(historySnapshot().models).toMatchObject([
+          { status: "running", usageState: "unknown" }
+        ]);
+        expect(options.signal).toBeInstanceOf(AbortSignal);
+      }
     );
-  `);
-  sqlite.close();
+    const result = await runSweepWorkflow(gitRepo());
+    expect(result.status).toBe("completed");
+    expect(historySnapshot().models).toMatchObject([
+      { status: "completed", totalTokens: 30, usageState: "known" }
+    ]);
+    expect(historySnapshot().interaction.incomplete).toBe(false);
+  });
+
+  it("keeps absent model usage unknown", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    sweepHarnessState.complete.mockResolvedValueOnce({
+      content: [{ type: "text", text: "Ready." }]
+    });
+    const result = await runSweepWorkflow(gitRepo());
+    expect(result.status).toBe("completed");
+    expect(result.usage.totalTokens).toBeUndefined();
+    expect(result.usage.completeness).toBe("unknown");
+    expect(historySnapshot().models).toMatchObject([{ totalTokens: null, usageState: "unknown" }]);
+  });
+
+  it.each(["reject", "empty", "provider_error", "timeout"])(
+    "records model %s without a placeholder report",
+    async (mode) => {
+      vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+      let modelSignal: AbortSignal | undefined;
+      if (mode === "reject")
+        sweepHarnessState.complete.mockRejectedValueOnce(new Error("model_failed"));
+      if (mode === "empty") sweepHarnessState.complete.mockResolvedValueOnce({ content: [] });
+      if (mode === "provider_error")
+        sweepHarnessState.complete.mockResolvedValueOnce({
+          content: [],
+          stopReason: "error",
+          errorMessage: "provider_failed"
+        });
+      if (mode === "timeout")
+        sweepHarnessState.complete.mockImplementationOnce(
+          (_input: unknown, options: { signal: AbortSignal }) => {
+            modelSignal = options.signal;
+            return new Promise(() => {});
+          }
+        );
+      const result = await runSweepWorkflow(gitRepo(), { timeoutMs: 10 });
+      expect(result.status).toBe("failed");
+      expect(result.reportPath).toBeUndefined();
+      expect(Value.Check(WorkflowResultSchema, result)).toBe(true);
+      expect(historySnapshot().models[0]?.status).toBe(mode === "empty" ? "completed" : "failed");
+      expect(historySnapshot().artifacts).toEqual([]);
+      if (mode === "timeout") {
+        expect(result.error).toContain("workflow_timeout");
+        expect(modelSignal?.aborted).toBe(true);
+      }
+      expect(fs.existsSync(result.workspace!.path)).toBe(false);
+    }
+  );
+
+  it("passes cancellation to the provider and retains a cancelled run", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    const controller = new AbortController();
+    let modelSignal: AbortSignal | undefined;
+    sweepHarnessState.complete.mockImplementationOnce(
+      (_input: unknown, options: { signal: AbortSignal }) => {
+        modelSignal = options.signal;
+        controller.abort();
+        return new Promise(() => {});
+      }
+    );
+    const result = await runSweepWorkflow(gitRepo(), { signal: controller.signal });
+    expect(modelSignal?.aborted).toBe(true);
+    expect(result.status).toBe("cancelled");
+    expect(historySnapshot().models[0]?.status).toBe("cancelled");
+    expect(historySnapshot().runs[0]?.status).toBe("cancelled");
+    expect(fs.existsSync(result.workspace!.path)).toBe(false);
+  });
+
+  it("records a pre-cancelled request without preparing a workspace", async () => {
+    const prepare = vi.spyOn(workspaceTools, "prepareWorkspace");
+    const result = await runSweepWorkflow("missing", { signal: AbortSignal.abort() });
+    expect(result.status).toBe("cancelled");
+    expect(prepare).not.toHaveBeenCalled();
+    expect(historySnapshot().interaction.status).toBe("cancelled");
+  });
+
+  it("does not register an unwritten report", async () => {
+    const write = fs.writeFileSync;
+    vi.spyOn(fs, "writeFileSync").mockImplementation((file, ...args) => {
+      if (String(file).endsWith("readiness-sweep.md")) throw new Error("report_write_failed");
+      return write(file, ...args);
+    });
+    const result = await runSweepWorkflow(gitRepo());
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("report_write_failed");
+    expect(result.reportPath).toBeUndefined();
+    expect(historySnapshot().artifacts).toEqual([]);
+    expect(fs.existsSync(result.workspace!.path)).toBe(false);
+  });
+
+  it.each([false, true])("keeps cleanup failure separate, earlier failure=%s", async (primary) => {
+    const prepare = workspaceTools.prepareWorkspace;
+    vi.spyOn(workspaceTools, "prepareWorkspace").mockImplementation((...args) => {
+      const lease = prepare(...args);
+      return {
+        ...lease,
+        cleanup: async () => {
+          await lease.cleanup();
+          throw new Error("cleanup_failed");
+        }
+      };
+    });
+    if (primary)
+      vi.spyOn(readinessEvidence, "gatherReadinessEvidence").mockImplementation(() => {
+        throw new Error("evidence_failed");
+      });
+    const result = await runSweepWorkflow(gitRepo());
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe(primary ? "evidence_failed" : "cleanup_failed");
+    expect(result.cleanupError).toBe("cleanup_failed");
+    expect(historySnapshot().runs[0]?.error?.text).toContain("cleanup_failed");
+  });
+
+  it("sanitizes raw clone errors before returning or recording them", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-provider-key");
+    vi.spyOn(workspaceTools, "prepareWorkspace").mockImplementation(() => {
+      const error = new Error(
+        "Command failed: git clone https://user:synthetic-secret@example.com/repo.git synthetic-provider-key"
+      );
+      Object.assign(error, { stdout: "synthetic-secret", stderr: "synthetic-secret" });
+      throw error;
+    });
+    const result = await runSweepWorkflow("https://user:synthetic-secret@example.com/repo.git");
+    expect(result.status).toBe("failed");
+    expect(JSON.stringify(result)).not.toContain("synthetic-secret");
+    expect(JSON.stringify(result)).not.toContain("synthetic-provider-key");
+    expect(JSON.stringify(historySnapshot())).not.toContain("synthetic-secret");
+  });
+
+  it("refuses preparation if acceptance cannot be stored", async () => {
+    fs.writeFileSync(path.join(isolatedHome, "history"), "blocked");
+    const prepare = vi.spyOn(workspaceTools, "prepareWorkspace");
+    await expect(runSweepWorkflow("missing")).rejects.toThrow("history_recording_failed");
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("stops after failed evidence persistence and still cleans the checkout", async () => {
+    const recording = beginInteraction({
+      source: "cli",
+      kind: "readiness_sweep",
+      userMessage: "sweep"
+    });
+    const sqlite = new Database(historyDatabasePath());
+    sqlite.exec(
+      "CREATE TRIGGER fail_tool_finish BEFORE UPDATE ON tool_call BEGIN SELECT RAISE(FAIL, 'injected'); END"
+    );
+    let workspacePath = "";
+    try {
+      await expect(
+        runSweepWorkflow(gitRepo(), {
+          recording,
+          onProgress: (event) => {
+            if (event.type === "workspace_prepared") workspacePath = event.workspace.path;
+          }
+        })
+      ).rejects.toThrow("history_recording_failed");
+      expect(sweepHarnessState.complete).not.toHaveBeenCalled();
+      expect(fs.existsSync(workspacePath)).toBe(false);
+      expect(historySnapshot().artifacts).toEqual([]);
+    } finally {
+      sqlite.exec("DROP TRIGGER fail_tool_finish");
+      sqlite.close();
+      recording.close();
+    }
+  });
+
+  it("uses a supplied recording as the current run, leaving interaction finalization to its owner", async () => {
+    const recording = beginInteraction({
+      source: "cli",
+      kind: "readiness_sweep",
+      userMessage: "sweep"
+    });
+    try {
+      const result = await runSweepWorkflow(gitRepo(), { recording });
+      expect(result.runId).toBe(recording.runId);
+      expect(historySnapshot().runs).toHaveLength(1);
+      expect(historySnapshot().interaction.status).toBe("running");
+      recording.appendMessage({ role: "assistant", content: "Canonical summary" });
+      recording.finishInteraction({ status: result.status });
+    } finally {
+      recording.close();
+    }
+  });
+
+  it("links the plugin child to its capability call and keeps leaf model accounting", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    const recording = beginInteraction({
+      source: "discord",
+      applicationId: "test-app",
+      sourceMessageId: "test-message",
+      kind: "chat",
+      userMessage: "sweep"
+    });
+    try {
+      const id = recording.modelStart({ provider: "minimax", model: "router" });
+      recording.modelFinish({
+        id,
+        status: "completed",
+        usage: { inputTokens: 2, outputTokens: 3 }
+      });
+      await readinessTools
+        .find((tool) => tool.name === "run_sweep")!
+        .execute({ repo_path: gitRepo() }, { surface: "cli", recording });
+      const snapshot = historySnapshot();
+      expect(snapshot.runs).toHaveLength(2);
+      const child = snapshot.runs.find((run) => run.parentRunId === recording.runId)!;
+      const capability = snapshot.calls.find((call) => call.runId === recording.runId)!;
+      expect(capability.kind).toBe("capability");
+      expect(child.triggeringToolCallId).toBe(capability.id);
+      expect(child.status).toBe("completed");
+      expect(
+        snapshot.calls
+          .filter((call) => call.runId === child.id)
+          .every((call) => call.kind === "workflow")
+      ).toBe(true);
+      expect(snapshot.models.reduce((sum, call) => sum + (call.totalTokens ?? 0), 0)).toBe(35);
+      expect(snapshot.artifacts[0]?.runId).toBe(child.id);
+      recording.assertHealthy();
+      recording.finishInteraction({ status: "completed" });
+    } finally {
+      recording.close();
+    }
+  });
+});
+
+function historySnapshot() {
+  const reader = openHistoryReader()!;
+  try {
+    const interaction = reader.listInteractions()[0]!;
+    const runs = reader.listRuns(interaction.id);
+    return {
+      interaction,
+      runs,
+      messages: reader.listMessages(interaction.id),
+      calls: runs.flatMap((run) => reader.listToolCalls(run.id)),
+      models: runs.flatMap((run) => reader.listModelCalls(run.id)),
+      artifacts: reader.listArtifacts(interaction.id)
+    };
+  } finally {
+    reader.close();
+  }
 }
 
 function gitRepo(): string {
@@ -358,12 +577,12 @@ function gitRepo(): string {
   return repoPath;
 }
 
-function statePathForRepo(repoPath: string): string {
-  return targetStatePath(normalizedTargetRef(parseTargetRef(repoPath)));
-}
-
 function git(args: string[], cwd: string): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
 }
 
 function restoreEnv(name: string, value: string | undefined) {

@@ -3,23 +3,27 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { openHistoryStore } from "../src/db/index.js";
+import { displayInspectionTarget } from "../src/db/inspection.js";
 import {
   normalizeDiscordMessage,
   renderDiscordResponse
 } from "../src/surfaces/chat/discord/adapter.js";
-import {
-  createDiscordDuplicateGuard,
-  sendDiscordReply,
-  shouldAcceptDiscordMessage
-} from "../src/surfaces/chat/discord/bot.js";
+import { sendDiscordReply, shouldAcceptDiscordMessage } from "../src/surfaces/chat/discord/bot.js";
 import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
 import { repoTargetForChatMessage } from "../src/workflows/chat-agent.js";
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
-import { normalizedTargetRef, parseTargetRef, targetStatePath } from "../src/workspaces/index.js";
+import { historyArtifactsPath } from "../src/workspaces/storage.js";
+
+beforeEach(() => {
+  vi.stubEnv("AGENT_OPS_HOME", fs.mkdtempSync(path.join(os.tmpdir(), "chat-discord-history-")));
+  vi.stubEnv("MINIMAX_API_KEY", "");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("Discord chat surface", () => {
   it("normalizes Discord messages into chat messages", () => {
@@ -34,6 +38,7 @@ describe("Discord chat surface", () => {
 
     expect(message).toEqual({
       platform: "discord",
+      applicationId: "bot-1",
       workspaceId: "guild-1",
       channelId: "channel-1",
       threadId: undefined,
@@ -45,6 +50,7 @@ describe("Discord chat surface", () => {
 
   it("routes natural language readiness requests to the sweep workflow", () => {
     const message = normalizeDiscordMessage({
+      applicationId: "application-1",
       channelId: "channel-1",
       messageId: "message-1",
       authorId: "user-1",
@@ -63,6 +69,7 @@ describe("Discord chat surface", () => {
 
   it("routes explicit Git URL sweep requests instead of the configured default repo", () => {
     const message = normalizeDiscordMessage({
+      applicationId: "application-1",
       channelId: "channel-1",
       messageId: "message-1",
       authorId: "user-1",
@@ -84,6 +91,7 @@ describe("Discord chat surface", () => {
 
   it("asks for a repository when the request has no repo context", () => {
     const message = normalizeDiscordMessage({
+      applicationId: "application-1",
       channelId: "channel-1",
       messageId: "message-1",
       authorId: "user-1",
@@ -112,7 +120,8 @@ describe("Discord chat surface", () => {
         channelId: "channel-1",
         messageId: "message-1",
         authorId: "user-1",
-        content: "sweep this repo"
+        content: "sweep this repo",
+        applicationId: "application-1"
       });
 
       expect(message).toBeDefined();
@@ -140,14 +149,15 @@ describe("Discord chat surface", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoPath = gitRepo();
-    const reportPath = writeManagedReport(repoPath, "latest.md", "# Latest Report\n");
+    const { reportPath } = writeReport(repoPath, "latest.md", "# Latest Report\n");
 
     try {
       const message = normalizeDiscordMessage({
         channelId: "channel-1",
         messageId: "message-1",
         authorId: "user-1",
-        content: "where is the latest readiness report?"
+        content: "where is the latest readiness report?",
+        applicationId: "application-1"
       });
 
       expect(message).toBeDefined();
@@ -172,14 +182,15 @@ describe("Discord chat surface", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoPath = gitRepo();
-    const reportPath = writeManagedReport(repoPath, "latest.md", "# Latest Report\n");
+    const { reportPath } = writeReport(repoPath, "latest.md", "# Latest Report\n");
 
     try {
       const message = normalizeDiscordMessage({
         channelId: "channel-1",
         messageId: "message-1",
         authorId: "user-1",
-        content: "reports latest"
+        content: "reports latest",
+        applicationId: "application-1"
       });
 
       expect(message).toBeDefined();
@@ -199,14 +210,15 @@ describe("Discord chat surface", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoPath = gitRepo();
-    writeManagedReport(repoPath, "latest.md", "# Latest Report\n\nReady.\n");
+    writeReport(repoPath, "latest.md", "# Latest Report\n\nReady.\n");
 
     try {
       const message = normalizeDiscordMessage({
         channelId: "channel-1",
         messageId: "message-1",
         authorId: "user-1",
-        content: "read the latest readiness report"
+        content: "read the latest readiness report",
+        applicationId: "application-1"
       });
 
       expect(message).toBeDefined();
@@ -239,7 +251,8 @@ describe("Discord chat surface", () => {
         channelId: "channel-1",
         messageId: "message-1",
         authorId: "user-1",
-        content: "runs list"
+        content: "runs list",
+        applicationId: "application-1"
       });
 
       expect(message).toBeDefined();
@@ -247,7 +260,7 @@ describe("Discord chat surface", () => {
 
       expect(response.kind).toBe("message");
       expect(response.text).toContain("status=skipped");
-      expect(response.text).toContain("tokens=0");
+      expect(response.text).toContain("tokens=unknown");
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
@@ -256,6 +269,7 @@ describe("Discord chat surface", () => {
 
   it("asks for repo context before Discord run list inspection", async () => {
     const message = normalizeDiscordMessage({
+      applicationId: "application-1",
       channelId: "channel-1",
       messageId: "message-1",
       authorId: "user-1",
@@ -291,7 +305,11 @@ describe("Discord chat surface", () => {
 
   it("attaches the Markdown report to a Discord sweep response", () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+    const { reportPath, runId, interactionId } = writeReport(
+      repoPath,
+      "latest.md",
+      "# Latest Report\n"
+    );
     const [reply] = renderDiscordResponse(
       {
         kind: "message",
@@ -300,7 +318,8 @@ describe("Discord chat surface", () => {
         result: {
           target: localTarget(repoPath),
           repoPath,
-          runId: 1,
+          runId,
+          interactionId,
           reportPath,
           status: "completed",
           provider: "agent-ops-kit",
@@ -319,11 +338,11 @@ describe("Discord chat surface", () => {
   });
 
   it("attaches managed Markdown reports for workspace-backed sweep responses", () => {
-    const statePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-state-"));
-    const reportDir = path.join(statePath, "reports");
-    fs.mkdirSync(reportDir, { recursive: true });
-    const reportPath = path.join(reportDir, "latest.md");
-    fs.writeFileSync(reportPath, "# Latest Report\n");
+    const { reportPath, runId, interactionId } = writeReport(
+      "https://github.com/example/demo",
+      "latest.md",
+      "# Latest Report\n"
+    );
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-workspace-"));
     const [reply] = renderDiscordResponse(
       {
@@ -333,7 +352,8 @@ describe("Discord chat surface", () => {
         result: {
           target: gitUrlTarget("https://github.com/example/demo"),
           repoPath: workspacePath,
-          runId: 1,
+          runId,
+          interactionId,
           reportPath,
           status: "completed",
           provider: "agent-ops-kit",
@@ -348,7 +368,6 @@ describe("Discord chat surface", () => {
             ref: "main",
             commitSha: "a".repeat(40),
             path: workspacePath,
-            statePath,
             cleanupPolicy: "delete"
           }
         }
@@ -362,115 +381,133 @@ describe("Discord chat surface", () => {
     expect(reply?.attachments).toEqual([{ path: fs.realpathSync(reportPath), name: "latest.md" }]);
   });
 
-  it("does not attach reports outside the readiness report directory", () => {
+  it("fails rendering for reports outside the history artifact directory", () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    fs.mkdirSync(path.join(repoPath, ".agent-readiness", "reports"), { recursive: true });
-    const outsideReportPath = path.join(os.tmpdir(), `outside-${Date.now()}.md`);
+    const { runId, interactionId } = writeReport(repoPath, "registered.md", "# Registered\n");
+    const outsideReportPath = path.join(repoPath, "outside.md");
     fs.writeFileSync(outsideReportPath, "# Outside\n");
-    const [reply] = renderDiscordResponse(
-      {
-        kind: "message",
-        status: "completed",
-        text: "Readiness sweep completed.",
-        result: {
-          target: localTarget(repoPath),
-          repoPath,
-          runId: 1,
-          reportPath: outsideReportPath,
+    const render = () =>
+      renderDiscordResponse(
+        {
+          kind: "message",
           status: "completed",
-          provider: "agent-ops-kit",
-          model: "MiniMax-M3",
-          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          toolCalls: []
+          text: "Readiness sweep completed.",
+          result: {
+            target: localTarget(repoPath),
+            repoPath,
+            runId,
+            interactionId,
+            reportPath: outsideReportPath,
+            status: "completed",
+            provider: "agent-ops-kit",
+            model: "MiniMax-M3",
+            usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            toolCalls: []
+          }
+        },
+        {
+          channelId: "channel-1",
+          messageId: "message-1"
         }
-      },
-      {
-        channelId: "channel-1",
-        messageId: "message-1"
-      }
-    );
+      );
 
-    expect(reply?.attachments).toEqual([]);
+    expect(render).toThrow(
+      "Report attachment is missing, unsafe, or not registered for this workflow."
+    );
   });
 
-  it("does not attach symlinked reports that escape the readiness report directory", () => {
+  it("fails rendering when a registered report is replaced by a symlink", () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const outsideReportPath = path.join(os.tmpdir(), `outside-${Date.now()}.md`);
+    const outsideReportPath = path.join(repoPath, "outside.md");
     fs.writeFileSync(outsideReportPath, "# Outside\n");
-    const reportDir = path.join(repoPath, ".agent-readiness", "reports");
-    fs.mkdirSync(reportDir, { recursive: true });
-    const symlinkPath = path.join(reportDir, "link.md");
+    const {
+      reportPath: symlinkPath,
+      runId,
+      interactionId
+    } = writeReport(repoPath, "link.md", "# Registered\n");
+    fs.unlinkSync(symlinkPath);
     fs.symlinkSync(outsideReportPath, symlinkPath);
-    const [reply] = renderDiscordResponse(
-      {
-        kind: "message",
-        status: "completed",
-        text: "Readiness sweep completed.",
-        result: {
-          target: localTarget(repoPath),
-          repoPath,
-          runId: 1,
-          reportPath: symlinkPath,
+    const render = () =>
+      renderDiscordResponse(
+        {
+          kind: "message",
           status: "completed",
-          provider: "agent-ops-kit",
-          model: "MiniMax-M3",
-          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          toolCalls: []
+          text: "Readiness sweep completed.",
+          result: {
+            target: localTarget(repoPath),
+            repoPath,
+            runId,
+            interactionId,
+            reportPath: symlinkPath,
+            status: "completed",
+            provider: "agent-ops-kit",
+            model: "MiniMax-M3",
+            usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            toolCalls: []
+          }
+        },
+        {
+          channelId: "channel-1",
+          messageId: "message-1"
         }
-      },
-      {
-        channelId: "channel-1",
-        messageId: "message-1"
-      }
-    );
+      );
 
-    expect(reply?.attachments).toEqual([]);
+    expect(render).toThrow(
+      "Report attachment is missing, unsafe, or not registered for this workflow."
+    );
   });
 
-  it("does not attach reports when the readiness report directory escapes the repo", () => {
+  it("fails rendering when the registered artifact root becomes a symlink", () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const escapedReportDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-reports-"));
-    const reportPath = path.join(escapedReportDir, "latest.md");
-    fs.writeFileSync(reportPath, "# Outside\n");
-    const readinessDir = path.join(repoPath, ".agent-readiness");
-    fs.mkdirSync(readinessDir, { recursive: true });
-    fs.symlinkSync(escapedReportDir, path.join(readinessDir, "reports"));
-    const [reply] = renderDiscordResponse(
-      {
-        kind: "message",
-        status: "completed",
-        text: "Readiness sweep completed.",
-        result: {
-          target: localTarget(repoPath),
-          repoPath,
-          runId: 1,
-          reportPath,
-          status: "completed",
-          provider: "agent-ops-kit",
-          model: "MiniMax-M3",
-          usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-          toolCalls: []
-        }
-      },
-      {
-        channelId: "channel-1",
-        messageId: "message-1"
-      }
+    const { reportPath, runId, interactionId } = writeReport(
+      repoPath,
+      "latest.md",
+      "# Registered\n"
     );
+    const escapedReportDir = path.join(repoPath, "reports");
+    fs.renameSync(historyArtifactsPath(), escapedReportDir);
+    fs.symlinkSync(escapedReportDir, historyArtifactsPath());
+    const render = () =>
+      renderDiscordResponse(
+        {
+          kind: "message",
+          status: "completed",
+          text: "Readiness sweep completed.",
+          result: {
+            target: localTarget(repoPath),
+            repoPath,
+            runId,
+            interactionId,
+            reportPath,
+            status: "completed",
+            provider: "agent-ops-kit",
+            model: "MiniMax-M3",
+            usage: { requests: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            toolCalls: []
+          }
+        },
+        {
+          channelId: "channel-1",
+          messageId: "message-1"
+        }
+      );
 
-    expect(reply?.attachments).toEqual([]);
+    expect(render).toThrow(
+      "Report attachment is missing, unsafe, or not registered for this workflow."
+    );
   });
 
-  it("retries Discord replies without attachments when file upload fails", async () => {
+  it("retries Discord replies without attachments on definite upload rejection", async () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const reportPath = writeReport(repoPath, "latest.md", "# Latest Report\n");
+    const { reportPath } = writeReport(repoPath, "latest.md", "# Latest Report\n");
     const sentReplies: unknown[] = [];
     const message = {
       id: "message-1",
       reply(payload: unknown) {
         sentReplies.push(payload);
-        if (sentReplies.length === 1) throw new Error("upload failed");
-        return Promise.resolve();
+        if (sentReplies.length === 1)
+          throw Object.assign(new Error("upload rejected"), { status: 413 });
+        return Promise.resolve({ id: "fallback-1" });
       }
     };
 
@@ -558,22 +595,26 @@ describe("Discord chat surface", () => {
       )
     ).toBe(false);
   });
-
-  it("deduplicates repeated Discord message IDs", () => {
-    const guard = createDiscordDuplicateGuard();
-
-    expect(guard.claim("message-1")).toBe(true);
-    expect(guard.claim("message-1")).toBe(false);
-    expect(guard.claim("message-2")).toBe(true);
-  });
 });
 
-function writeReport(repoPath: string, name: string, content: string): string {
-  const reportDir = path.join(repoPath, ".agent-readiness", "reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, name);
-  fs.writeFileSync(reportPath, content);
-  return reportPath;
+function writeReport(target: string, name: string, content: string) {
+  const store = openHistoryStore();
+  try {
+    const { runId, interactionId } = store.acceptInteraction({
+      source: "cli",
+      kind: "readiness_sweep",
+      target: displayInspectionTarget(target),
+      userMessage: "report fixture"
+    });
+    const reportPath = path.join(fs.realpathSync(historyArtifactsPath()), name);
+    fs.writeFileSync(reportPath, content);
+    store.registerArtifact({ interactionId, runId, path: reportPath, type: "markdown" });
+    store.finishRun({ id: runId, status: "completed" });
+    store.finishInteraction({ id: interactionId, status: "completed" });
+    return { reportPath, runId, interactionId };
+  } finally {
+    store.close();
+  }
 }
 
 function localTarget(repoPath: string) {
@@ -594,14 +635,6 @@ function gitUrlTarget(origin: string) {
   };
 }
 
-function writeManagedReport(repoPath: string, name: string, content: string): string {
-  const reportDir = path.join(statePathForRepo(repoPath), "reports");
-  fs.mkdirSync(reportDir, { recursive: true });
-  const reportPath = path.join(reportDir, name);
-  fs.writeFileSync(reportPath, content);
-  return reportPath;
-}
-
 function gitRepo() {
   const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
   git(["init"], repoPath);
@@ -611,10 +644,6 @@ function gitRepo() {
   git(["add", "README.md"], repoPath);
   git(["commit", "-m", "Initial commit"], repoPath);
   return repoPath;
-}
-
-function statePathForRepo(repoPath: string): string {
-  return targetStatePath(normalizedTargetRef(parseTargetRef(repoPath)));
 }
 
 function git(args: string[], cwd: string): string {

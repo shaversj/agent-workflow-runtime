@@ -14,14 +14,18 @@ Prefer these command shapes:
 ```bash
 agent-ops runs list
 agent-ops runs list /path/to/repo
-agent-ops runs show <target-key>:<run-id>
+agent-ops runs show <run-id>
+agent-ops history list --limit 20 --json
+agent-ops history show <interaction-id> --limit 50 --json
 agent-ops reports latest
 agent-ops reports latest /path/to/repo
 ```
 
 Inspection output should include status, target, ref, commit, report path, token count, tool-call
-count, and failure reason when available. Render missing legacy fields as `unknown` or omit them
-when omission is clearer than false data.
+count, and failure reason when available. Distinguish unknown usage from observed zero. Label
+capability counts separately from dispatch, discovery, and workflow evidence activities.
+Interaction UUIDs are distinct from globally scoped integer run IDs; no old task IDs or qualified
+run references remain. Full transcripts are local-only, never registered Discord tools.
 
 ## Readiness Sweeps
 
@@ -30,7 +34,7 @@ Sweeps are read-only by default:
 - resolve the requested local git path or Git URL into a managed workspace lease
 - inspect the leased checkout through registered tools
 - persist sweep state under `AGENT_OPS_HOME`, defaulting to `~/.agent-ops-kit/`
-- write Markdown reports under the target state `reports/` directory
+- write Markdown reports under `AGENT_OPS_HOME/history/artifacts/` and register each artifact
 - record the target origin, ref, and commit SHA in the run/report metadata
 - include optional read-only GitHub context when the target is backed by `github.com`
 - clean up disposable workspaces after the run
@@ -85,6 +89,16 @@ Adding a domain-specific tool should usually require one plugin-local tool file 
 Reports should include enough evidence for a human or future agent to understand the interpretation without re-running the sweep immediately.
 
 Reports should include harness status, model, token usage when available, and tool calls when available. Include any error or skipped reason.
+
+History captures are bounded independently of full, redacted Markdown artifacts. Report lookup
+requires a registered artifact under the canonical artifact root, rejecting symlinks and path
+escapes. Missing newest reports are explicitly missing; never substitute a filesystem fallback.
+Reports are optional: failure before report creation still has an inspectable interaction/run.
+
+Persist the canonical final answer before rendering or sending. Track delivery attempts and
+acknowledged surface IDs independently from execution. An ambiguous Discord send is uncertain,
+not a reason for a blind retry. Text-only fallback requires definite attachment rejection and
+must record that the attachment was omitted. Progress edits are not transcript entries.
 
 Do not include secret values, access tokens, private keys, or sensitive personal data in reports.
 Do not include credentialed Git URLs in run/report inspection output, logs, tool results, or chat

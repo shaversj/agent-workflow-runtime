@@ -1,7 +1,7 @@
 import { createModels, type Api, type Model, type MutableModels } from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 
-export interface HarnessModel {
+interface HarnessModel {
   modelProvider: "minimax";
   modelRuntime: "pi-ai";
   name: string;

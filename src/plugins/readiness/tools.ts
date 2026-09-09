@@ -18,7 +18,6 @@ import {
   type InspectionRunListResult,
   type InspectionRunShowResult
 } from "../../db/inspection.js";
-import { isTargetQualifiedInspectionRunRef } from "../../db/run-ref.js";
 import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
 import { definePlugin } from "../manifest.js";
 import { readinessPluginManifest } from "./manifest.js";
@@ -57,7 +56,7 @@ const ListRunsParams = Type.Object({
 const ShowRunParams = Type.Object({
   run_ref: Type.String({
     description:
-      "Run reference. Use <target-key>:<run-id> for cross-target lookup, or a bare run ID with repo_path."
+      "Global positive integer run ID. Chat requests also need a repository target or configured default."
   }),
   repo_path: Type.Optional(
     Type.String({
@@ -127,7 +126,7 @@ const readinessPlugin = definePlugin({
       parameters: ShowRunParams,
       resultSchema: InspectionRunShowResultSchema,
       execute(params: ShowRunParamsType, context: RegisteredToolContext) {
-        const repoTarget = resolveRepoTargetForRunRef(params.run_ref, params.repo_path, context);
+        const repoTarget = resolveRepoTargetForRemote(params.repo_path, context);
         const result = showInspectionRun(params.run_ref, { repoTarget });
         return {
           result,
@@ -150,19 +149,37 @@ const readinessPlugin = definePlugin({
         signal?: AbortSignal
       ) {
         const repoTarget = resolveRepoTarget(params.repo_path, context);
-        const result = await runSweepWorkflow(repoTarget, {
-          ref: params.ref,
-          model: params.model ?? context.model ?? DEFAULT_HARNESS_MODEL,
-          timeoutMs: params.timeout_ms ?? context.timeoutMs,
-          onProgress: context.onProgress,
-          sourceContext: context.sourceContext,
-          signal
+        const recording = context.recording?.childRun({
+          kind: "readiness_sweep",
+          target: repoTarget,
+          ref: params.ref
         });
-        return {
-          result,
-          text: renderSweepToolText(result),
-          terminate: true
-        };
+        try {
+          const result = await runSweepWorkflow(repoTarget, {
+            ref: params.ref,
+            model: params.model ?? context.model ?? DEFAULT_HARNESS_MODEL,
+            timeoutMs: params.timeout_ms ?? context.timeoutMs,
+            onProgress: context.onProgress,
+            sourceContext: context.sourceContext,
+            signal,
+            recording,
+            github: {
+              useAmbientToken:
+                context.surface === "cli" ||
+                (!params.repo_path &&
+                  Boolean(
+                    context.requestContext?.repoTarget && !context.requestContext.explicitRepoTarget
+                  ))
+            }
+          });
+          return {
+            result,
+            text: renderSweepToolText(result),
+            terminate: true
+          };
+        } finally {
+          recording?.close();
+        }
       }
     }),
     defineRegisteredTool({
@@ -241,17 +258,6 @@ function resolveRepoTargetForRemote(
   return resolveRepoTarget(repoTarget, context);
 }
 
-function resolveRepoTargetForRunRef(
-  runRef: string,
-  repoTarget: string | undefined,
-  context: RegisteredToolContext
-): string | undefined {
-  const resolved = repoTarget ?? context.requestContext?.repoTarget;
-  if (resolved) return resolved;
-  if (isTargetQualifiedInspectionRunRef(runRef)) return undefined;
-  throw new Error("Repository target is required for bare run IDs from chat surfaces.");
-}
-
 function renderRunListText(runs: InspectionRunListResult["runs"]): string {
   if (!runs.length) return "No readiness sweep runs were found.";
   return runs
@@ -290,11 +296,12 @@ function renderSweepToolText(result: Awaited<ReturnType<typeof runSweepWorkflow>
       workspace_path: result.workspace?.path ?? result.repoPath,
       run_id: result.runId,
       status: result.status,
-      report_path: result.reportPath,
+      report_path: result.reportPath ?? null,
       ref: result.target.ref,
       commit_sha: result.target.commitSha,
-      token_count: result.usage.totalTokens,
-      tool_call_count: result.toolCalls.length,
+      token_count: result.usage.totalTokens ?? null,
+      usage_completeness: result.usage.completeness ?? "unknown",
+      workflow_activity_count: result.toolCalls.length,
       error: result.error
     },
     null,

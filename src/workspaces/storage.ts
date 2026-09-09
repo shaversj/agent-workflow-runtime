@@ -18,8 +18,16 @@ export function workspaceScratchPath(): string {
   return path.join(agentOpsHome(), "workspaces");
 }
 
-export function targetStatePath(target: TargetRef): string {
-  return path.join(agentOpsHome(), "targets", targetStorageKey(target));
+export function historyDirectory(home: string = agentOpsHome()): string {
+  return path.join(path.resolve(home), "history");
+}
+
+export function historyDatabasePath(home: string = agentOpsHome()): string {
+  return path.join(historyDirectory(home), "agent-ops.db");
+}
+
+export function historyArtifactsPath(home: string = agentOpsHome()): string {
+  return path.join(historyDirectory(home), "artifacts");
 }
 
 export function targetStorageKey(target: TargetRef): string {

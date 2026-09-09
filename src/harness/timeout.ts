@@ -9,7 +9,11 @@ export async function withWorkflowTimeout<T>(
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          onTimeout();
+          try {
+            onTimeout();
+          } catch {
+            logger.warn({}, "workflow_timeout.cleanup_failed");
+          }
           reject(new Error(`workflow_timeout:${timeoutMs}`));
         }, timeoutMs);
       })
@@ -17,4 +21,12 @@ export async function withWorkflowTimeout<T>(
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+import { logger } from "../logger.js";
+
+export function combineAbortSignals(
+  ...signals: (AbortSignal | undefined)[]
+): AbortSignal | undefined {
+  const available = [...new Set(signals.filter((signal): signal is AbortSignal => !!signal))];
+  return available.length > 1 ? AbortSignal.any(available) : available[0];
 }

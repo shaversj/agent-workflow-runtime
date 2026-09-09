@@ -27,7 +27,9 @@ describe("workspace leases", () => {
       expect(lease.commitSha).toMatch(/^[a-f0-9]{40}$/);
       expect(fs.existsSync(path.join(lease.path, "README.md"))).toBe(true);
       expect(lease.path).not.toBe(repoPath);
-      expect(lease.statePath.startsWith(agentOpsHome)).toBe(true);
+      expect(lease.path.startsWith(agentOpsHome)).toBe(true);
+      expect(lease).not.toHaveProperty("statePath");
+      expect(fs.existsSync(path.join(agentOpsHome, "targets"))).toBe(false);
 
       await lease.cleanup();
       expect(fs.existsSync(lease.path)).toBe(false);
@@ -79,7 +81,6 @@ describe("workspace leases", () => {
       ref: "main",
       commitSha: "a".repeat(40),
       path: "/tmp/workspace",
-      statePath: "/tmp/state",
       cleanupPolicy: "delete",
       cleanup: () => Promise.resolve()
     } satisfies WorkspaceLease);

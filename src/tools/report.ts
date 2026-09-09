@@ -1,6 +1,20 @@
+import fs from "node:fs";
 import path from "node:path";
 
+import { redactApplicationText } from "../harness/redaction.js";
+import { historyArtifactsPath } from "../workspaces/storage.js";
 import type { WorkspaceSummary } from "../workspaces/types.js";
+
+export function writeSweepReport(runId: number, markdown: string): string {
+  const root = fs.realpathSync(historyArtifactsPath());
+  const reportPath = path.join(root, `${runId}-readiness-sweep.md`);
+  fs.writeFileSync(reportPath, redactApplicationText(markdown), {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "wx"
+  });
+  return reportPath;
+}
 
 export function renderReportEnvelope(
   repoPath: string,

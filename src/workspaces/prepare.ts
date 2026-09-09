@@ -4,7 +4,6 @@ import path from "node:path";
 import { git, resolveCommit, resolveGitRoot } from "./git.js";
 import { parseTargetRef, normalizedTargetRef } from "./target.js";
 import {
-  targetStatePath,
   targetStorageKey,
   workspaceCachePath,
   workspaceLeaseId,
@@ -29,7 +28,6 @@ export function workspaceSummary(lease: WorkspaceLease): WorkspaceSummary {
     ref: lease.ref,
     commitSha: lease.commitSha,
     path: lease.path,
-    statePath: lease.statePath,
     cleanupPolicy: lease.cleanupPolicy
   };
 }
@@ -45,8 +43,7 @@ function prepareLocalGitWorkspace(target: Extract<TargetRef, { kind: "local-git"
     displayOrigin: root,
     ref,
     commitSha,
-    remote: root,
-    stateTarget: { ...target, path: root }
+    remote: root
   });
 }
 
@@ -80,8 +77,7 @@ function prepareGitUrlWorkspace(target: Extract<TargetRef, { kind: "git-url" }>)
     displayOrigin,
     ref,
     commitSha,
-    remote: cachePath,
-    stateTarget: target
+    remote: cachePath
   });
 }
 
@@ -93,7 +89,6 @@ function checkoutWorkspace(input: {
   ref: string;
   commitSha: string;
   remote: string;
-  stateTarget: TargetRef;
 }): WorkspaceLease {
   const id = workspaceLeaseId();
   const scratchRoot = workspaceScratchPath();
@@ -107,9 +102,6 @@ function checkoutWorkspace(input: {
     throw error;
   }
 
-  const statePath = targetStatePath(input.stateTarget);
-  fs.mkdirSync(statePath, { recursive: true });
-
   return {
     id,
     target: input.target,
@@ -119,7 +111,6 @@ function checkoutWorkspace(input: {
     ref: input.ref,
     commitSha: input.commitSha,
     path: workspacePath,
-    statePath,
     cleanupPolicy: "delete",
     cleanup: () => {
       fs.rmSync(workspacePath, { recursive: true, force: true });

@@ -4,13 +4,15 @@ import path from "node:path";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 
+import { captureHistory } from "../harness/history-capture.js";
+import { beginInteraction, RecordingFailure } from "../harness/interaction.js";
+import type { InteractionRecorder } from "../harness/interaction.js";
 import { toPiAgentTools } from "../harness/pi-tools.js";
 import { WorkflowResultSchema } from "../harness/schemas.js";
 import { withWorkflowTimeout } from "../harness/timeout.js";
 import type { WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
-import { assistantText } from "../harness/usage.js";
+import { assistantText, observedModelUsage } from "../harness/usage.js";
 import { createMinimaxHarnessModel } from "../harness/model.js";
-import { isTargetQualifiedInspectionRunRef } from "../db/run-ref.js";
 import { logger } from "../logger.js";
 import { defaultPluginTools } from "../plugins/index.js";
 import { createChatRequestContext } from "../surfaces/chat/request-context.js";
@@ -42,7 +44,92 @@ export async function runChatAgentWorkflow(
   message: ChatMessage,
   options: ChatHandlerOptions = {}
 ): Promise<ChatResponse> {
+  let recording: InteractionRecorder | undefined;
+  let executionFinished = false;
+  try {
+    recording = options.recording ?? beginChatInteraction(message, options);
+    if (!recording.claimed) return { kind: "ignored", text: "" };
+    recording.assertHealthy();
+    if (recording.signal.aborted) throw new Error("workflow_aborted");
+    let response = await executeChatAgent(message, { ...options, recording });
+    recording.assertHealthy();
+    if (recording.signal.aborted) throw new Error("workflow_aborted");
+    // Unsupported requests were accepted by the surface and still have a canonical answer.
+    if (response.kind === "ignored")
+      response = { kind: "message", status: "completed", text: response.text };
+    const messageId = recording.appendMessage({ role: "assistant", content: response.text });
+    const status =
+      response.kind === "message" && response.status !== "accepted" ? response.status : "completed";
+    const failure = status === "completed" ? {} : { error: response.text };
+    recording.finishRun({ status, ...failure });
+    recording.finishInteraction({ status, ...failure });
+    executionFinished = true;
+    recording.assertHealthy();
+    options.onResponseRecorded?.(messageId);
+    return response;
+  } catch (error) {
+    const text =
+      error instanceof RecordingFailure
+        ? error.message
+        : `Chat agent failed: ${captureHistory(error instanceof Error ? error.message : String(error)).text}`;
+    const status =
+      !executionFinished && recording?.signal.aborted && !(error instanceof RecordingFailure)
+        ? "cancelled"
+        : "failed";
+    if (recording?.claimed && !executionFinished) {
+      try {
+        recording.assertHealthy();
+        const messageId = recording.appendMessage({ role: "assistant", content: text });
+        recording.finishRun({ status, error: text });
+        recording.finishInteraction({ status, error: text });
+        options.onResponseRecorded?.(messageId);
+      } catch {
+        // The recorder owns payload-free recovery after a fatal write failure.
+      }
+    }
+    return { kind: "message", status, text };
+  } finally {
+    if (!options.recording) recording?.close();
+  }
+}
+
+export function beginChatInteraction(message: ChatMessage, options: ChatHandlerOptions = {}) {
+  if (message.platform !== "discord") throw new Error("unsupported_history_surface");
+  const request = createChatRequestContext(message.text, options);
+  return beginInteraction(
+    {
+      source: message.platform,
+      kind: CHAT_AGENT_WORKFLOW_NAME,
+      userMessage: message.text,
+      applicationId: message.applicationId,
+      sourceMessageId: message.messageId,
+      ...(request.repoTarget ? { target: request.repoTarget } : {}),
+      conversationKey: JSON.stringify([
+        message.platform,
+        message.applicationId,
+        message.workspaceId ?? null,
+        message.channelId,
+        message.threadId ?? null,
+        message.userId
+      ]),
+      metadata: {
+        channelId: message.channelId,
+        userId: message.userId,
+        ...(message.workspaceId ? { guildId: message.workspaceId } : {}),
+        ...(message.threadId ? { threadId: message.threadId } : {})
+      }
+    },
+    { signal: options.signal }
+  );
+}
+
+async function executeChatAgent(
+  message: ChatMessage,
+  options: ChatHandlerOptions & { recording: InteractionRecorder }
+): Promise<ChatResponse> {
+  const recording = options.recording;
   const requestContext = createChatRequestContext(message.text, options);
+  if (requestContext.repoTarget) recording.updateRun({ target: requestContext.repoTarget });
   const routed = routeChatMessage(message, options);
 
   const modelName = requestContext.model ?? DEFAULT_HARNESS_MODEL;
@@ -110,6 +197,7 @@ export async function runChatAgentWorkflow(
   let lastToolText: string | undefined;
   let lastWorkflowResult: WorkflowResult | undefined;
   let turn = 0;
+  let active = true;
   const agent = new Agent({
     initialState: {
       systemPrompt: buildChatAgentSystemPrompt(availableTools, catalog.catalogTools),
@@ -118,14 +206,56 @@ export async function runChatAgentWorkflow(
       tools: toPiAgentTools(availableTools, toolContext),
       messages: []
     },
-    streamFn: harnessModel.models.streamSimple.bind(harnessModel.models),
+    streamFn: async (model, context, streamOptions) => {
+      recording.assertHealthy();
+      if (!active) throw new Error("workflow_aborted");
+      const id = recording.modelStart({ provider: harnessModel.modelProvider, model: modelName });
+      try {
+        const stream = await Promise.resolve(
+          harnessModel.models.streamSimple(model, context, streamOptions)
+        );
+        // Observe only the returned message's accounting, never provider payloads or reasoning.
+        return new Proxy(stream, {
+          get(target, property) {
+            if (property === "result")
+              return async () => {
+                const result = await target.result();
+                if (!active) throw new Error("workflow_aborted");
+                const usage = observedModelUsage(result);
+                recording.modelFinish({
+                  id,
+                  status:
+                    result.stopReason === "aborted"
+                      ? "cancelled"
+                      : result.stopReason === "error"
+                        ? "failed"
+                        : "completed",
+                  ...(usage ? { usage } : {}),
+                  ...(result.errorMessage ? { error: result.errorMessage } : {})
+                });
+                return result;
+              };
+            const value: unknown = Reflect.get(target, property);
+            return typeof value === "function" ? (value.bind(target) as unknown) : value;
+          }
+        });
+      } catch (error) {
+        if (active) recording.modelFinish({ id, status: "failed", error });
+        throw error;
+      }
+    },
     toolExecution: "sequential",
-    shouldStopAfterTurn: ({ toolResults }) =>
-      toolResults.length === 0 ||
-      toolResults.some((toolResult) => workflowResultFromDetails(toolResult.details))
+    shouldStopAfterTurn: ({ toolResults }) => {
+      recording.assertHealthy();
+      return (
+        toolResults.length === 0 ||
+        toolResults.some((toolResult) => workflowResultFromDetails(toolResult.details))
+      );
+    }
   });
 
   agent.subscribe((event: AgentEvent) => {
+    if (!active) return;
     if (event.type === "turn_start") {
       turn += 1;
       emitProgress(options.onProgress, { type: "turn_started", turn });
@@ -146,15 +276,28 @@ export async function runChatAgentWorkflow(
     }
   });
 
+  const abort = () => agent.abort();
+  recording.signal.addEventListener("abort", abort, { once: true });
   try {
+    recording.assertHealthy();
+    if (recording.signal.aborted) throw new Error("workflow_aborted");
     await withWorkflowTimeout(
-      agent.prompt(buildChatAgentPrompt(message, options, routed, requestContext)),
+      agent.prompt(buildChatAgentPrompt(message, routed, requestContext)),
       timeoutMs,
       () => {
+        active = false;
         agent.abort();
         emitProgress(options.onProgress, { type: "timeout", timeoutMs });
       }
     );
+    recording.assertHealthy();
+    if (recording.signal.aborted) throw new Error("workflow_aborted");
+    const failedAssistant = finalMessages.findLast(
+      (item) =>
+        item.role === "assistant" && (item.stopReason === "error" || item.stopReason === "aborted")
+    );
+    if (failedAssistant?.role === "assistant")
+      throw new Error(failedAssistant.errorMessage ?? "model_failed");
   } catch (error) {
     workflowLogger.error(
       {
@@ -164,11 +307,10 @@ export async function runChatAgentWorkflow(
       },
       "chat_agent.failed"
     );
-    return {
-      kind: "message",
-      status: "failed",
-      text: `Chat agent failed: ${error instanceof Error ? error.message : String(error)}`
-    };
+    throw error;
+  } finally {
+    active = false;
+    recording.signal.removeEventListener("abort", abort);
   }
 
   if (lastWorkflowResult) {
@@ -215,9 +357,9 @@ async function runWithoutRouterModel(
     toolName: "readiness_run_sweep",
     args: {
       repo_path: intent.repoPath,
-      ref: intent.ref,
-      model: intent.model,
-      timeout_ms: intent.timeoutMs
+      ...(intent.ref ? { ref: intent.ref } : {}),
+      ...(intent.model ? { model: intent.model } : {}),
+      ...(intent.timeoutMs !== undefined ? { timeout_ms: intent.timeoutMs } : {})
     }
   };
   return runDeterministicTool(toolRequest, registry, toolContext);
@@ -274,6 +416,7 @@ function createToolContext(
 ): RegisteredToolContext {
   return {
     surface: message.platform,
+    recording: options.recording,
     requestContext,
     model,
     timeoutMs,
@@ -318,7 +461,6 @@ Do not invent repository paths, report paths, run IDs, or results.`;
 
 function buildChatAgentPrompt(
   message: ChatMessage,
-  options: ChatHandlerOptions,
   routed: ReturnType<typeof routeChatMessage>,
   requestContext: ChatRequestContext
 ): string {
@@ -335,17 +477,16 @@ function buildChatAgentPrompt(
 }
 
 function renderWorkflowSummary(result: WorkflowResult): string {
-  const reportName = path.basename(result.reportPath);
   const target = result.target.origin;
   const lines = [
     `Readiness sweep ${result.status} for ${target}.`,
     `Run: ${result.runId}`,
-    `Tokens: ${result.usage.totalTokens}`,
-    `Report: ${reportName}`
+    `Tokens: ${result.usage.totalTokens ?? "unknown"}${result.usage.completeness === "unknown" && result.usage.totalTokens !== undefined ? " (incomplete)" : ""}`
   ];
-  const reportSummary = readReportSummary(result.reportPath);
+  if (result.reportPath) lines.push(`Report: ${path.basename(result.reportPath)}`);
+  const reportSummary = result.reportPath ? readReportSummary(result.reportPath) : undefined;
   if (reportSummary) lines.push("", "Summary:", reportSummary);
-  lines.push("", "Full report:", result.reportPath);
+  if (result.reportPath) lines.push("", "Full report:", result.reportPath);
   lines.push("", `Tool calls: ${result.toolCalls.length}`);
   if (result.error) lines.push(`Error: ${result.error}`);
   return lines.join("\n");
@@ -427,7 +568,7 @@ function parseInspectionRequest(
   const showRunMatch = /\b(?:runs?\s+show|show\s+runs?)\s+([A-Za-z0-9._:-]+)/i.exec(normalized);
   if (showRunMatch?.[1]) {
     const runRef = showRunMatch[1];
-    if (!request.repoTarget && !isTargetQualifiedInspectionRunRef(runRef)) {
+    if (!request.repoTarget) {
       return {
         kind: "clarify",
         question: "Which repository should I use to show that readiness run?"

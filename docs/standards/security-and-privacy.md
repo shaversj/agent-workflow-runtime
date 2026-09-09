@@ -36,3 +36,20 @@ the model, or rendering reports.
 Prefer local paths and relative evidence where possible. Be careful with reports
 that may be shared outside the machine, because absolute paths can reveal private
 directory names.
+
+## Interaction History
+
+Apply shared redaction before every durable content, metadata, or error write. Match known
+application credentials without snapshotting the environment. Omit hidden reasoning, system
+prompts, raw provider objects, binary values, accessors, cycles, and unsupported objects.
+Cap each serialized capture envelope at 64 KiB UTF-8, traversal depth 12 and 2,000 visited nodes;
+metadata strings cap at 2 KiB. Sanitize before clipping or omit unsafe oversized fields, and
+persist completeness flags. Full report artifacts use the same secret redaction without the
+transcript size cap. These controls do not guarantee detection of arbitrary unlabeled sensitive
+text and do not cap total history disk consumption.
+
+Authorize Discord messages before durable claiming. Deduplicate by platform, bot/application
+identity, and source message ID. Duplicate requests do not replay work or expose the old answer.
+Keep user-specific conversation grouping and full transcripts local; existing Discord tools may
+return only request-scoped run metadata and registered report content. Reject symlinked or
+unregistered report paths. Read-only queries must not recover or mutate interaction state.
