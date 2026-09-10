@@ -64,6 +64,7 @@ Browser requests must not choose the history home, arbitrary paths, SQL, or exec
 Do not load `.env`, expose model credentials to the client bundle, or log captured content.
 The local inspector is not authenticated for remote or multi-user deployment. Keep responses
 uncacheable, disable framing, and apply a same-origin Content Security Policy.
+Apply the same response policy in development and production, including TanStack-rendered pages.
 Read only registered artifacts owned by the selected interaction; reject symlinks and paths outside
 the artifact directory. Bound file reads through the verified descriptor. Render raw HTML, links,
 and images inertly; do not fetch external resources while displaying captured content.

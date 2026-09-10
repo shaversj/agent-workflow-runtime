@@ -1,5 +1,10 @@
 {
-  "entry": ["src/surfaces/web/router.tsx", "src/surfaces/web/routes/**/*.{ts,tsx}", "scripts/*.ts"],
+  "entry": [
+    "src/surfaces/web/router.tsx",
+    "src/surfaces/web/server.ts",
+    "src/surfaces/web/routes/**/*.{ts,tsx}",
+    "scripts/*.ts"
+  ],
   "project": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "scripts/**/*.ts"],
   "ignore": ["src/surfaces/web/routeTree.gen.ts"],
   "ignoreDependencies": ["tailwindcss"]

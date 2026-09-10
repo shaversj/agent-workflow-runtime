@@ -13,10 +13,14 @@ let home: string;
 let server: ChildProcess;
 let currentPage: Page;
 const origin = "http://127.0.0.1:4317";
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   currentPage = page;
   home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "web-ui-")));
-  server = spawn(process.execPath, ["--import", "tsx", "scripts/web-launch.ts"], {
+  const args =
+    testInfo.project.name === "development"
+      ? ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", "4317", "--strictPort"]
+      : ["--import", "tsx", "scripts/web-launch.ts"];
+  server = spawn(process.execPath, args, {
     env: { PATH: process.env.PATH, HOME: process.env.HOME, AGENT_OPS_HOME: home, PORT: "4317" },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -27,9 +31,13 @@ test.beforeEach(async ({ page }) => {
       reject(new Error("Web server exited"));
     });
     server.once("error", reject);
-    server.stdout?.once("data", () => {
-      clearTimeout(timer);
-      resolve();
+    let output = "";
+    server.stdout?.on("data", (chunk: Buffer) => {
+      output += chunk.toString();
+      if (output.includes(origin)) {
+        clearTimeout(timer);
+        resolve();
+      }
     });
     server.stderr?.resume();
   });

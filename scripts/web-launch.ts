@@ -6,6 +6,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { securityHeaders } from "../src/surfaces/web/security-headers.js";
 
 const port = Number(process.env.PORT ?? 3000);
 if (!Value.Check(Type.Integer({ minimum: 1, maximum: 65535 }), port))
@@ -22,13 +23,7 @@ app.use("*", async (context, next) => {
   if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`)
     return context.text("Forbidden", 403);
   await next();
-  context.header("Cache-Control", "no-store");
-  context.header("X-Content-Type-Options", "nosniff");
-  context.header("Referrer-Policy", "no-referrer");
-  context.header(
-    "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'none'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
-  );
+  for (const [name, value] of Object.entries(securityHeaders)) context.header(name, value);
 });
 app.use("/assets/*", serveStatic({ root: path.join(output, "client") }));
 app.all("*", (context) => start.fetch(context.req.raw));

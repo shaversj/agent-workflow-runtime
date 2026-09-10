@@ -7,5 +7,6 @@ export default defineConfig({
   workers: 1,
   timeout: 30000,
   reporter: "list",
+  projects: [{ name: "production" }, { name: "development", grep: /guards local history/ }],
   use: { trace: "retain-on-failure", viewport: { width: 1280, height: 860 } }
 });
