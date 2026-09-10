@@ -32,15 +32,8 @@ jobs:
       - name: Run checks
         run: make check
 
-      - name: Install desktop system dependencies
-        run: pnpm exec playwright install-deps chromium
+      - name: Install browser dependencies
+        run: pnpm exec playwright install --with-deps chromium
 
-      - name: Prepare Linux sandbox helper
-        run: |
-          node -e 'require("electron")'
-          sandbox="$(node -p 'require("node:path").join(require("node:path").dirname(require("electron")), "chrome-sandbox")')"
-          sudo chown root:root "$sandbox"
-          sudo chmod 4755 "$sandbox"
-
-      - name: Test desktop inspection
-        run: xvfb-run --auto-servernum pnpm test:desktop
+      - name: Test browser inspection
+        run: pnpm test:web

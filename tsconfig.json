@@ -14,5 +14,5 @@
     "target": "ES2024"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "src/surfaces/web"]
 }

@@ -233,7 +233,10 @@ export function openRegisteredReport(file: string, configuredHome = agentOpsHome
       throw error;
     }
   }
-  const fd = fs.openSync(candidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  const fd = fs.openSync(
+    candidate,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK
+  );
   if (!fs.fstatSync(fd).isFile()) {
     fs.closeSync(fd);
     throw new Error("Report is not a regular file");

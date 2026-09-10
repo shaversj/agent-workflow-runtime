@@ -1,163 +1,88 @@
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-
-import { _electron as electron, expect, test } from "@playwright/test";
-import type { ElectronApplication } from "@playwright/test";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 import { openHistoryStore } from "../src/db/index.js";
 import { historyArtifactsPath, historyDatabasePath } from "../src/workspaces/storage.js";
 
 let home: string;
-let application: ElectronApplication;
-test.beforeEach(async () => {
-  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "desktop-ui-")));
-  const env: Record<string, string> = {
-    AGENT_OPS_HOME: home,
-    AGENT_OPS_DESKTOP_NODE: process.execPath
-  };
-  for (const key of [
-    "HOME",
-    "PATH",
-    "TMPDIR",
-    "DISPLAY",
-    "XAUTHORITY",
-    "XDG_RUNTIME_DIR",
-    "DBUS_SESSION_BUS_ADDRESS"
-  ])
-    if (process.env[key]) env[key] = process.env[key];
-  application = await electron.launch({
-    args: [path.resolve("dist-desktop/main.mjs")],
-    chromiumSandbox: true,
-    env
+let server: ChildProcess;
+let currentPage: Page;
+const origin = "http://127.0.0.1:4317";
+test.beforeEach(async ({ page }) => {
+  currentPage = page;
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "web-ui-")));
+  server = spawn(process.execPath, ["--import", "tsx", "scripts/web-launch.ts"], {
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, AGENT_OPS_HOME: home, PORT: "4317" },
+    stdio: ["ignore", "pipe", "pipe"]
   });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Web server did not start")), 10000);
+    server.once("exit", () => {
+      clearTimeout(timer);
+      reject(new Error("Web server exited"));
+    });
+    server.once("error", reject);
+    server.stdout?.once("data", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    server.stderr?.resume();
+  });
+  await page.goto(origin);
 });
 test.afterEach(async () => {
-  await application?.close();
-  fs.rmSync(home, { recursive: true, force: true });
-});
-
-function readerPid() {
-  const parent = application.process().pid;
-  const row = execFileSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" })
-    .split("\n")
-    .find((line) => {
-      const fields = line.trim().split(/\s+/);
-      return Number(fields[1]) === parent && line.includes("worker.mjs");
+  if (server && server.exitCode === null && server.signalCode === null) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => server.kill("SIGKILL"), 2000);
+      server.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      server.kill("SIGTERM");
     });
-  if (!row) throw new Error("Reader process not found");
-  return Number(row.trim().split(/\s+/)[0]);
-}
-
-function processExists(pid: number) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
-}
-
-test("recovers from reader exit and timeout, and terminates its reader on close", async () => {
-  const page = await application.firstWindow();
-  await expect(page.getByText("No history store yet")).toBeVisible();
-  const first = readerPid();
-  process.kill(first, "SIGSTOP");
-  const pending = page.evaluate(() => window.historyDesktop.read({ method: "list", options: {} }));
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  process.kill(first, "SIGKILL");
-  expect((await pending).ok).toBe(false);
-  expect(
-    (await page.evaluate(() => window.historyDesktop.read({ method: "list", options: {} }))).ok
-  ).toBe(true);
-  const second = readerPid();
-  expect(second).not.toBe(first);
-  process.kill(second, "SIGSTOP");
-  const timed = await page.evaluate(() =>
-    window.historyDesktop.read({ method: "list", options: {} })
-  );
-  expect(timed.ok).toBe(false);
-  await expect.poll(() => processExists(second)).toBe(false);
-  await expect(page.getByRole("alert")).toHaveCount(0, { timeout: 10000 });
-  await expect
-    .poll(
-      async () =>
-        (await page.evaluate(() => window.historyDesktop.read({ method: "list", options: {} }))).ok
-    )
-    .toBe(true);
-  const last = readerPid();
-  process.kill(last, "SIGSTOP");
-  await application.close();
-  await expect.poll(() => processExists(last)).toBe(false);
+  if (home) fs.rmSync(home, { recursive: true, force: true });
 });
 
-test("coalesces navigation while a reader response is deferred", async () => {
-  const page = await application.firstWindow();
-  await expect(page.getByText("No history store yet")).toBeVisible();
-  const pid = readerPid();
-  process.kill(pid, "SIGSTOP");
-  try {
-    await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("cli");
-    await page.waitForTimeout(200);
-    await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("discord");
-    await page.waitForTimeout(200);
-    await expect(page.getByRole("alert")).toHaveCount(0);
-  } finally {
-    process.kill(pid, "SIGCONT");
-  }
-  await expect(page.getByRole("combobox", { name: "Source", exact: true })).toHaveValue("discord");
-  await expect(page.getByText("No history store yet")).toBeVisible();
-  await expect(page.getByRole("alert")).toHaveCount(0);
-});
-
-test("empty, unavailable and no-match states remain read-only behind a sandboxed bridge", async () => {
-  const page = await application.firstWindow();
+test("guards local history and recovers from unavailable storage", async ({ page, request }) => {
+  const document = await request.get(origin);
+  expect(document.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
+  expect(document.headers()["cache-control"]).toBe("no-store");
+  expect(document.headers()["x-content-type-options"]).toBe("nosniff");
   await expect(page.getByText("No history store yet")).toBeVisible();
   expect(fs.readdirSync(home)).toEqual([]);
-  expect(
-    await page.evaluate(() => ({
-      node: typeof (window as unknown as { require?: unknown }).require,
-      process: typeof (window as unknown as { process?: unknown }).process
-    }))
-  ).toEqual({ node: "undefined", process: "undefined" });
-  const security = await application.evaluate(({ app }) =>
-    app
-      .getAppMetrics()
-      .filter((metric) => metric.type === "Tab")
-      .map((metric) => metric.sandboxed)
-  );
-  expect(security).toContain(true);
-  expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("no-sandbox"))).toBe(
-    false
-  );
-  const displayAuthority = await application.evaluate(() => process.env.XAUTHORITY);
-  expect(displayAuthority).toBe(process.env.XAUTHORITY || undefined);
-  const invalid = await page.evaluate(async () =>
-    window.historyDesktop.read({ method: "list", options: { home: "/tmp" } } as never)
-  );
-  expect(invalid.ok).toBe(false);
-  const foreign = await application.evaluate(async ({ BrowserWindow }, preload) => {
-    const owner = BrowserWindow.getAllWindows()[0]!;
-    const other = new BrowserWindow({
-      show: false,
-      webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false }
+  const response = await request.post(origin + "/api/history", {
+    data: { method: "list", options: {} }
+  });
+  expect(response.status()).toBe(403);
+  const crossOrigin = await request.post(origin + "/api/history", {
+    headers: { Origin: "https://example.com" },
+    data: { method: "list", options: {} }
+  });
+  expect(crossOrigin.status()).toBe(403);
+  const rebound = await request.get(origin, { headers: { Host: "attacker.example" } });
+  expect(rebound.status()).toBe(403);
+  const invalid = await page.evaluate(async () => {
+    const response = await fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "list", options: { home: "/tmp" } })
     });
-    try {
-      await other.loadURL(owner.webContents.getURL());
-      const result: unknown = await other.webContents.executeJavaScript(
-        'window.historyDesktop.read({method:"list",options:{}})'
-      );
-      return result;
-    } finally {
-      other.destroy();
-    }
-  }, path.resolve("dist-desktop/preload.cjs"));
-  expect(foreign).toMatchObject({ ok: false });
+    return response.json() as Promise<{ ok: boolean }>;
+  });
+  expect(invalid.ok).toBe(false);
+  expect(
+    await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)
+  ).toBe("undefined");
   const store = openHistoryStore({ home });
   store.close();
   await expect(page.getByText("No interactions recorded")).toBeVisible({ timeout: 8000 });
-  await page.getByLabel("Target", { exact: true }).fill("absent-target");
+  await page.getByLabel("Target", { exact: true }).fill("absent");
   await page.getByRole("button", { name: "Filter target" }).click();
   await expect(page.getByText("No matching interactions")).toBeVisible();
   const original = fs.readFileSync(historyDatabasePath(home));
@@ -165,6 +90,27 @@ test("empty, unavailable and no-match states remain read-only behind a sandboxed
   await expect(page.getByRole("alert")).toContainText("could not be refreshed", { timeout: 8000 });
   fs.writeFileSync(historyDatabasePath(home), original);
   await expect(page.getByRole("alert")).toHaveCount(0, { timeout: 8000 });
+});
+
+test("coalesces navigation across a delayed response", async ({ page }) => {
+  await expect(page.getByText("No history store yet")).toBeVisible();
+  let release!: () => void;
+  const deferred = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requests = 0;
+  await page.route("**/api/history", async (route) => {
+    requests += 1;
+    if (requests === 1) await deferred;
+    await route.continue();
+  });
+  await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("cli");
+  await expect.poll(() => requests).toBe(1);
+  await page.getByRole("combobox", { name: "Source", exact: true }).selectOption("discord");
+  expect(requests).toBe(1);
+  release();
+  await expect.poll(() => requests).toBe(2);
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("follows saved activity without changing selection, expansion or scroll", async () => {
@@ -182,7 +128,7 @@ test("follows saved activity without changing selection, expansion or scroll", a
       kind: "workflow",
       input: { repo: "example" }
     });
-    const page = await application.firstWindow();
+    const page = currentPage;
     await page.getByRole("button", { name: /Inspect release readiness/ }).click({ timeout: 8000 });
     await page.locator("summary").filter({ hasText: "collect_evidence" }).click();
     const expanded = page.locator("details").filter({ hasText: "collect_evidence" });
@@ -205,9 +151,9 @@ test("follows saved activity without changing selection, expansion or scroll", a
     );
     expect(await page.locator(".detail").evaluate((el) => el.scrollTop)).toBe(scroll);
     await expect(page.getByText("Unknown / not observed")).toBeVisible();
-    await page.screenshot({ path: "test-results/desktop-wide.png" });
+    await page.screenshot({ path: "test-results/web-wide.png" });
     await page.setViewportSize({ width: 430, height: 800 });
-    await page.screenshot({ path: "test-results/desktop-narrow.png" });
+    await page.screenshot({ path: "test-results/web-narrow.png" });
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     ).toBe(true);
@@ -260,10 +206,10 @@ test("separates delivery failures and renders registered reports without active 
     store.finishRun({ id: nested, status: "completed" });
     store.finishRun({ id: request.runId, status: "completed" });
     store.finishInteraction({ id: request.interactionId, status: "completed" });
-    const page = await application.firstWindow();
+    const page = currentPage;
     const remote: string[] = [];
     page.on("request", (request) => {
-      if (/^https?:/.test(request.url())) remote.push(request.url());
+      if (new URL(request.url()).origin !== origin) remote.push(request.url());
     });
     await page.getByRole("button", { name: /Review repository context/ }).click({ timeout: 8000 });
     await expect(page.getByText("Saved response despite delivery failure")).toBeVisible();
@@ -277,7 +223,7 @@ test("separates delivery failures and renders registered reports without active 
       await page.evaluate(() => (window as unknown as { compromised?: boolean }).compromised)
     ).toBeUndefined();
     expect(remote).toEqual([]);
-    await page.screenshot({ path: "test-results/desktop-report.png" });
+    await page.screenshot({ path: "test-results/web-report.png" });
     fs.unlinkSync(file);
     await expect(page.getByRole("heading", { name: "Report unavailable" })).toBeVisible({
       timeout: 8000
@@ -313,7 +259,7 @@ test("keeps browsing bounded and does not mix selected interactions across pages
       });
       store.finishToolCall({ id, status: "completed", result: "Evidence captured" });
     }
-    const page = await application.firstWindow();
+    const page = currentPage;
     await page.getByRole("button", { name: /Long activity interaction/ }).click({ timeout: 8000 });
     await expect(page.locator(".interaction")).toHaveCount(20);
     await expect(page.locator(".activity-row")).toHaveCount(49);

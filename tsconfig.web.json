@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "types": ["vite/client"],
+    "rootDir": "."
+  },
+  "include": ["src/surfaces/web/**/*.ts", "src/surfaces/web/**/*.tsx", "vite.config.ts"],
+  "exclude": ["node_modules"]
+}

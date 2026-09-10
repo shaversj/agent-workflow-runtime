@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,19 +8,40 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { openHistoryStore } from "../src/db/index.js";
-import { readDesktop } from "../src/surfaces/desktop/reader.js";
+import { readInspector } from "../src/surfaces/web/reader.js";
 import { historyArtifactsPath, historyDatabasePath } from "../src/workspaces/storage.js";
 
 let home: string;
 beforeEach(() => {
-  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "desktop-reader-")));
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "web-reader-")));
 });
 afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+it("rejects a named pipe without blocking the server", () => {
+  const store = openHistoryStore({ home });
+  store.close();
+  const file = path.join(historyArtifactsPath(home), "pipe.md");
+  execFileSync("mkfifo", [file]);
+  const probe = execFileSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "-e",
+      'import {openRegisteredReport} from "./src/db/inspection.ts"; try { openRegisteredReport(process.argv[1], process.argv[2]); process.exitCode = 1; } catch (error) { if (error.message !== "Report is not a regular file") throw error; }',
+      file,
+      home
+    ],
+    { timeout: 4000 }
+  );
+  expect(probe.length).toBe(0);
+});
+
 it("does not create absent history and rejects renderer filesystem authority", () => {
-  expect(readDesktop({ method: "list", options: {} }, home)).toMatchObject({
+  expect(readInspector({ method: "list", options: {} }, home)).toMatchObject({
     ok: true,
     data: { store: "absent" }
   });
@@ -30,7 +52,7 @@ it("does not create absent history and rejects renderer filesystem authority", (
     { method: "report", interactionId: crypto.randomUUID(), path: "/etc/passwd" },
     { method: "execute" }
   ])
-    expect(readDesktop(request, home)).toMatchObject({ ok: false });
+    expect(readInspector(request, home)).toMatchObject({ ok: false });
   expect(fs.readdirSync(home)).toEqual([]);
 });
 
@@ -61,15 +83,15 @@ it("reads previews, nested activity and reports without changing saved execution
   });
   store.close();
   const before = fs.readFileSync(historyDatabasePath(home));
-  expect(readDesktop({ method: "list", options: {} }, home)).toMatchObject({
+  expect(readInspector({ method: "list", options: {} }, home)).toMatchObject({
     ok: true,
     data: { interactions: [{ requestPreview: "Inspect this repository", status: "running" }] }
   });
   expect(
-    readDesktop({ method: "show", id: accepted.interactionId, options: {} }, home)
+    readInspector({ method: "show", id: accepted.interactionId, options: {} }, home)
   ).toMatchObject({ ok: true, data: { found: true, interaction: { status: "running" } } });
   expect(
-    readDesktop(
+    readInspector(
       { method: "report", interactionId: accepted.interactionId, artifactId: artifact },
       home
     )
@@ -78,7 +100,7 @@ it("reads previews, nested activity and reports without changing saved execution
     data: { available: true, content: "# Report\n\nSaved evidence.", truncated: false }
   });
   expect(
-    readDesktop(
+    readInspector(
       { method: "report", interactionId: crypto.randomUUID(), artifactId: artifact },
       home
     )
@@ -86,14 +108,14 @@ it("reads previews, nested activity and reports without changing saved execution
   expect(fs.readFileSync(historyDatabasePath(home))).toEqual(before);
   fs.unlinkSync(file);
   expect(
-    readDesktop(
+    readInspector(
       { method: "report", interactionId: accepted.interactionId, artifactId: artifact },
       home
     )
   ).toMatchObject({ ok: true, data: { available: false } });
   fs.symlinkSync(historyDatabasePath(home), file);
   expect(
-    readDesktop(
+    readInspector(
       { method: "report", interactionId: accepted.interactionId, artifactId: artifact },
       home
     )
@@ -130,10 +152,13 @@ it("pages previews with filter-bound cursors and retains capture and usage limit
       input: {}
     });
     store.finishToolCall({ id: tool, status: "completed", result: "x".repeat(100000) });
-    const listing = readDesktop({ method: "list", options: { target: "repo-a", limit: 1 } }, home);
+    const listing = readInspector(
+      { method: "list", options: { target: "repo-a", limit: 1 } },
+      home
+    );
     expect(listing.ok && listing.method === "list").toBe(true);
     if (!listing.ok || listing.method !== "list") throw new Error("Expected list");
-    const next = readDesktop(
+    const next = readInspector(
       { method: "list", options: { target: "repo-a", limit: 1, cursor: listing.data.nextCursor } },
       home
     );
@@ -142,7 +167,7 @@ it("pages previews with filter-bound cursors and retains capture and usage limit
     expect(next.data.interactions[0]?.id).not.toBe(listing.data.interactions[0]?.id);
     expect(next.data.nextCursor).toBeNull();
     expect(
-      readDesktop(
+      readInspector(
         { method: "list", options: { target: "repo-b", cursor: listing.data.nextCursor } },
         home
       ).ok
@@ -153,7 +178,7 @@ it("pages previews with filter-bound cursors and retains capture and usage limit
       requestPreview: "x".repeat(240),
       usage: { knownCalls: 0, unknownCalls: 1 }
     });
-    const detail = readDesktop({ method: "show", id: first.interactionId, options: {} }, home);
+    const detail = readInspector({ method: "show", id: first.interactionId, options: {} }, home);
     if (!detail.ok || detail.method !== "show" || !detail.data.found)
       throw new Error("Expected detail");
     expect(detail.data.activity.items.find((item) => item.kind === "tool")).toMatchObject({
@@ -177,7 +202,7 @@ it("bounds report bytes and rejects registered paths that escape the artifact ro
   });
   store.close();
   const query = { method: "report", interactionId: request.interactionId, artifactId: id };
-  const result = readDesktop(query, home);
+  const result = readInspector(query, home);
   expect(result).toMatchObject({ ok: true, data: { available: true, truncated: true } });
   if (!result.ok || result.method !== "report" || !result.data.available)
     throw new Error("Expected report");
@@ -188,5 +213,5 @@ it("bounds report bytes and rejects registered paths that escape the artifact ro
   } finally {
     db.close();
   }
-  expect(readDesktop(query, home)).toMatchObject({ ok: true, data: { available: false } });
+  expect(readInspector(query, home)).toMatchObject({ ok: true, data: { available: false } });
 });

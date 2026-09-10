@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.web.json",
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "."
@@ -11,6 +11,7 @@
     "scripts/**/*.ts",
     "drizzle.config.ts",
     "playwright.config.ts",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "vite.config.ts"
   ]
 }

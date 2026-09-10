@@ -12,18 +12,18 @@ import {
 
 const object = <T extends Record<string, import("typebox").TSchema>>(properties: T) =>
   Type.Object(properties, { additionalProperties: false });
-export const DesktopListOptionsSchema = object(
+export const InspectorListOptionsSchema = object(
   Type.Omit(HistoryListOptionsSchema, ["home", "busyTimeoutMs", "includePreview"]).properties
 );
-const DesktopShowOptionsSchema = object(
+const InspectorShowOptionsSchema = object(
   Type.Omit(HistoryShowOptionsSchema, ["home", "busyTimeoutMs"]).properties
 );
-export const DesktopRequestSchema = Type.Union([
-  object({ method: Type.Literal("list"), options: DesktopListOptionsSchema }),
+export const InspectorRequestSchema = Type.Union([
+  object({ method: Type.Literal("list"), options: InspectorListOptionsSchema }),
   object({
     method: Type.Literal("show"),
     id: HistoryInteractionIdSchema,
-    options: DesktopShowOptionsSchema
+    options: InspectorShowOptionsSchema
   }),
   object({
     method: Type.Literal("report"),
@@ -31,7 +31,7 @@ export const DesktopRequestSchema = Type.Union([
     artifactId: Type.Integer({ minimum: 1 })
   })
 ]);
-export const DesktopReportSchema = Type.Union([
+export const InspectorReportSchema = Type.Union([
   object({ available: Type.Literal(false), reason: Type.String({ maxLength: 500 }) }),
   object({
     available: Type.Literal(true),
@@ -40,20 +40,17 @@ export const DesktopReportSchema = Type.Union([
     truncated: Type.Boolean()
   })
 ]);
-export const DesktopResponseSchema = Type.Union([
+export const InspectorResponseSchema = Type.Union([
   object({ ok: Type.Literal(false), error: Type.String({ maxLength: 500 }) }),
   object({ ok: Type.Literal(true), method: Type.Literal("list"), data: HistoryListResultSchema }),
   object({ ok: Type.Literal(true), method: Type.Literal("show"), data: HistoryDetailResultSchema }),
-  object({ ok: Type.Literal(true), method: Type.Literal("report"), data: DesktopReportSchema })
+  object({ ok: Type.Literal(true), method: Type.Literal("report"), data: InspectorReportSchema })
 ]);
-export type DesktopRequest = Static<typeof DesktopRequestSchema>;
-export type DesktopResponse = Static<typeof DesktopResponseSchema>;
-export type DesktopListOptions = Static<typeof DesktopListOptionsSchema>;
-export type DesktopReport = Static<typeof DesktopReportSchema>;
-export interface DesktopAPI {
-  read(request: DesktopRequest): Promise<DesktopResponse>;
-}
-export function validateDesktopResponse(value: unknown): DesktopResponse {
-  if (!Value.Check(DesktopResponseSchema, value)) throw new Error("Invalid desktop response");
+export type InspectorRequest = Static<typeof InspectorRequestSchema>;
+export type InspectorResponse = Static<typeof InspectorResponseSchema>;
+export type InspectorListOptions = Static<typeof InspectorListOptionsSchema>;
+export type InspectorReport = Static<typeof InspectorReportSchema>;
+export function validateInspectorResponse(value: unknown): InspectorResponse {
+  if (!Value.Check(InspectorResponseSchema, value)) throw new Error("Invalid inspector response");
   return value;
 }

@@ -10,10 +10,10 @@ import { openRegisteredReport } from "../../db/inspection.js";
 import { artifacts } from "../../db/schema.js";
 import { ArtifactRecordSchema, parseHistory } from "../../harness/history-schemas.js";
 import { agentOpsHome } from "../../workspaces/storage.js";
-import { DesktopRequestSchema, validateDesktopResponse } from "./contracts.js";
-import type { DesktopReport, DesktopResponse } from "./contracts.js";
+import { InspectorRequestSchema, validateInspectorResponse } from "./contracts.js";
+import type { InspectorReport, InspectorResponse } from "./contracts.js";
 
-function report(interactionId: string, artifactId: number, home: string): DesktopReport {
+function report(interactionId: string, artifactId: number, home: string): InspectorReport {
   const connection = openHistoryReadConnection({ home, busyTimeoutMs: 250 });
   if (!connection) return { available: false, reason: "History store does not exist." };
   try {
@@ -53,25 +53,25 @@ function report(interactionId: string, artifactId: number, home: string): Deskto
   }
 }
 
-export function readDesktop(input: unknown, home = agentOpsHome()): DesktopResponse {
-  if (!Value.Check(DesktopRequestSchema, input))
+export function readInspector(input: unknown, home = agentOpsHome()): InspectorResponse {
+  if (!Value.Check(InspectorRequestSchema, input))
     return { ok: false, error: "Invalid inspection request." };
   try {
     switch (input.method) {
       case "list":
-        return validateDesktopResponse({
+        return validateInspectorResponse({
           ok: true,
           method: "list",
           data: listHistory({ ...input.options, home, busyTimeoutMs: 250, includePreview: true })
         });
       case "show":
-        return validateDesktopResponse({
+        return validateInspectorResponse({
           ok: true,
           method: "show",
           data: showHistory(input.id, { ...input.options, home, busyTimeoutMs: 250 })
         });
       case "report":
-        return validateDesktopResponse({
+        return validateInspectorResponse({
           ok: true,
           method: "report",
           data: report(input.interactionId, input.artifactId, home)

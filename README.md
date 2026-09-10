@@ -68,17 +68,17 @@ Use `--cursor` with the returned cursor to continue a page with the same filters
 100 interactions; detail pages cap at 100 activities. Inspection is read-only and never calls a
 model, creates a checkout, initializes missing state, or recovers unfinished work. Missing history
 is empty; corrupt or unsupported history is an error. Full transcripts stay local to CLI and
-desktop inspection; Discord inspection tools do not expose them.
+local browser inspection; Discord inspection tools do not expose them.
 
-### Desktop Inspector
+### History Inspector
 
 ```bash
-make desktop
+make web
 # Inspect a different runtime home:
-AGENT_OPS_HOME=/path/to/agent-ops-home pnpm desktop
+AGENT_OPS_HOME=/path/to/agent-ops-home pnpm web
 ```
 
-The macOS-first desktop opens an interaction list beside saved requests, responses, linked runs,
+Open `http://127.0.0.1:3000` in your browser. The TanStack Start and Tailwind app shows an interaction list beside saved requests, responses, linked runs,
 model usage, delivery attempts, and expandable tool inputs/results. Filters use an exact target,
 source, outcome, and local date range. Lists show 20 requests per page; activity pages show 50
 records. Activity counts describe that page, while model usage covers the interaction.
@@ -89,12 +89,13 @@ labeled stale; a saved `running` status is not proof that work is progressing.
 
 Registered Markdown reports open in a wider reader. Raw HTML is omitted, links are inert, images
 do not load, and reads stop at 256 KiB with a truncation notice. Missing reports do not hide the
-owning interaction. The desktop never runs tools/models, recovers history, or performs cleanup.
+owning interaction. The inspector never runs tools/models, recovers history, or performs cleanup.
 
-This release launches from an installed checkout with Node 24; signed installers are not included.
-Electron uses a sandboxed renderer and a narrow validated bridge to a separate read-only Node
-worker. SQLite stays on the regular Node ABI, without an Electron native rebuild affecting the CLI
-or Discord. The launcher does not load `.env` or forward model keys.
+This release replaces Electron with a local browser app running on Node 24. SQLite reads stay on
+the server. The server binds only to `127.0.0.1`, rejects unexpected hosts and cross-origin history
+requests, and accepts only bounded, schema-validated inspection queries. It is not a remotely
+deployable or multi-user service. The app does not load `.env` and sends no model keys to the browser.
+Set `PORT=3001` when port 3000 is occupied. Use `pnpm dev:web` for local frontend development.
 
 Run the Discord bot surface:
 
@@ -146,7 +147,7 @@ src/
   db/          Drizzle schema and local SQLite persistence
   harness/     shared runtime contracts, model setup, Pi tool adapters, progress, timeouts, and usage helpers
   plugins/     domain bundles with manifests, evidence recipes, tools, and skills
-  surfaces/    CLI, Discord chat, and local desktop inspection
+  surfaces/    CLI, Discord chat, and local TanStack Start history inspection
   tools/       shared TypeBox tool contracts, tool registry, catalog bridge, and report helpers
   workspaces/  target normalization, managed git checkouts, and workspace leases
   workflows/   orchestration such as the readiness sweep and chat tool router
@@ -177,9 +178,10 @@ make test
 make typecheck
 make deadcode
 make check
-pnpm test:desktop
+pnpm exec playwright install chromium
+pnpm test:web
 ```
 
-The desktop suite launches real Electron windows against temporary local history. Linux requires
-a graphical session or `xvfb-run`; CI installs the Chromium system dependencies and runs it under
-Xvfb. Test screenshots remain under the ignored `test-results/` directory.
+The browser suite starts the production server against temporary local history and drives Chromium.
+CI installs Chromium and its system dependencies; Electron, Xvfb, and sandbox-helper setup are no
+longer required. Test screenshots remain under the ignored `test-results/` directory.

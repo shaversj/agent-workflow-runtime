@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { createRoot } from "react-dom/client";
 import Markdown from "react-markdown";
 
 import type {
@@ -18,20 +17,10 @@ import type {
   HistoryDetailResult,
   HistoryListResult
 } from "../../../harness/history-schemas.js";
-import { validateDesktopResponse } from "../contracts.js";
-import type {
-  DesktopAPI,
-  DesktopListOptions,
-  DesktopReport,
-  DesktopRequest
-} from "../contracts.js";
+import { validateInspectorResponse } from "../contracts.js";
+import type { InspectorListOptions, InspectorReport, InspectorRequest } from "../contracts.js";
 import "./styles.css";
 
-declare global {
-  interface Window {
-    historyDesktop: DesktopAPI;
-  }
-}
 const time = (value: string | null) =>
   value
     ? new Date(value).toLocaleString(undefined, {
@@ -248,8 +237,8 @@ function Activity({
   );
 }
 
-function App() {
-  const [filters, setFilters] = useState<DesktopListOptions>({});
+export default function App() {
+  const [filters, setFilters] = useState<InspectorListOptions>({});
   const [target, setTarget] = useState("");
   const [pages, setPages] = useState<(string | undefined)[]>([undefined]);
   const [activityPages, setActivityPages] = useState<(string | undefined)[]>([undefined]);
@@ -259,7 +248,7 @@ function App() {
   const [selectedTitle, setSelectedTitle] = useState("Saved request");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [reportId, setReportId] = useState<number>();
-  const [report, setReport] = useState<DesktopReport>();
+  const [report, setReport] = useState<InspectorReport>();
   const [error, setError] = useState<string>();
   const [updated, setUpdated] = useState<string>();
   const [refresh, setRefresh] = useState(0);
@@ -271,8 +260,15 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    async function query(request: DesktopRequest) {
-      const response = validateDesktopResponse(await window.historyDesktop.read(request));
+    async function query(request: InspectorRequest) {
+      const result = await fetch("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!result.ok) throw new Error("History request failed");
+      const response = validateInspectorResponse(await result.json());
       if (!response.ok) throw new Error(response.error);
       if (response.method !== request.method) throw new Error("Unexpected history response");
       return response;
@@ -324,7 +320,7 @@ function App() {
         }
       }
     }
-    // A cancelled effect must finish its IPC read before the next generation starts.
+    // A cancelled effect must finish its request before the next generation starts.
     const next = polling.current.then(poll);
     polling.current = next;
     return () => {
@@ -333,7 +329,7 @@ function App() {
     };
   }, [filters, cursor, selected, activityCursor, reportId, refresh]);
 
-  function changeFilters(next: DesktopListOptions) {
+  function changeFilters(next: InspectorListOptions) {
     setFilters(next);
     setPages([undefined]);
     setList(undefined);
@@ -426,7 +422,7 @@ function App() {
                   onChange={(event) => {
                     changeFilters({
                       ...filters,
-                      source: (event.target.value as DesktopListOptions["source"]) || undefined
+                      source: (event.target.value as InspectorListOptions["source"]) || undefined
                     });
                   }}
                 >
@@ -442,7 +438,7 @@ function App() {
                   onChange={(event) => {
                     changeFilters({
                       ...filters,
-                      outcome: (event.target.value as DesktopListOptions["outcome"]) || undefined
+                      outcome: (event.target.value as InspectorListOptions["outcome"]) || undefined
                     });
                   }}
                 >
@@ -760,5 +756,3 @@ function App() {
     </div>
   );
 }
-
-createRoot(document.getElementById("root")!).render(<App />);

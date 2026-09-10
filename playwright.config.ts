@@ -2,10 +2,10 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
-  testMatch: "desktop-ui.spec.ts",
+  testMatch: "web-ui.spec.ts",
   fullyParallel: false,
   workers: 1,
   timeout: 30000,
   reporter: "list",
-  use: { trace: "retain-on-failure" }
+  use: { trace: "retain-on-failure", viewport: { width: 1280, height: 860 } }
 });

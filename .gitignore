@@ -2,6 +2,8 @@
 node_modules/
 dist/
 dist-desktop/
+dist-web/
+.tanstack/
 test-results/
 playwright-report/
 coverage/

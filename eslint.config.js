@@ -16,6 +16,8 @@ export default tseslint.config(
     ignores: [
       "dist/**",
       "dist-desktop/**",
+      "dist-web/**",
+      "src/surfaces/web/routeTree.gen.ts",
       "test-results/**",
       "coverage/**",
       ".venv/**",
