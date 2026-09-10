@@ -22,11 +22,16 @@ test.beforeEach(async () => {
     "PATH",
     "TMPDIR",
     "DISPLAY",
+    "XAUTHORITY",
     "XDG_RUNTIME_DIR",
     "DBUS_SESSION_BUS_ADDRESS"
   ])
     if (process.env[key]) env[key] = process.env[key];
-  application = await electron.launch({ args: [path.resolve("dist-desktop/main.mjs")], env });
+  application = await electron.launch({
+    args: [path.resolve("dist-desktop/main.mjs")],
+    chromiumSandbox: true,
+    env
+  });
 });
 test.afterEach(async () => {
   await application?.close();
@@ -123,6 +128,11 @@ test("empty, unavailable and no-match states remain read-only behind a sandboxed
       .map((metric) => metric.sandboxed)
   );
   expect(security).toContain(true);
+  expect(await application.evaluate(({ app }) => app.commandLine.hasSwitch("no-sandbox"))).toBe(
+    false
+  );
+  const displayAuthority = await application.evaluate(() => process.env.XAUTHORITY);
+  expect(displayAuthority).toBe(process.env.XAUTHORITY || undefined);
   const invalid = await page.evaluate(async () =>
     window.historyDesktop.read({ method: "list", options: { home: "/tmp" } } as never)
   );

@@ -12,6 +12,7 @@ for (const key of [
   "TMPDIR",
   "LANG",
   "DISPLAY",
+  "XAUTHORITY",
   "WAYLAND_DISPLAY",
   "XDG_RUNTIME_DIR",
   "XDG_SESSION_TYPE",
