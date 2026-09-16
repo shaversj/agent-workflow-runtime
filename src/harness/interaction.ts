@@ -3,8 +3,10 @@ import path from "node:path";
 
 import { openHistoryStore } from "../db/index.js";
 import type { AcceptedInteraction, HistoryStore, HistoryStoreOptions } from "../db/index.js";
+import type { CodingStore } from "../db/coding-store.js";
+import { CodingDecisionError } from "../db/coding-store.js";
 import { logger } from "../logger.js";
-import { agentOpsHome } from "../workspaces/storage.js";
+import { agentOpsHome, historyArtifactsPath } from "../workspaces/storage.js";
 import type {
   AcceptInteractionInput,
   AppendMessageInput,
@@ -183,6 +185,9 @@ class Recorder {
   get parentCallId(): number | undefined {
     return this.call?.id;
   }
+  get artifactsPath(): string {
+    return historyArtifactsPath(this.state.retry.home);
+  }
 
   private assertWritable(): void {
     if (this.state.failure) throw this.state.failure;
@@ -347,6 +352,16 @@ class Recorder {
   updateRun(input: Omit<UpdateRunInput, "id">): boolean {
     this.assertActive();
     return this.persist(() => this.state.store.updateRun({ ...input, id: this.runId }));
+  }
+  coding<T>(operation: (store: CodingStore) => T): T {
+    this.assertActive();
+    const store = this.persist(() => this.state.store.coding(this.runId));
+    try {
+      return operation(store);
+    } catch (error) {
+      if (error instanceof CodingDecisionError) throw error;
+      throw this.failRecording();
+    }
   }
 
   registerArtifact(input: Omit<RegisterArtifactInput, "interactionId" | "runId">): number {

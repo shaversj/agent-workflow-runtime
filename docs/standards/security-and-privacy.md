@@ -17,6 +17,31 @@ Chat-supplied GitHub targets must not spend ambient process credentials by defau
 GitHub token only for configured or otherwise trusted repository context. Query explicit chat URLs
 without credentials unless a documented trusted-target policy says otherwise.
 
+## Isolated Coding And Publication
+
+Coding and GitHub publication are separate, default-disabled capabilities. Require explicit
+operator-allowed GitHub targets/profiles and authenticated initiating principals. The coding
+runtime stays on the host with model credentials; read/edit/search/commands execute only in
+non-root offline workers, without host mounts, home, history, credentials or Docker socket.
+Disable repository/global Pi resource discovery, extensions, settings and hooks. Guidance is
+bounded redacted text, not authority. Use digest-pinned trusted images, built-in seccomp, dropped
+capabilities, no-new-privileges, read-only root filesystem and bounded resources/temporary storage.
+Containers are not a hostile multi-tenant security guarantee.
+
+Freeze regular UTF-8 file changes and verify in a fresh worker whose source is root-owned and
+read-only to checks. Reject unsupported entries, secret-bearing changes and unavailable/failed
+verification; do not silently redact operational code or run checks on the host. Exact private
+snapshots live in shared history SQLite with bounded retention; displayed artifacts and transcripts
+are separately redacted/bounded. Expiration deletes local private data, not cryptographic traces,
+remote branches or already delivered messages.
+
+Publication uses its own scoped credential and narrow Git-data/draft-PR APIs. Approval must be
+durable, authenticated, short-lived, single-use and bound to proposal content, base, target, checks,
+branch and PR metadata. Recheck policy and base before remote side effects; never force-update,
+merge, deploy or silently rebase. Record each remote stage and stop on fatal history failure.
+Uncertain outcomes require explicit reconciliation before retries. Never automatically replay
+coding/publication on restart or delete a partially published branch.
+
 ## Secrets
 
 Never store secret values in reports, logs, fixtures, test snapshots, or local

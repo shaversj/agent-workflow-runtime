@@ -22,6 +22,7 @@ import {
   type DiscordInboundMessage
 } from "./adapter.js";
 import type { DiscordBotConfig } from "./config.js";
+import { handleDiscordCoding } from "./coding.js";
 
 interface DiscordMessagePolicyInput {
   isBot: boolean;
@@ -83,6 +84,10 @@ export async function handleDiscordMessage(
   const inbound = buildDiscordInboundMessage(message, botUser.id);
   const chatMessage = normalizeDiscordMessage(inbound);
   if (!chatMessage) return;
+  if (/^code(?:\s|$)/.test(chatMessage.text)) {
+    await handleDiscordCoding(message, chatMessage.text, options.signal);
+    return;
+  }
 
   logger.info(
     {

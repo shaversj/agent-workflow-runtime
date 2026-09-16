@@ -123,7 +123,7 @@ describe("plugin manifests", () => {
     expect(readinessTools.map((tool) => tool.allowedSurfaces)).toEqual([
       ["discord"],
       ["discord"],
-      ["discord"],
+      ["cli", "discord"],
       ["discord"],
       ["discord"]
     ]);

@@ -29,6 +29,84 @@ analysis.
 make install
 ```
 
+### Opt-In Coding
+
+Coding is separate from read-only sweeps and disabled by default. It uses Pi's coding-agent SDK
+with worker-backed tools; it never executes repository code on the host. Install/start Docker
+Desktop (or a dedicated Linux Docker runtime with built-in seccomp) and provision a trusted,
+digest-pinned image before enabling it. Do not use this container backend for hostile multi-tenant
+hosting. Images must contain Node for the trusted file protocol and all required dependencies;
+network access and implicit dependency downloads are disabled.
+
+Configure `.env` using the coding section of `.env.example`. Allow explicit principals
+(`cli:<uid>` or `discord:<user-id>`) and repository profiles with a digest-pinned image,
+required verification commands, ignored generated directory names, and the allowed principal.
+Profiles are operator configuration, never repository/model configuration. The built-in Node
+fixture only proves offline, dependency-free Node work, not arbitrary repository readiness.
+
+```bash
+pnpm exec tsx src/cli.ts code prepare owner/repo main "Fix the addition bug"
+pnpm exec tsx src/cli.ts code show <job-id>
+# Full private proposal inspection locally, including exact changed-file contents:
+pnpm exec tsx src/cli.ts code show <job-id> --json
+# Requires a human terminal and typing the exact digest after inspection:
+pnpm exec tsx src/cli.ts code approve <job-id> --digest <64-hex-digest>
+pnpm exec tsx src/cli.ts code reject <job-id>
+pnpm exec tsx src/cli.ts code cancel <job-id>
+pnpm exec tsx src/cli.ts code recover <job-id>
+pnpm exec tsx src/cli.ts code expire <job-id>
+pnpm exec tsx src/cli.ts code reconcile <job-id> --digest <64-hex-digest>
+```
+
+Preparation pins the base commit, creates an offline non-root worker, records model/tool activity,
+exports regular UTF-8 files, and runs operator-required checks in a fresh worker with root-owned
+read-only source. Checks may write temporary data only under `/tmp`; profiles requiring source-tree
+build outputs are unsupported in this release. Symlinks, submodules, binary files, oversized
+snapshots, secret-bearing changed content, unknown model usage, failed/truncated checks, and
+unavailable dependencies stop preparation or block publication. Root filesystem, capabilities,
+networking, memory, CPU, PID count, command output and deadlines are bounded. Defaults: 20 minutes,
+30 model calls, 100,000 aggregate observed tokens, 128 tools, 2-minute commands, 64 KiB command
+output, 2 CPU/2 GiB/128 PIDs, 200 changed files/10 MiB changed content. Exact private proposals
+remain in shared SQLite; redacted bounded Markdown is registered for history/browser inspection.
+
+Publication additionally requires `CODING_PUBLICATION_ENABLED=true` and a separately scoped
+`CODING_GITHUB_WRITE_TOKEN` with contents and pull-request write permissions for allowed targets.
+`CODING_GITHUB_READ_TOKEN` is separate; existing intelligence credentials do not authorize coding.
+Approval is initiating-principal, content, checks, branch and PR-metadata bound, expires within
+five minutes and is consumed once. Publication rechecks the base and creates only a new
+`agent-ops/<job-id>` branch and **draft** PR in the same repository. It never overwrites branches,
+force pushes, merges or deploys. Partial/uncertain writes require explicit `code reconcile`;
+reconciliation observes the branch/PR before attempting the missing stage and does not delete
+remote branches. Recovery claims durable ownership and refuses to run while the prior publisher
+is active. A moved base requires a new proposal.
+
+Mention the Discord bot with `code prepare owner/repo main <task>` (task up to 1,000 characters).
+It returns a pinned target/task confirmation. Reply with `code confirm <confirmation-id>` within
+five minutes; confirmation is user/channel bound, single-use and discarded on restart.
+Then use `code show <job-id>`, `code approve <job-id> <digest>`, `code reject <job-id>`,
+`code cancel <job-id>`, `code expire <job-id>` or `code reconcile <job-id> <digest>`.
+Only platform-authenticated allowlisted human messages authorize execution/publication; the
+LLM router cannot manufacture approval. Browser inspection remains read-only.
+
+Workers are removed after capture or failure. Restart never replays work. `code recover` marks
+an interrupted preparation only after its original run has stopped, then removes only containers
+labelled for that owned job. Cleanup of already failed/interrupted jobs can be retried without replay.
+`code cancel` records a principal-bound cancellation request in shared
+history; the preparation owner polls it and stops outstanding work, including across CLI processes.
+CLI also accepts SIGINT/SIGTERM. Proposals expire after 24 hours by default (operator-configurable
+down to one minute with `CODING_PROPOSAL_RETENTION_MS`); explicit `code expire`
+removes unpublished private proposal/approval data and its local display artifact. Retained private
+proposals are capped at 128 MiB; history size remains independently managed. SQLite deletion is
+not cryptographic erasure. Expiration cleanup can be retried after a partial failure. Remote branches
+and delivered Discord attachments are never deleted.
+
+Run the containment gate after provisioning the fixture image:
+
+```bash
+docker pull node@sha256:c2d5ade763cacfb03fe9cb8e8af5d1be5041ff331921fa26a9b231ca3a4f780a
+make test-coding-worker CODING_TEST_IMAGE=node@sha256:c2d5ade763cacfb03fe9cb8e8af5d1be5041ff331921fa26a9b231ca3a4f780a
+```
+
 ## Usage
 
 Run a read-only readiness sweep:

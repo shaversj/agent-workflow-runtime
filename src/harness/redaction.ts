@@ -8,6 +8,8 @@ export function applicationCredentials(): string[] {
     process.env.MINIMAX_API_KEY,
     process.env.GITHUB_TOKEN,
     process.env.GH_TOKEN,
+    process.env.CODING_GITHUB_READ_TOKEN,
+    process.env.CODING_GITHUB_WRITE_TOKEN,
     process.env.DISCORD_BOT_TOKEN
   ]
     .filter((value): value is string => typeof value === "string" && value.length > 0)

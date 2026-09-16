@@ -46,7 +46,8 @@ export const readinessPluginManifest = definePluginManifest({
       label: "Run Readiness Sweep",
       description:
         "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
-      readOnly: false
+      readOnly: false,
+      allowedSurfaces: ["cli", "discord"]
     },
     {
       name: "get_latest_report",

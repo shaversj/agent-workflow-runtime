@@ -219,7 +219,7 @@ function Activity({
           <>
             <p className="path">{item.record.path}</p>
             <p>{item.record.availability}</p>
-            {item.record.type === "markdown" && (
+            {["markdown", "coding-proposal"].includes(item.record.type) && (
               <button
                 className="command"
                 onClick={() => {
@@ -646,7 +646,7 @@ export default function App() {
                           <span>{item.record.title ?? item.record.path.split("/").at(-1)}</span>
                           <button
                             className="command"
-                            disabled={item.record.type !== "markdown"}
+                            disabled={!["markdown", "coding-proposal"].includes(item.record.type)}
                             onClick={() => {
                               openReport(item.record.id);
                             }}

@@ -4,11 +4,16 @@ import { runReportsCli } from "./surfaces/cli/reports.js";
 import { runRunsCli } from "./surfaces/cli/runs.js";
 import { runSweepCli } from "./surfaces/cli/sweep.js";
 import { runHistoryCli } from "./surfaces/cli/history.js";
+import { runCodingCli } from "./surfaces/cli/code.js";
 
 loadLocalEnv();
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  if (command === "code") {
+    await runCodingCli(args);
+    return;
+  }
   if (command === "history") {
     runHistoryCli(args);
     return;
@@ -36,6 +41,11 @@ function printUsage() {
   agent-ops runs list [repo-target] [--limit 20]
   agent-ops runs show <run-ref> [repo-target]
   agent-ops reports latest [repo-target]
+  agent-ops code prepare <owner/repo> <base-branch> <task>
+  agent-ops code show <job-id> [--json]
+  agent-ops code approve <job-id> --digest <digest>
+  agent-ops code reconcile <job-id> --digest <digest>
+  agent-ops code reject|cancel|expire|recover <job-id>
   agent-ops history list [--target repo-target] [--source cli|discord] [--outcome completed] [--since ISO] [--until ISO] [--limit 20] [--cursor value] [--json]
   agent-ops history show <interaction-id> [--limit 50] [--cursor value] [--json]
   pnpm sweep -- <repo-target> [--ref main] [--harness-model MiniMax-M3] [--timeout-ms 120000]`);

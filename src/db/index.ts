@@ -24,8 +24,10 @@ import {
   runs,
   toolCalls
 } from "./schema.js";
+import { codingJobs, codingProposals, codingApprovals, codingPublications } from "./schema.js";
+import { CodingStore, codingBootstrapSql } from "./coding-store.js";
 
-const HISTORY_SCHEMA_VERSION = 1;
+const HISTORY_SCHEMA_VERSION = 2;
 const processOwner: contracts.HistoryOwner = {
   token: crypto.randomUUID(),
   pid: process.pid,
@@ -86,7 +88,11 @@ function verifySchema(sqlite: Database.Database): void {
     toolCalls,
     modelCalls,
     artifacts,
-    deliveryAttempts
+    deliveryAttempts,
+    codingJobs,
+    codingProposals,
+    codingApprovals,
+    codingPublications
   ])
     db.select().from(table).limit(0).all();
 }
@@ -139,7 +145,7 @@ function openConnection(
       return sqlite;
     }
     const version = databaseVersion(sqlite);
-    if (version !== 0 && version !== HISTORY_SCHEMA_VERSION)
+    if (version !== 0 && version !== 1 && version !== HISTORY_SCHEMA_VERSION)
       throw new Error("Unsupported history schema version");
     if (
       version === 0 &&
@@ -166,6 +172,22 @@ function openConnection(
       .transaction(() => {
         if (databaseVersion(sqlite) === 0) {
           sqlite.exec(bootstrapSql);
+          sqlite.exec(codingBootstrapSql);
+          sqlite.pragma(`user_version = ${HISTORY_SCHEMA_VERSION}`);
+        } else if (databaseVersion(sqlite) === 1) {
+          // Only the supported shared-history schema can upgrade, never retired target stores.
+          const db = drizzle(sqlite);
+          for (const table of [
+            interactions,
+            runs,
+            messages,
+            toolCalls,
+            modelCalls,
+            artifacts,
+            deliveryAttempts
+          ])
+            db.select().from(table).limit(0).all();
+          sqlite.exec(codingBootstrapSql);
           sqlite.pragma(`user_version = ${HISTORY_SCHEMA_VERSION}`);
         }
         verifySchema(sqlite);
@@ -299,6 +321,12 @@ export class HistoryStore extends HistoryReader {
     if (!run || (running && run.status !== "running")) throw new Error("History run is not active");
     this.owned(run.interactionId, running);
     return run;
+  }
+  coding(runId: number): CodingStore {
+    this.ownedRun(runId);
+    return new CodingStore(this.sqlite, runId, () => {
+      this.ownedRun(runId);
+    });
   }
   private observed(interactionId: string, envelope: contracts.CaptureEnvelope): void {
     if (envelope.incomplete)

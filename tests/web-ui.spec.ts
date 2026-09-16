@@ -211,6 +211,18 @@ test("separates delivery failures and renders registered reports without active 
       type: "markdown",
       title: "Readiness report"
     });
+    const proposalFile = path.join(historyArtifactsPath(home), "coding-proposal.md");
+    fs.writeFileSync(
+      proposalFile,
+      "# Coding Proposal\n\nStatus: proposal-ready\n\nHuman review required."
+    );
+    store.registerArtifact({
+      interactionId: request.interactionId,
+      runId: nested,
+      path: proposalFile,
+      type: "coding-proposal",
+      title: "Coding proposal"
+    });
     store.finishRun({ id: nested, status: "completed" });
     store.finishRun({ id: request.runId, status: "completed" });
     store.finishInteraction({ id: request.interactionId, status: "completed" });
@@ -221,6 +233,10 @@ test("separates delivery failures and renders registered reports without active 
     });
     await page.getByRole("button", { name: /Review repository context/ }).click({ timeout: 8000 });
     await expect(page.getByText("Saved response despite delivery failure")).toBeVisible();
+    await page.getByRole("button", { name: "Read report", exact: true }).last().click();
+    await expect(page.getByRole("heading", { name: "Coding Proposal" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /approve|publish|execute/i })).toHaveCount(0);
+    await page.getByRole("button", { name: "Back to interaction" }).click();
     await expect(page.getByText("0 acknowledged / 1 failed")).toBeVisible();
     await page.locator("summary").filter({ hasText: "readiness_sweep" }).click();
     await expect(page.getByText("a".repeat(40), { exact: true })).toBeVisible();

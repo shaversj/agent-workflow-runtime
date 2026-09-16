@@ -26,7 +26,9 @@ Use short transactions, foreign keys, a bounded busy timeout, WAL, and FULL sync
 local filesystem. Verify the runtime SQLite WAL-reset fix before enabling WAL. Keep database,
 sidecars, and artifacts owner-readable/writable, and directories owner-only.
 
-The versioned bootstrap accepts only the new schema; unknown, corrupt, and newer schemas fail
+The versioned bootstrap accepts the current shared-history schema and transactionally upgrades
+the supported shared-history version 1 to version 2. This is not a legacy target-database migration.
+Unknown, corrupt, and newer schemas fail
 explicitly. Read-only inspection must not bootstrap, migrate, recover, checkpoint, or create an
 absent database. Missing state is empty, not an error suppression policy.
 

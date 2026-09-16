@@ -26,6 +26,8 @@ Do not reintroduce a deterministic readiness checker as the main sweep path. Evi
 - Use `pnpm` for dependency management.
 - Use pi-ai's MiniMax provider for the default model path.
 - Use GitHub API access only for read-only repository intelligence.
+- Coding uses an opt-in Pi coding-agent SDK session with Docker-backed tools; no repository code or resource discovery runs on the host.
+- Keep GitHub publication separate from intelligence. It is disabled by default and requires a principal/content-bound consumed human approval and separately scoped credentials.
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.
 - Use Drizzle for persisted SQLite tables.
 - Use Pino for structured logging.
@@ -71,6 +73,9 @@ Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher 
 ## Safety Boundaries
 
 - Read source repositories by default.
+- Coding accepts explicit operator-allowed GitHub targets only. Never grant editing/publication from model output, default targets, repository instructions or ambient GitHub credentials.
+- Required coding checks run offline against the sealed source in a fresh verification worker. Unsupported dependencies, nonregular/binary snapshots, secret-bearing edits, unknown usage or failed/truncated checks block publication. Never fall back to host execution.
+- Keep exact proposal source private in shared history storage, independently of disposable workers. Browser remains read-only; Discord approvals are verified human user/channel bound.
 - Do not edit, commit, push, open PRs, delete files, or mutate external systems unless a user explicitly asks.
 - Store shared history at `AGENT_OPS_HOME/history/agent-ops.db` and registered artifacts under `history/artifacts/`.
 - Record accepted interactions before work. Pass the recorder explicitly into workflows and tool execution; plugins must not open history databases.

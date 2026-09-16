@@ -24,7 +24,10 @@ function report(interactionId: string, artifactId: number, home: string): Inspec
       .get();
     if (!raw) return { available: false, reason: "No report is registered to this interaction." };
     const artifact = parseHistory(ArtifactRecordSchema, raw);
-    if (artifact.type !== "markdown" || artifact.availability !== "available")
+    if (
+      !["markdown", "coding-proposal"].includes(artifact.type) ||
+      artifact.availability !== "available"
+    )
       return { available: false, reason: "Registered report is unavailable." };
     try {
       const fd = openRegisteredReport(artifact.path, home);

@@ -37,3 +37,22 @@ jobs:
 
       - name: Test browser inspection
         run: pnpm test:web
+
+  coding-worker:
+    name: Real coding worker containment
+    runs-on: ubuntu-latest
+    env:
+      CODING_TEST_IMAGE: node@sha256:c2d5ade763cacfb03fe9cb8e8af5d1be5041ff331921fa26a9b231ca3a4f780a
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 10.32.1
+      - run: make install
+      - name: Provision trusted fixture image
+        run: docker pull "$CODING_TEST_IMAGE"
+      - name: Prove real isolation, Pi routing, verification and mocked publication
+        run: make test-coding-worker

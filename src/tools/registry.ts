@@ -3,6 +3,8 @@ import type { Static, TSchema } from "typebox";
 import { Value } from "typebox/value";
 
 import type { InteractionRecorder, RecordedToolInput } from "../harness/interaction.js";
+import { assertToolExecution } from "../harness/execution-policy.js";
+import type { ExecutionAuthority } from "../harness/execution-policy.js";
 import type { WorkflowProgressEvent } from "../harness/types.js";
 
 const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
@@ -27,6 +29,7 @@ export interface ToolSourceContext {
 
 export interface RegisteredToolContext {
   surface: ToolSurface;
+  executionAuthority?: ExecutionAuthority;
   recording?: InteractionRecorder;
   providerCallId?: string;
   requestContext?: ToolRequestContext;
@@ -113,8 +116,17 @@ export function defineRegisteredTool<TParameters extends TSchema, TResultSchema 
     ...tool,
     [registeredToolBrand]: true,
     execute(params, context, signal) {
+      const { pluginName, name, requiresApproval, allowedSurfaces } = this;
+      const effectiveTool = { pluginName, name, requiresApproval, allowedSurfaces };
       const execute = (toolContext: RegisteredToolContext, toolSignal?: AbortSignal) => {
-        const output = tool.execute(validateToolParameters(tool, params), toolContext, toolSignal);
+        const parsed = validateToolParameters(tool, params);
+        assertToolExecution(
+          effectiveTool,
+          toolContext.surface,
+          parsed,
+          toolContext.executionAuthority
+        );
+        const output = tool.execute(parsed, toolContext, toolSignal);
         if (isPromiseLike(output)) {
           return output.then((result) => validateToolResult(tool, envelope, result));
         }

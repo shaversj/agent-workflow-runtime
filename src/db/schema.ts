@@ -16,6 +16,12 @@ import type {
   ExecutionStatus,
   StartToolCallInput
 } from "../harness/history-schemas.js";
+import type {
+  CodingJob,
+  CodingProposal,
+  CodingApproval,
+  Publication
+} from "../plugins/coding/schemas.js";
 
 const capture = (name: string) => text(name, { mode: "json" }).$type<CaptureEnvelope>();
 const lifecycle = () => ({
@@ -206,3 +212,42 @@ export const deliveryAttempts = sqliteTable(
       .where(sql`${t.status} = 'pending'`)
   ]
 );
+
+export const codingJobs = sqliteTable("coding_job", {
+  id: text("id").primaryKey(),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => runs.id),
+  status: text("status").notNull(),
+  data: text("data", { mode: "json" }).$type<CodingJob>().notNull()
+});
+export const codingProposals = sqliteTable("coding_proposal", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id")
+    .notNull()
+    .unique()
+    .references(() => codingJobs.id),
+  data: text("data", { mode: "json" }).$type<CodingProposal>().notNull()
+});
+export const codingApprovals = sqliteTable("coding_approval", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id")
+    .notNull()
+    .references(() => codingJobs.id),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => runs.id),
+  consumed: integer("consumed", { mode: "boolean" }).notNull(),
+  data: text("data", { mode: "json" }).$type<CodingApproval>().notNull()
+});
+export const codingPublications = sqliteTable("coding_publication", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id")
+    .notNull()
+    .unique()
+    .references(() => codingJobs.id),
+  runId: integer("run_id")
+    .notNull()
+    .references(() => runs.id),
+  data: text("data", { mode: "json" }).$type<Publication>().notNull()
+});
