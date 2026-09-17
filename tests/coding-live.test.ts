@@ -137,6 +137,8 @@ describe("opt-in coding live controls", () => {
     expect(Value.Check(LiveReceiptSchema, result.receipt)).toBe(true);
     expect(result.receipt).toMatchObject({
       status: "proposal-ready",
+      model: "MiniMax-M3",
+      limits: input().limits,
       boundaries: {
         source: "simulated",
         model: "simulated",
@@ -174,6 +176,7 @@ describe("opt-in coding live controls", () => {
       worker: f.worker
     });
     expect(result.receipt.status).toBe("failed");
+    expect(result.receipt.boundaries).toMatchObject({ model: "not-run", worker: "not-run" });
     expect(result.receipt.reason).toBe("coding_live_scenario_failed");
     expect(fs.readFileSync(result.receiptPath, "utf8")).not.toContain("read-test-credential");
     expect(result.receipt.remoteResources).toEqual([]);
@@ -187,6 +190,65 @@ describe("opt-in coding live controls", () => {
     ).rejects.toThrow(/coding_live_storage_failed/);
     expect(f.base).not.toHaveBeenCalled();
     expect(f.workers).toHaveLength(0);
+  });
+  it("stops before source import or model work when a later receipt flush fails", async () => {
+    const f = fixture();
+    const flush = fs.fsyncSync;
+    let writes = 0;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (++writes === 3) throw new Error("receipt disk failed");
+      flush(fd);
+    });
+    const result = await runCodingLive(input(), env(), {
+      root: f.root,
+      source: f.source,
+      worker: f.worker
+    });
+    expect(result.receipt.status).toBe("failed");
+    expect(f.files).not.toHaveBeenCalled();
+    expect(f.workers).toHaveLength(0);
+    expect(result.receipt.publicationWrites).toBe(0);
+  });
+  it("keeps unknown model usage unknown rather than reporting zero tokens", async () => {
+    const f = fixture();
+    const result = await runCodingLive(input(), env(), {
+      root: f.root,
+      source: f.source,
+      worker: f.worker,
+      runtime: (worker, _task, _instructions, recording) => {
+        const id = recording.modelStart({ provider: "fixture", model: "fixture" });
+        recording.modelFinish({ id, status: "completed" });
+        return worker.rpc("write", "app.js", "fixed\n").then(() => "Fixed");
+      }
+    });
+    expect(result.receipt.modelCalls).toBe(1);
+    expect(result.receipt.totalTokens).toBeNull();
+    expect(result.receipt.status).toBe("failed");
+    expect(result.receipt.reason).toBe("coding_live_evidence_incomplete");
+  });
+  it("retains discoverable history and closes workers when final receipt storage stays unavailable", async () => {
+    const f = fixture();
+    const flush = fs.fsyncSync;
+    let writes = 0;
+    vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      if (++writes > 4) throw new Error("persistent receipt disk failure");
+      flush(fd);
+    });
+    const failure = await runCodingLive(input(), env(), {
+      root: f.root,
+      source: f.source,
+      worker: f.worker
+    }).catch((error: unknown) => error);
+    const entries = fs.readdirSync(f.root);
+    expect(entries).toHaveLength(1);
+    const home = path.join(f.root, entries[0]!);
+    expect(failure).toMatchObject({
+      message: "coding_live_storage_failed",
+      home,
+      receiptPath: path.join(home, "receipt.json")
+    });
+    expect(f.workers).toHaveLength(1);
+    expect(f.workers[0]!.close).toHaveBeenCalled();
   });
   it("interrupts an active scenario at its finite timeout and closes owned workers", async () => {
     const f = fixture();

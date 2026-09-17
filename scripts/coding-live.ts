@@ -10,21 +10,37 @@ import type { Static } from "typebox";
 import { openHistoryReader } from "../src/db/index.js";
 import { beginInteraction } from "../src/harness/interaction.js";
 import { redactApplicationText } from "../src/harness/redaction.js";
-import { codingProfile, loadCodingPolicy } from "../src/plugins/coding/config.js";
-import { CodingTaskSchema, parseCoding } from "../src/plugins/coding/schemas.js";
+import {
+  CodingPolicySchema,
+  codingProfile,
+  loadCodingPolicy
+} from "../src/plugins/coding/config.js";
+import {
+  CodingJobSchema,
+  CodingProposalSchema,
+  CodingTaskSchema,
+  parseCoding
+} from "../src/plugins/coding/schemas.js";
 import type { CodingJob } from "../src/plugins/coding/schemas.js";
 import { prepareCoding } from "../src/workflows/code.js";
 import { inspectCoding } from "../src/workflows/coding-approval.js";
 import { DockerWorker } from "../src/workspaces/docker.js";
 
 const objectOptions = { additionalProperties: false };
-const timestamp = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$" });
-const identity = Type.String({ pattern: "^[a-zA-Z0-9-]{1,128}$" });
+const timestamp = CodingJobSchema.properties.createdAt;
+const identity = CodingJobSchema.properties.id;
 const boundary = Type.Union([
   Type.Literal("live"),
   Type.Literal("simulated"),
   Type.Literal("not-run")
 ]);
+const LiveArgsSchema = Type.Object(
+  {
+    config: Type.String({ minLength: 1 }),
+    envFile: Type.Optional(Type.String({ minLength: 1 }))
+  },
+  objectOptions
+);
 const LiveInputSchema = Type.Object(
   {
     scenario: Type.Literal("prepare"),
@@ -40,9 +56,9 @@ const LiveInputSchema = Type.Object(
     task: CodingTaskSchema.properties.task,
     limits: Type.Object(
       {
-        timeoutMs: Type.Integer({ minimum: 1000, maximum: 1200000 }),
-        maxModelCalls: Type.Integer({ minimum: 1, maximum: 30 }),
-        maxTokens: Type.Integer({ minimum: 1024, maximum: 100000 })
+        timeoutMs: CodingPolicySchema.properties.timeoutMs,
+        maxModelCalls: CodingPolicySchema.properties.maxModelCalls,
+        maxTokens: CodingPolicySchema.properties.maxTokens
       },
       objectOptions
     )
@@ -57,6 +73,8 @@ export const LiveReceiptSchema = Type.Object(
     repository: CodingTaskSchema.properties.repository,
     baseBranch: CodingTaskSchema.properties.baseBranch,
     principal: Type.String({ pattern: "^cli:[0-9]+$" }),
+    model: CodingPolicySchema.properties.model,
+    limits: LiveInputSchema.properties.limits,
     image: Type.String({ maxLength: 512 }),
     startedAt: timestamp,
     finishedAt: Type.Optional(timestamp),
@@ -75,8 +93,8 @@ export const LiveReceiptSchema = Type.Object(
     runId: Type.Optional(Type.Integer({ minimum: 1 })),
     jobId: Type.Optional(identity),
     preparationRunId: Type.Optional(Type.Integer({ minimum: 1 })),
-    baseCommit: Type.Optional(Type.String({ pattern: "^[a-f0-9]{40}$" })),
-    digest: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+    baseCommit: Type.Optional(CodingJobSchema.properties.baseCommit),
+    digest: Type.Optional(CodingProposalSchema.properties.digest),
     checks: Type.Array(
       Type.Object(
         {
@@ -104,6 +122,15 @@ export const LiveReceiptSchema = Type.Object(
 );
 type LiveReceipt = Static<typeof LiveReceiptSchema>;
 
+class LiveStorageFailure extends Error {
+  constructor(
+    readonly home: string,
+    readonly receiptPath: string
+  ) {
+    super("coding_live_storage_failed");
+  }
+}
+
 function recordedUsage(home: string, interactionId: string) {
   const reader = openHistoryReader({ home });
   if (!reader) throw new Error("coding_live_history_missing");
@@ -127,9 +154,20 @@ export function preflightCodingLive(value: unknown, env: NodeJS.ProcessEnv) {
   if (input.authorization.principal !== `cli:${process.getuid?.() ?? "unsupported"}`)
     throw new Error("coding_live_principal_denied");
   // Preparation never loads a write credential or inherits publication authority.
-  const { CODING_GITHUB_WRITE_TOKEN: _writeToken, ...readEnv } = env;
-  void _writeToken;
-  const policy = loadCodingPolicy({ ...readEnv, CODING_PUBLICATION_ENABLED: "false" });
+  const readEnv: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "CODING_ENABLED",
+    "CODING_ALLOWED_PRINCIPALS",
+    "CODING_PROFILES",
+    "CODING_MODEL",
+    "CODING_TIMEOUT_MS",
+    "CODING_MAX_MODEL_CALLS",
+    "CODING_MAX_TOKENS",
+    "CODING_PROPOSAL_RETENTION_MS",
+    "CODING_GITHUB_READ_TOKEN"
+  ])
+    readEnv[key] = env[key];
+  const policy = loadCodingPolicy(readEnv);
   const profile = codingProfile(
     policy,
     input.authorization.principal,
@@ -167,13 +205,19 @@ export async function runCodingLive(
     repository: input.authorization.repository,
     baseBranch: input.authorization.baseBranch,
     principal: input.authorization.principal,
+    model: policy.model,
+    limits: {
+      timeoutMs: policy.timeoutMs,
+      maxModelCalls: policy.maxModelCalls,
+      maxTokens: policy.maxTokens
+    },
     image: profile.image,
     startedAt: new Date().toISOString(),
     status: "running",
     boundaries: {
-      source: dependencies.source ? "simulated" : "live",
-      model: dependencies.runtime ? "simulated" : "live",
-      worker: dependencies.worker ? "simulated" : "live",
+      source: "not-run",
+      model: "not-run",
+      worker: "not-run",
       publication: "not-run"
     },
     checks: [],
@@ -203,7 +247,7 @@ export async function runCodingLive(
       fs.fsyncSync(descriptor);
       return safe;
     } catch {
-      throw new Error("coding_live_storage_failed");
+      throw new LiveStorageFailure(home, receiptPath);
     }
   };
   const controller = new AbortController();
@@ -227,6 +271,7 @@ export async function runCodingLive(
     );
     receipt.interactionId = recording.interactionId;
     receipt.runId = recording.runId;
+    receipt.boundaries.source = dependencies.source ? "simulated" : "live";
     save();
     job = await prepareCoding(
       {
@@ -239,6 +284,19 @@ export async function runCodingLive(
       recording,
       {
         ...dependencies,
+        worker: async (...args) => {
+          receipt.boundaries.worker = dependencies.worker ? "simulated" : "live";
+          save();
+          return (dependencies.worker ?? DockerWorker.start)(...args);
+        },
+        runtime: async (...args) => {
+          receipt.boundaries.model = dependencies.runtime ? "simulated" : "live";
+          save();
+          const runtime =
+            dependencies.runtime ??
+            (await import("../src/harness/coding-runtime.js")).runIsolatedCoding;
+          return runtime(...args);
+        },
         onJob: async (next) => {
           job = next;
           receipt.jobId = next.id;
@@ -271,7 +329,7 @@ export async function runCodingLive(
   } finally {
     if (timer) clearTimeout(timer);
     try {
-      if (job) {
+      if (job && receipt.boundaries.worker !== "not-run") {
         if (dependencies.worker) receipt.cleanup = "simulated";
         else {
           await DockerWorker.cleanupJob(job.id);
@@ -284,6 +342,22 @@ export async function runCodingLive(
       receipt.reason = "coding_live_cleanup_failed";
     }
     try {
+      if (receipt.interactionId) {
+        Object.assign(receipt, recordedUsage(home, receipt.interactionId));
+        if (
+          receipt.status === "proposal-ready" &&
+          (receipt.totalTokens === null || receipt.modelCalls === 0)
+        ) {
+          receipt.status = "failed";
+          receipt.reason = "coding_live_evidence_incomplete";
+        }
+      }
+    } catch {
+      receipt.status = "failed";
+      receipt.reason = "coding_live_evidence_incomplete";
+      receipt.totalTokens = null;
+    }
+    try {
       if (recording) {
         const status =
           receipt.status === "proposal-ready"
@@ -291,26 +365,18 @@ export async function runCodingLive(
             : receipt.status === "interrupted"
               ? "cancelled"
               : "failed";
-        recording.finishRun({ status, ...(receipt.reason ? { error: receipt.reason } : {}) });
-        recording.finishInteraction({
+        const finish = {
           status,
           ...(receipt.reason ? { error: receipt.reason } : {})
-        });
+        } as const;
+        recording.finishRun(finish);
+        recording.finishInteraction(finish);
       }
     } catch {
       receipt.status = "failed";
       receipt.reason = "coding_live_recording_failed";
     } finally {
       recording?.close();
-    }
-    try {
-      if (receipt.interactionId) {
-        Object.assign(receipt, recordedUsage(home, receipt.interactionId));
-      }
-    } catch {
-      receipt.status = "failed";
-      receipt.reason = "coding_live_evidence_incomplete";
-      receipt.totalTokens = null;
     }
     receipt.finishedAt = new Date().toISOString();
     try {
@@ -339,10 +405,10 @@ export function parseLiveArgs(args: string[]) {
     values[flag] = value;
   }
   if (!values["--config"]) throw new Error("coding_live_config_required");
-  return {
+  return parseCoding(LiveArgsSchema, {
     config: values["--config"],
     ...(values["--env-file"] ? { envFile: values["--env-file"] } : {})
-  };
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -368,10 +434,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
       `Coding live validation: ${result.receipt.status}\nPrivate history: ${result.home}\nReceipt: ${result.receiptPath}`
     );
     if (result.receipt.status !== "proposal-ready") process.exitCode = 1;
-  } catch {
+  } catch (error) {
+    const reason =
+      error instanceof Error && /^(?:coding_[a-z_]+|invalid_coding_contract)$/.test(error.message)
+        ? error.message
+        : "coding_live_refused_or_failed";
     console.error(
-      "coding_live_refused_or_failed: inspect explicit config, scoped credentials, profile and retained receipts"
+      `${reason}: inspect explicit config, scoped credentials, profile and retained receipts`
     );
+    if (error instanceof LiveStorageFailure)
+      console.error(`Retained history: ${error.home}\nReceipt: ${error.receiptPath}`);
     process.exitCode = 1;
   } finally {
     process.off("SIGINT", stop);
