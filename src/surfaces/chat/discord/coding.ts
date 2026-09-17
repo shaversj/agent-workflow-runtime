@@ -198,8 +198,11 @@ export async function handleDiscordCoding(
         ? error.message
         : "coding_command_failed";
     const id = recording.appendMessage({ role: "assistant", content });
-    recording.finishRun({ status: "failed", error: content });
-    recording.finishInteraction({ status: "failed", error: content });
+    const status = ["coding_cancelled", "coding_preparation_interrupted"].includes(content)
+      ? "cancelled"
+      : "failed";
+    recording.finishRun({ status, error: content });
+    recording.finishInteraction({ status, error: content });
     const attempt = recording.deliveryStart({ messageId: id, part: 1, attempt: 1 });
     try {
       const sent = await message.reply({ content, allowedMentions: { parse: [] } });

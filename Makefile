@@ -49,7 +49,7 @@ web:
 
 test-coding-worker:
 	test -n "$(CODING_TEST_IMAGE)"
-	CODING_TEST_IMAGE="$(CODING_TEST_IMAGE)" pnpm exec vitest run tests/coding-worker.integration.test.ts tests/coding-runtime.integration.test.ts tests/coding-end-to-end.test.ts
+	CODING_TEST_IMAGE="$(CODING_TEST_IMAGE)" pnpm exec vitest run tests/coding-worker.integration.test.ts tests/coding-runtime.integration.test.ts tests/coding-end-to-end.test.ts tests/coding-discord.integration.test.ts
 
 coding-live:
 	test -n "$(CONFIG)"

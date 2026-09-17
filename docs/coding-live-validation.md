@@ -36,7 +36,7 @@ make coding-live CONFIG=/private/path/scenario.json
 
 Each accepted scenario creates a new private temporary history home (`0700`) and receipt (`0600`). Keep the printed paths: the receipt and sealed proposal are retained there rather than added to the normal history home. No existing history or remote resource is deleted.
 
-The bounded receipt records repository/base/image, interaction and preparation run/job IDs, pinned commit, proposal digest, required-check outcomes, recorded model-call/token totals, component boundaries, zero publication writes, and owned-worker cleanup. Raw HTTP errors, credentials, proposal source, model prose and check output are not receipt content. Unknown model usage remains `null`, not zero. A failed or interrupted scenario is never marked passed.
+The bounded receipt records repository/base/image, configured model and effective budgets, interaction and preparation run/job IDs, pinned commit, proposal digest, required-check outcomes, recorded model-call/token totals, component boundaries, zero publication writes, and owned-worker cleanup. Raw HTTP errors, credentials, proposal source, model prose and check output are not receipt content. Unknown model usage remains `null`, not zero, and blocks a passed live gate. A failed or interrupted scenario is never marked passed.
 
 The script reserves and flushes its receipt before source/model/worker work. Later storage failure stops the scenario; its pre-existing receipt can remain nonterminal. Inspect retained history before retrying. An interrupted job may require the existing `code recover` command; recovery removes owned workers but never replays agent work.
 
@@ -47,3 +47,13 @@ This preparation entry point does **not** grant publication. Inspect the proposa
 The operator selected `shaversj/agent-ops-kit-coding-fixture` and the existing `.env` Discord channel. That selection does not supply missing coding credentials, identify an authenticated human principal, or approve a sealed proposal. Do not silently broaden the channel allowlist or enable publication.
 
 Full live publication/response-loss, human Discord, and prepared TypeScript gates must have their own completed evidence before rollout is considered complete. Deterministic tests and simulated receipts do not substitute for them.
+
+## Offline Regression Gate
+
+```sh
+make test-coding-worker CODING_TEST_IMAGE=<locally-available-digest-pinned-node-image>
+```
+
+The worker gate includes the production Discord message-entry journey using real recording, Docker editing, immutable-source fresh verification, and shared-history proposal/approval/publication state. Model responses and Discord/GitHub transports are simulated; it never loads `.env` or calls live services. It covers identity/conversation filtering, single-use/expired/restarted confirmation, pinned-base changes, duplicates, blocked/truncated checks, active cancellation, and failed acknowledgment/attachment/PR delivery without replay.
+
+The end-to-end suite also simulates separate successful branch and PR POST response losses. Reconciliation creates only the missing PR after a lost branch response; after a lost PR response it performs no additional write. These are regression proofs, not live GitHub evidence.
