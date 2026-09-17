@@ -69,6 +69,11 @@ networking, memory, CPU, PID count, command output and deadlines are bounded. De
 output, 2 CPU/2 GiB/128 PIDs, 200 changed files/10 MiB changed content. Exact private proposals
 remain in shared SQLite; redacted bounded Markdown is registered for history/browser inspection.
 
+The coding SDK and file tools use `/workspace` as the working directory. The model receives
+the operator-configured checks for its worker; repository guidance cannot authorize dependency
+installation or replace fresh-worker verification. Model-call and token-budget exhaustion return
+their specific failure reasons rather than a generic model error.
+
 Publication additionally requires `CODING_PUBLICATION_ENABLED=true` and a separately scoped
 `CODING_GITHUB_WRITE_TOKEN` with contents and pull-request write permissions for allowed targets.
 `CODING_GITHUB_READ_TOKEN` is separate; existing intelligence credentials do not authorize coding.
@@ -93,6 +98,9 @@ returns a text-only result; uncertain network delivery is not automatically retr
 `code show <job-id>` in the same channel to retrieve the saved proposal without rerunning coding.
 Delivery failures log and retain allowlisted HTTP/Discord/transport codes, never raw exceptions
 or uploaded source. Look for `discord_bot.coding_delivery_failed` when troubleshooting.
+Discord REST uses its own Undici dispatcher, aligned with `discord.js`'s transport version,
+so loading the coding SDK cannot replace its upload transport. SDK-level REST retries are
+disabled as well; ambiguous sends remain uncertain rather than silently duplicating messages.
 
 Workers are removed after capture or failure. Restart never replays work. `code recover` marks
 an interrupted preparation only after its original run has stopped, then removes only containers

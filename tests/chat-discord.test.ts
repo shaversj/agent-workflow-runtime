@@ -11,7 +11,11 @@ import {
   normalizeDiscordMessage,
   renderDiscordResponse
 } from "../src/surfaces/chat/discord/adapter.js";
-import { sendDiscordReply, shouldAcceptDiscordMessage } from "../src/surfaces/chat/discord/bot.js";
+import {
+  createDiscordClient,
+  sendDiscordReply,
+  shouldAcceptDiscordMessage
+} from "../src/surfaces/chat/discord/bot.js";
 import { loadDiscordBotConfig } from "../src/surfaces/chat/discord/config.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
 import { routeChatMessage } from "../src/surfaces/chat/router.js";
@@ -26,6 +30,16 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Discord chat surface", () => {
+  it("disables SDK retries so uncertain sends cannot bypass delivery tracking", async () => {
+    const client = createDiscordClient(loadDiscordBotConfig({ DISCORD_BOT_TOKEN: "test" }));
+    try {
+      expect(client.rest.options.retries).toBe(0);
+    } finally {
+      await client.destroy();
+      await client.rest.agent?.destroy();
+    }
+  });
+
   it("normalizes Discord messages into chat messages", () => {
     const message = normalizeDiscordMessage({
       guildId: "guild-1",

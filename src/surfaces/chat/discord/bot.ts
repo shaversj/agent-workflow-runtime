@@ -7,6 +7,7 @@ import {
   Partials,
   type Message
 } from "discord.js";
+import { Agent } from "undici";
 
 import type { WorkflowProgressEvent } from "../../../harness/types.js";
 import { RecordingFailure } from "../../../harness/interaction.js";
@@ -36,6 +37,9 @@ type DiscordBotOptions = Pick<ChatHandlerOptions, "availableTools" | "signal">;
 
 export function createDiscordClient(config: DiscordBotConfig, options: DiscordBotOptions = {}) {
   const client = new Client({
+    // Pi loads Undici 8 and replaces the global dispatcher; keep Discord's legacy transport isolated.
+    // A timed-out message may already exist remotely; retries would bypass delivery tracking.
+    rest: { agent: new Agent(), retries: 0 },
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,

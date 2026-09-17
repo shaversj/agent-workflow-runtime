@@ -205,7 +205,15 @@ const TransportCodeSchema = Type.Union([
   Type.Literal("ETIMEDOUT"),
   Type.Literal("ENOTFOUND"),
   Type.Literal("UND_ERR_SOCKET"),
-  Type.Literal("UND_ERR_CONNECT_TIMEOUT")
+  Type.Literal("UND_ERR_CONNECT_TIMEOUT"),
+  Type.Literal("UND_ERR_HEADERS_TIMEOUT"),
+  Type.Literal("UND_ERR_BODY_TIMEOUT"),
+  Type.Literal("UND_ERR_ABORTED")
+]);
+const TransportNameSchema = Type.Union([
+  Type.Literal("AbortError"),
+  Type.Literal("TimeoutError"),
+  Type.Literal("RequestAbortedError")
 ]);
 
 function errorData(value: unknown, key: string): unknown {
@@ -238,10 +246,30 @@ export async function sendDiscordCodingReply(
     } catch (error) {
       // Allowlisted data fields only: Discord exceptions can retain credentials and entire uploads.
       const status = errorData(error, "status"),
-        code = errorData(error, "code");
+        code = errorData(error, "code"),
+        causeCode = errorData(errorData(error, "cause"), "code");
+      let name: unknown = errorData(error, "name");
+      if (
+        name === undefined &&
+        typeof error === "object" &&
+        error !== null &&
+        !types.isProxy(error)
+      ) {
+        try {
+          // Native AbortError names live on a branded getter, not an own data property.
+          name = Object.getOwnPropertyDescriptor(DOMException.prototype, "name")?.get?.call(error);
+        } catch {
+          // Arbitrary exceptions need not be genuine DOMExceptions.
+        }
+      }
       const httpStatus = Value.Check(HttpStatusSchema, status) ? status : undefined;
       const discordCode = Value.Check(DiscordCodeSchema, code) ? code : undefined;
-      const transportCode = Value.Check(TransportCodeSchema, code) ? code : undefined;
+      const transportCode = Value.Check(TransportCodeSchema, code)
+        ? code
+        : Value.Check(TransportCodeSchema, causeCode)
+          ? causeCode
+          : undefined;
+      const transportName = Value.Check(TransportNameSchema, name) ? name : undefined;
       const localFailure = code === "ChannelNotCached";
       const rejected = httpStatus !== undefined && httpStatus < 500;
       const attachmentErrors = errorData(errorData(error, "rawError"), "errors");
@@ -263,11 +291,12 @@ export async function sendDiscordCodingReply(
         ...(httpStatus === undefined ? [] : [`status=${httpStatus}`]),
         ...(discordCode === undefined ? [] : [`code=${discordCode}`]),
         ...(transportCode === undefined ? [] : [`transport=${transportCode}`]),
+        ...(transportName === undefined ? [] : [`transport_name=${transportName}`]),
         ...(localFailure ? ["code=ChannelNotCached"] : [])
       ].join(":");
       let errorType = "unknown";
       if (httpStatus !== undefined) errorType = "discord_api";
-      else if (transportCode) errorType = "discord_transport";
+      else if (transportCode || transportName) errorType = "discord_transport";
       else if (localFailure) errorType = "discord_local";
       logger.warn(
         {
@@ -279,6 +308,7 @@ export async function sendDiscordCodingReply(
           http_status: httpStatus,
           discord_code: discordCode,
           transport_code: transportCode,
+          transport_name: transportName,
           delivery_status: deliveryStatus,
           error: diagnostic,
           err: new Error(category)

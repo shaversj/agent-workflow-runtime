@@ -120,6 +120,21 @@ describe("Discord coding result delivery", () => {
     );
   });
 
+  it.each([
+    { name: "AbortError" },
+    new DOMException("private token", "AbortError"),
+    { cause: { code: "UND_ERR_CONNECT_TIMEOUT", message: "private token" } }
+  ])("records safe timeout diagnostics without retrying (%j)", async (error) => {
+    const result = await deliver(error);
+    expect(result.reply).toHaveBeenCalledTimes(1);
+    expect(result.attempts).toMatchObject([{ status: "uncertain" }]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error_type: "discord_transport" }),
+      "discord_bot.coding_delivery_failed"
+    );
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain("private token");
+  });
+
   it("does not treat a text-only failure as an attachment rejection", async () => {
     const result = await deliver({ status: 413 }, "");
     expect(result.reply).toHaveBeenCalledTimes(1);
@@ -168,5 +183,12 @@ describe("Discord coding result delivery", () => {
       expect.objectContaining({ error_type: "discord_local" }),
       "discord_bot.coding_delivery_failed"
     );
+  });
+
+  it("keeps unbranded DOMException-shaped failures uncertain without evaluating accessors", async () => {
+    const error: unknown = Object.create(DOMException.prototype);
+    const result = await deliver(error);
+    expect(result.reply).toHaveBeenCalledTimes(1);
+    expect(result.attempts).toMatchObject([{ status: "uncertain" }]);
   });
 });

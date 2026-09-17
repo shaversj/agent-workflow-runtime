@@ -31,6 +31,10 @@ async function shutdown(signal: NodeJS.Signals) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ surface: "discord", signal }, "discord_bot.shutdown_started");
-  await client.destroy();
+  try {
+    await client.destroy();
+  } finally {
+    await client.rest.agent?.destroy();
+  }
   logger.info({ surface: "discord", signal }, "discord_bot.shutdown_completed");
 }
