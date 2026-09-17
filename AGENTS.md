@@ -70,6 +70,12 @@ Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher 
 7. Run `make check` before handoff when behavior changed.
 8. Update `README.md` and `AGENTS.md` when installation, commands, project structure, workflow, or user-facing behavior changes.
 
+For Discord-facing behavior changes, perform live validation through the actual bot
+and configured channel when credentials and access are available, following
+[Testing](docs/standards/testing.md#live-discord-validation). Do not leave live
+validation to the user by default. Report any access or approval limitations and
+distinguish automated coverage from live results.
+
 ## Safety Boundaries
 
 - Read source repositories by default.
