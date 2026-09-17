@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json && pnpm build:web",
     "build:web": "vite build",
     "check": "pnpm format:check && pnpm lint && pnpm test && pnpm typecheck && pnpm deadcode",
+    "coding:live": "tsx scripts/coding-live.ts",
     "deadcode": "knip",
     "web": "pnpm build:web && tsx scripts/web-launch.ts",
     "dev:web": "vite --host 127.0.0.1",

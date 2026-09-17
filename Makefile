@@ -1,4 +1,4 @@
-.PHONY: install format format-check lint test typecheck deadcode build check sweep discord web test-coding-worker
+.PHONY: install format format-check lint test typecheck deadcode build check sweep discord web test-coding-worker coding-live
 
 REPO ?= .
 HARNESS_MODEL ?= MiniMax-M3
@@ -50,3 +50,7 @@ web:
 test-coding-worker:
 	test -n "$(CODING_TEST_IMAGE)"
 	CODING_TEST_IMAGE="$(CODING_TEST_IMAGE)" pnpm exec vitest run tests/coding-worker.integration.test.ts tests/coding-runtime.integration.test.ts tests/coding-end-to-end.test.ts
+
+coding-live:
+	test -n "$(CONFIG)"
+	pnpm coding:live -- --config "$(CONFIG)"
