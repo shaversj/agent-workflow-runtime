@@ -653,11 +653,11 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
       expect(attachment(confirm.reply.mock.calls[1]![0])).toContain("Status: proposal-ready");
       expect(history(confirm.message.id)).toMatchObject({
         interaction: { status: "completed" },
-        deliveries: [{ status: "acknowledged" }, { status: "uncertain" }]
+        deliveries: [{ status: "acknowledged" }, { status: "failed" }, { status: "acknowledged" }]
       });
       await confirm.handle();
       await inbound(`code confirm ${id}`).handle();
-      expect(confirm.reply).toHaveBeenCalledTimes(2);
+      expect(confirm.reply).toHaveBeenCalledTimes(3);
       expect(editor).toHaveBeenCalledTimes(1);
       const show = inbound(`code show ${job.id}`);
       await show.handle();

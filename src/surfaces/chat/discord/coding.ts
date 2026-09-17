@@ -1,11 +1,15 @@
 import crypto from "node:crypto";
+import { types } from "node:util";
 
 import { AttachmentBuilder } from "discord.js";
 import type { Message } from "discord.js";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 
 import { beginInteraction } from "../../../harness/interaction.js";
+import type { InteractionRecorder } from "../../../harness/interaction.js";
 import { captureHistory } from "../../../harness/history-capture.js";
+import { logger } from "../../../logger.js";
 import { codingProfile, loadCodingPolicy } from "../../../plugins/coding/config.js";
 import { CodingGitHubSource } from "../../../plugins/coding/github-source.js";
 import { CodingTaskSchema, parseCoding } from "../../../plugins/coding/schemas.js";
@@ -174,23 +178,7 @@ export async function handleDiscordCoding(
     const id = recording.appendMessage({ role: "assistant", content });
     recording.finishRun({ status: "completed" });
     recording.finishInteraction({ status: "completed" });
-    const attempt = recording.deliveryStart({ messageId: id, part: 1, attempt: 1 });
-    try {
-      const sent = await message.reply({
-        content,
-        allowedMentions: { parse: [] },
-        files: display
-          ? [new AttachmentBuilder(Buffer.from(display), { name: "coding-proposal.md" })]
-          : []
-      });
-      recording.deliveryFinish({ id: attempt, status: "acknowledged", surfaceMessageId: sent.id });
-    } catch {
-      recording.deliveryFinish({
-        id: attempt,
-        status: "uncertain",
-        error: "coding_discord_delivery_failed"
-      });
-    }
+    await sendDiscordCodingReply(message, content, display, recording, id);
   } catch (error) {
     recording.assertHealthy();
     const content =
@@ -203,18 +191,105 @@ export async function handleDiscordCoding(
       : "failed";
     recording.finishRun({ status, error: content });
     recording.finishInteraction({ status, error: content });
-    const attempt = recording.deliveryStart({ messageId: id, part: 1, attempt: 1 });
-    try {
-      const sent = await message.reply({ content, allowedMentions: { parse: [] } });
-      recording.deliveryFinish({ id: attempt, status: "acknowledged", surfaceMessageId: sent.id });
-    } catch {
-      recording.deliveryFinish({
-        id: attempt,
-        status: "uncertain",
-        error: "coding_discord_delivery_failed"
-      });
-    }
+    await sendDiscordCodingReply(message, content, undefined, recording, id);
   } finally {
     recording.close();
+  }
+}
+
+const HttpStatusSchema = Type.Integer({ minimum: 400, maximum: 599 });
+const DiscordCodeSchema = Type.Integer({ minimum: 0, maximum: 999999 });
+const TransportCodeSchema = Type.Union([
+  Type.Literal("ECONNRESET"),
+  Type.Literal("ECONNREFUSED"),
+  Type.Literal("ETIMEDOUT"),
+  Type.Literal("ENOTFOUND"),
+  Type.Literal("UND_ERR_SOCKET"),
+  Type.Literal("UND_ERR_CONNECT_TIMEOUT")
+]);
+
+function errorData(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || types.isProxy(value)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+export async function sendDiscordCodingReply(
+  message: Pick<Message, "id" | "reply">,
+  content: string,
+  display: string | undefined,
+  recording: InteractionRecorder,
+  messageId: number
+): Promise<void> {
+  for (let number = 1; number <= 2; number++) {
+    const attempt = recording.deliveryStart({ messageId, part: 1, attempt: number });
+    let sent: Message;
+    try {
+      sent = await message.reply({
+        content:
+          number === 1
+            ? content
+            : `${content.slice(0, 1800)}\n\nAttachment could not be sent. The proposal remains saved; use code show with this job ID to retrieve it.`,
+        allowedMentions: { parse: [] },
+        ...(number === 1 && display
+          ? { files: [new AttachmentBuilder(Buffer.from(display), { name: "coding-proposal.md" })] }
+          : {})
+      });
+    } catch (error) {
+      // Allowlisted data fields only: Discord exceptions can retain credentials and entire uploads.
+      const status = errorData(error, "status"),
+        code = errorData(error, "code");
+      const httpStatus = Value.Check(HttpStatusSchema, status) ? status : undefined;
+      const discordCode = Value.Check(DiscordCodeSchema, code) ? code : undefined;
+      const transportCode = Value.Check(TransportCodeSchema, code) ? code : undefined;
+      const localFailure = code === "ChannelNotCached";
+      const rejected = httpStatus !== undefined && httpStatus < 500;
+      const attachmentErrors = errorData(errorData(error, "rawError"), "errors");
+      const fallback =
+        number === 1 &&
+        !!display &&
+        rejected &&
+        (httpStatus === 413 ||
+          discordCode === 40005 ||
+          (discordCode === 50035 &&
+            (errorData(attachmentErrors, "attachments") !== undefined ||
+              errorData(attachmentErrors, "files") !== undefined)));
+      const deliveryStatus = rejected || localFailure ? "failed" : "uncertain";
+      const category = fallback
+        ? "coding_discord_attachment_rejected:attachment_omitted"
+        : "coding_discord_delivery_failed";
+      const diagnostic = [
+        category,
+        ...(httpStatus === undefined ? [] : [`status=${httpStatus}`]),
+        ...(discordCode === undefined ? [] : [`code=${discordCode}`]),
+        ...(transportCode === undefined ? [] : [`transport=${transportCode}`]),
+        ...(localFailure ? ["code=ChannelNotCached"] : [])
+      ].join(":");
+      let errorType = "unknown";
+      if (httpStatus !== undefined) errorType = "discord_api";
+      else if (transportCode) errorType = "discord_transport";
+      else if (localFailure) errorType = "discord_local";
+      logger.warn(
+        {
+          interaction_id: recording.interactionId,
+          run_id: recording.runId,
+          message_id: message.id,
+          attempt: number,
+          error_type: errorType,
+          http_status: httpStatus,
+          discord_code: discordCode,
+          transport_code: transportCode,
+          delivery_status: deliveryStatus,
+          error: diagnostic,
+          err: new Error(category)
+        },
+        "discord_bot.coding_delivery_failed"
+      );
+      recording.deliveryFinish({ id: attempt, status: deliveryStatus, error: diagnostic });
+      if (fallback) continue;
+      return;
+    }
+    recording.deliveryFinish({ id: attempt, status: "acknowledged", surfaceMessageId: sent.id });
+    return;
   }
 }

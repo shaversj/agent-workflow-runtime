@@ -88,6 +88,12 @@ Then use `code show <job-id>`, `code approve <job-id> <digest>`, `code reject <j
 Only platform-authenticated allowlisted human messages authorize execution/publication; the
 LLM router cannot manufacture approval. Browser inspection remains read-only.
 
+Coding execution and Discord delivery are recorded separately. A definite attachment rejection
+returns a text-only result; uncertain network delivery is not automatically retried. Use
+`code show <job-id>` in the same channel to retrieve the saved proposal without rerunning coding.
+Delivery failures log and retain allowlisted HTTP/Discord/transport codes, never raw exceptions
+or uploaded source. Look for `discord_bot.coding_delivery_failed` when troubleshooting.
+
 Workers are removed after capture or failure. Restart never replays work. `code recover` marks
 an interrupted preparation only after its original run has stopped, then removes only containers
 labelled for that owned job. Cleanup of already failed/interrupted jobs can be retried without replay.
