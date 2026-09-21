@@ -12,7 +12,7 @@ boundaries and database-read projections.
 
 Schema changes should start in the Drizzle schema, then update the local bootstrap SQL in `src/db/index.ts` until the project adopts generated migrations.
 
-Review schema changes carefully before committing because sweep state is written into managed Agent Ops Kit state under `AGENT_OPS_HOME`.
+Review schema changes carefully before committing because sweep state is written into managed Agent Workflow Runtime state under `AGENT_OPS_HOME`.
 
 ## Local State
 

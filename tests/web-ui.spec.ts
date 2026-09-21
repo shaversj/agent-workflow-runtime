@@ -58,6 +58,8 @@ test.afterEach(async () => {
 });
 
 test("guards local history and recovers from unavailable storage", async ({ page, request }) => {
+  await expect(page).toHaveTitle("Agent Workflow Runtime | History");
+  await expect(page.getByText("Agent Workflow Runtime", { exact: true })).toBeVisible();
   const document = await request.get(origin);
   expect(document.headers()["content-security-policy"]).toContain("frame-ancestors 'none'");
   expect(document.headers()["cache-control"]).toBe("no-store");

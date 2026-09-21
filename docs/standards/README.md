@@ -1,6 +1,6 @@
 # Standards
 
-These standards are the durable working rules for Agent Ops Kit. Keep `AGENTS.md`
+These standards are the durable working rules for Agent Workflow Runtime. Keep `AGENTS.md`
 short and directive, then put detailed guidance here.
 
 Consult the relevant standard before changing the related surface:

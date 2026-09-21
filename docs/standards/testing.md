@@ -2,7 +2,7 @@
 
 ## Test Boundaries
 
-Tests should prove behavior at the boundaries Agent Ops Kit exposes:
+Tests should prove behavior at the boundaries Agent Workflow Runtime exposes:
 
 - CLI commands and output behavior
 - workflow behavior

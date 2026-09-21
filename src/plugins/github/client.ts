@@ -297,7 +297,7 @@ function requestTimeoutMs(options: GitHubEvidenceClientOptions): number {
 function requestHeaders(token: string | undefined): Record<string, string> {
   return {
     Accept: "application/vnd.github+json",
-    "User-Agent": "agent-ops-kit",
+    "User-Agent": "agent-workflow-runtime",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
 }

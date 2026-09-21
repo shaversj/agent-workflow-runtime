@@ -2,7 +2,7 @@
 
 ## Set Up
 
-Agent Ops Kit supports Node.js 24 and pnpm 10. Work from a source checkout:
+Agent Workflow Runtime supports Node.js 24 and pnpm 10. Work from a source checkout:
 
 ```bash
 make install

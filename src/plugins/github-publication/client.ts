@@ -214,8 +214,8 @@ export class GitHubPublicationClient {
       throw new Error("coding_github_tree_mismatch");
     const message = `Agent Ops job ${proposal.jobId}\n\nProposal: ${proposal.digest}\n`;
     const identity = {
-      name: "Agent Ops Kit",
-      email: "agent-ops-kit@users.noreply.github.com",
+      name: "Agent Workflow Runtime",
+      email: "agent-workflow-runtime@users.noreply.github.com",
       date: proposal.createdAt
     };
     const timestamp = Math.floor(Date.parse(proposal.createdAt) / 1000);

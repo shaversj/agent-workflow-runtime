@@ -10,7 +10,7 @@ integers, and misplaced separators consistently; usage errors must be side-effec
 
 CLI output should be concise and human-readable. Always show where artifacts were written.
 
-Run/report inspection commands should read Agent Ops Kit managed state only. They should not
+Run/report inspection commands should read Agent Workflow Runtime managed state only. They should not
 prepare workspaces, clone repositories, read target repository files, or call an LLM.
 
 Prefer these command shapes:
@@ -76,7 +76,7 @@ unavailable GitHub evidence instead of preventing the sweep report from being wr
   and tool summaries.
 - Use the manifest for plugin-level defaults. Use registered tools for TypeBox input/output
   schemas, execution, and only the metadata overrides that differ from the plugin default.
-- Model plugin authority separately for inspected target access, Agent Ops Kit managed-state
+- Model plugin authority separately for inspected target access, Agent Workflow Runtime managed-state
   access, and network access.
 - Keep deterministic evidence recipes with the plugin that uses them.
 - Follow [Runtime Contracts](runtime-contracts.md) for TypeBox boundary validation,

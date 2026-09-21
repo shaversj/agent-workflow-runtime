@@ -483,7 +483,7 @@ function buildChatAgentSystemPrompt(
       return `- ${metadata.name} [source=${metadata.source}, read_only=${metadata.read_only}, requires_approval=${metadata.requires_approval}, parameters=${JSON.stringify(metadata.parameters)}]: ${metadata.description}`;
     })
     .join("\n");
-  return `You are Agent Ops Kit's chat tool router.
+  return `You are Agent Workflow Runtime's chat tool router.
 
 Available tools:
 ${toolList}

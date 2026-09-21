@@ -35,7 +35,7 @@ import {
 } from "../workspaces/index.js";
 import type { TargetRef, WorkspaceLease } from "../workspaces/index.js";
 
-const DEFAULT_HARNESS_PROVIDER = "agent-ops-kit";
+const DEFAULT_HARNESS_PROVIDER = "agent-workflow-runtime";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
 const DEFAULT_SWEEP_TIMEOUT_MS = 120_000;
 const DEFAULT_GITHUB_EVIDENCE_TIMEOUT_MS = 10_000;

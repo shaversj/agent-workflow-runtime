@@ -105,7 +105,7 @@ const readinessPlugin = definePlugin({
       name: "list_runs",
       label: "List Readiness Runs",
       description:
-        "List recent readiness sweep runs from managed Agent Ops Kit state without reading repository files.",
+        "List recent readiness sweep runs from managed Agent Workflow Runtime state without reading repository files.",
       parameters: ListRunsParams,
       resultSchema: InspectionRunListResultSchema,
       execute(params: ListRunsParamsType, context: RegisteredToolContext) {
@@ -123,7 +123,7 @@ const readinessPlugin = definePlugin({
       name: "show_run",
       label: "Show Readiness Run",
       description:
-        "Show one readiness sweep run from managed Agent Ops Kit state without reading repository files.",
+        "Show one readiness sweep run from managed Agent Workflow Runtime state without reading repository files.",
       parameters: ShowRunParams,
       resultSchema: InspectionRunShowResultSchema,
       execute(params: ShowRunParamsType, context: RegisteredToolContext) {

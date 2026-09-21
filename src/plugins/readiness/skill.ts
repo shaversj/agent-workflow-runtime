@@ -1,4 +1,4 @@
-export const readinessSweepSkill = `You are running Agent Ops Kit's readiness interpretation workflow.
+export const readinessSweepSkill = `You are running Agent Workflow Runtime's readiness interpretation workflow.
 
 Your job is to interpret a deterministic repository evidence packet and write a concise readiness report.
 

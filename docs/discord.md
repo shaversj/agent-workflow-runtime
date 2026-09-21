@@ -1,6 +1,6 @@
 # Discord Bot
 
-Agent Ops Kit can run readiness and repository intelligence tools from authorized Discord
+Agent Workflow Runtime can run readiness and repository intelligence tools from authorized Discord
 mentions. Direct messages are intentionally unsupported.
 
 ## Environment
@@ -9,6 +9,7 @@ Put bot configuration in `$AGENT_OPS_HOME/.env` (default:
 `~/.agent-ops-kit/.env`), or set `AGENT_OPS_ENV_FILE` to an absolute operator-owned file before
 startup. The bot never loads `.env` from its process working directory or any Git checkout. The file
 and its parent directory must be owned by the current user and not writable by other users.
+The `AGENT_OPS_*` names and `~/.agent-ops-kit` path remain stable compatibility identifiers.
 
 ```bash
 DISCORD_BOT_TOKEN=
@@ -97,7 +98,7 @@ If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 ```
 
 Completed sweeps post a compact Markdown reply with the run ID, token count, report filename,
-first useful report summary, and full report path. Reports are stored in Agent Ops Kit managed
+first useful report summary, and full report path. Reports are stored in Agent Workflow Runtime managed
 state on the bot host. When the file is available, the Discord reply also attaches the generated
 `.md` report.
 
@@ -108,7 +109,7 @@ listing every managed target on the host.
 
 The Discord surface enables plugin sources for the chat-agent workflow. Pi sees a stable
 tool bridge (`searchTools` and `executeTool`) instead of every plugin function directly. The
-model searches enabled plugin tools, selects the exact tool name, and Agent Ops Kit executes
+model searches enabled plugin tools, selects the exact tool name, and Agent Workflow Runtime executes
 that selected tool locally. The readiness source can run a sweep, list runs, show a run, find
 the latest report, or read a report. The GitHub source can read repository metadata, recent
 Actions runs, open pull requests, open issues, and releases for GitHub-backed targets. GitHub tool

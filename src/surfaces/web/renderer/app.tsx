@@ -363,7 +363,7 @@ export default function App() {
       <header className="app-header">
         <div className="brand">
           <History size={22} />
-          <strong>Agent Ops Kit</strong>
+          <strong>Agent Workflow Runtime</strong>
           <span>History</span>
         </div>
         <div className="freshness">

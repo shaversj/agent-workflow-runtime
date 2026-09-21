@@ -1,6 +1,6 @@
-# Agent Ops Kit
+# Agent Workflow Runtime
 
-Agent Ops Kit is a tool-centered harness for making repositories easier and safer for AI agents to inspect.
+Agent Workflow Runtime is a tool-centered harness for making repositories easier and safer for AI agents to inspect.
 
 ## Purpose
 
@@ -39,7 +39,7 @@ hosting. Images must contain Node for the trusted file protocol and all required
 network access and implicit dependency downloads are disabled.
 
 Configure `$AGENT_OPS_HOME/.env` using the coding section of `.env.example`, or set
-`AGENT_OPS_ENV_FILE` to an absolute operator-owned file before startup. Agent Ops Kit never loads
+`AGENT_OPS_ENV_FILE` to an absolute operator-owned file before startup. Agent Workflow Runtime never loads
 runtime configuration from the process working directory or a Git checkout. The file and its parent
 directory must be owned by the current user and not writable by other users. Allow explicit principals
 (`cli:<uid>` or `discord:<user-id>`) and repository profiles with a digest-pinned image,
@@ -201,8 +201,11 @@ make discord
 
 See [docs/discord.md](docs/discord.md) for bot token, allowlist, intent, and command setup.
 
-Sweep output is written under Agent Ops Kit managed state. Override the default with
+Sweep output is written under Agent Workflow Runtime managed state. Override the default with
 `AGENT_OPS_HOME` when you want an isolated state directory:
+
+The `agent-ops` CLI, `AGENT_OPS_*` environment variables, and `~/.agent-ops-kit` state path are
+stable compatibility identifiers and intentionally retain the project's former name.
 
 ```text
 ~/.agent-ops-kit/
@@ -262,7 +265,7 @@ plugin sources to chat surfaces. Chat surfaces enable sources such as `readiness
 Pi sees stable bridge tools like `searchTools` and `executeTool`; workflows connect tool
 execution, model interpretation, persistence, and reporting.
 The CLI sweep remains a direct workflow path for predictable use. Run and report inspection
-read only Agent Ops Kit managed state; they do not prepare workspaces, clone repositories,
+read only Agent Workflow Runtime managed state; they do not prepare workspaces, clone repositories,
 read target files, or call MiniMax.
 
 ## Validation
@@ -284,7 +287,7 @@ longer required. Test screenshots remain under the ignored `test-results/` direc
 
 ## Community
 
-Agent Ops Kit is distributed as source under the [MIT License](LICENSE); npm publication and a
+Agent Workflow Runtime is distributed as source under the [MIT License](LICENSE); npm publication and a
 global CLI installation are not supported. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing
 changes and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation expectations. Report
 security vulnerabilities privately by following [SECURITY.md](SECURITY.md), not through a public

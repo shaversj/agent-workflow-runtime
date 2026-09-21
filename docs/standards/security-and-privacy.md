@@ -2,7 +2,7 @@
 
 ## Default Safety Boundary
 
-Agent Ops Kit inspects repositories and writes local readiness artifacts. It
+Agent Workflow Runtime inspects repositories and writes local readiness artifacts. It
 should not mutate inspected source repositories unless a user explicitly asks for
 that behavior.
 
