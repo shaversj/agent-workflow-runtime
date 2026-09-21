@@ -14,11 +14,11 @@ import {
 } from "../harness/usage.js";
 import { combineAbortSignals, withWorkflowTimeout } from "../harness/timeout.js";
 import { logger } from "../logger.js";
-import type { GitHubEvidenceClientOptions } from "../plugins/github/client.js";
 import {
-  gatherGitHubEvidenceForWorkspace,
-  resolveGitHubIdentity
-} from "../plugins/github/evidence.js";
+  collectGitHubEvidence,
+  type GitHubEvidenceClientOptions
+} from "../plugins/github/client.js";
+import { resolveGitHubIdentityForTarget } from "../plugins/github/evidence.js";
 import { renderGitHubContext } from "../plugins/github/report.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
@@ -109,7 +109,7 @@ export async function runSweepWorkflow(
         "readiness_sweep.started"
       );
       assertActive();
-      lease = prepareWorkspace(target, options.ref);
+      lease = await prepareWorkspace(target, options.ref, { signal });
       assertActive();
       const workspace = workspaceSummary(lease);
       result.workspace = workspace;
@@ -161,7 +161,9 @@ export async function runSweepWorkflow(
       });
       assertActive();
       // Avoid counting a non-GitHub target as a second evidence collection.
-      const githubIdentity = resolveGitHubIdentity(workspace.origin);
+      const githubIdentity = await resolveGitHubIdentityForTarget(workspace.origin, {
+        signal
+      });
       const githubInput = { target: githubIdentity?.full_name };
       const github = githubIdentity
         ? await recording.recordTool(
@@ -172,7 +174,7 @@ export async function runSweepWorkflow(
               input: githubInput
             },
             (_recording, evidenceSignal) =>
-              gatherGitHubEvidenceForWorkspace(workspace, {
+              collectGitHubEvidence(githubIdentity, {
                 ...options.github,
                 useAmbientToken:
                   options.github?.useAmbientToken ??

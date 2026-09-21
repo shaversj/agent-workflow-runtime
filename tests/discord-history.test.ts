@@ -178,10 +178,9 @@ describe("Discord durable delivery", () => {
     const reader = openHistoryReader()!;
     try {
       const row = reader.listInteractions()[0]!;
-      expect(row).toMatchObject({
-        status: "skipped",
-        error: { text: "initial_acknowledgment_failed" }
-      });
+      expect(row.status).toBe("skipped");
+      expect(row.error?.text).toContain('"error_category":"discord_reply_failed"');
+      expect(row.error?.text).toContain('"status_code":403');
       expect(reader.listRuns(row.id)[0]?.status).toBe("skipped");
       const messages = reader.listMessages(row.id);
       expect(messages).toHaveLength(1);
@@ -313,7 +312,8 @@ describe("Discord durable delivery", () => {
           const attempts = reader.listDeliveryAttempts(id);
           expect(attempts[0]?.status).toBe(failure === "ambiguous" ? "uncertain" : "failed");
           if (failure === "rejected") {
-            expect(attempts[0]?.error?.text).toContain("attachment_omitted");
+            expect(attempts[0]?.error?.text).toContain('"error_category":"discord_reply_failed"');
+            expect(attempts[0]?.error?.text).toContain('"status_code":413');
             expect(attempts[1]).toMatchObject({
               attempt: 2,
               status: "acknowledged",

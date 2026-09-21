@@ -3,7 +3,6 @@ import path from "node:path";
 
 import { Value } from "typebox/value";
 
-import { resolveGitRoot } from "./git.js";
 import { TargetProvenanceSchema, TargetRefSchema } from "./types.js";
 import type { TargetProvenance, TargetRef, TargetTransportPolicy } from "./types.js";
 
@@ -59,8 +58,9 @@ export function parseTargetRef(
 
 export function normalizedTargetRef(target: TargetRef): TargetRef {
   const validated = validateTargetRef(target);
-  if (validated.kind === "git-url") return validated;
-  return validateTargetRef({ ...validated, path: resolveGitRoot(validated.path) });
+  return validated.kind === "git-url"
+    ? validated
+    : validateTargetRef({ ...validated, path: path.resolve(validated.path) });
 }
 
 export function resolveTargetPolicy(

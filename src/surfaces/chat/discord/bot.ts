@@ -136,16 +136,18 @@ export async function handleDiscordMessage(
         status: "acknowledged",
         surfaceMessageId: statusMessage.id
       });
-    } catch {
+    } catch (error) {
+      const disposition = discordDeliveryFailure(error);
       const failure = projectExternalError("discord_reply_failed", {
         interactionId: recording.interactionId,
         runId: recording.runId,
+        statusCode: disposition.statusCode,
         attempt: 1,
         part: 1
       });
       recording.deliveryFinish({
         id: acknowledgment,
-        status: "uncertain",
+        status: disposition.status,
         error: failure
       });
       recording.finishRun({ status: "skipped", error: failure });
@@ -215,20 +217,55 @@ export async function sendDiscordReply(
   let sent: Message;
   try {
     sent = await message.reply({ content: reply.content, files });
-  } catch {
+  } catch (error) {
+    const disposition = discordDeliveryFailure(error);
     const failure = projectExternalError("discord_reply_failed", {
       interactionId: delivery?.recording.interactionId,
       runId: delivery?.recording.runId,
+      statusCode: disposition.statusCode,
       attempt: 1,
       part: delivery?.part
     });
     if (delivery && attempt !== undefined)
       delivery.recording.deliveryFinish({
         id: attempt,
-        status: "uncertain",
+        status: disposition.status,
         error: failure
       });
-    throw externalErrorAsError(failure);
+    if (!files?.length || !definiteAttachmentRejection(disposition)) {
+      throw externalErrorAsError(failure);
+    }
+    const retry = delivery?.recording.deliveryStart({
+      messageId: delivery.messageId,
+      part: delivery.part,
+      attempt: 2
+    });
+    try {
+      sent = await message.reply({ content: reply.content });
+    } catch (retryError) {
+      const retryDisposition = discordDeliveryFailure(retryError);
+      const retryFailure = projectExternalError("discord_reply_failed", {
+        interactionId: delivery?.recording.interactionId,
+        runId: delivery?.recording.runId,
+        statusCode: retryDisposition.statusCode,
+        attempt: 2,
+        part: delivery?.part
+      });
+      if (delivery && retry !== undefined)
+        delivery.recording.deliveryFinish({
+          id: retry,
+          status: retryDisposition.status,
+          error: retryFailure
+        });
+      throw externalErrorAsError(retryFailure);
+    }
+    if (delivery && retry !== undefined)
+      delivery.recording.deliveryFinish({
+        id: retry,
+        status: "acknowledged",
+        surfaceMessageId: sent.id
+      });
+    return sent;
   }
   if (delivery && attempt !== undefined)
     delivery.recording.deliveryFinish({
@@ -237,6 +274,37 @@ export async function sendDiscordReply(
       surfaceMessageId: sent.id
     });
   return sent;
+}
+
+interface DiscordDeliveryFailure {
+  status: "failed" | "uncertain";
+  statusCode?: number;
+  code?: number;
+}
+
+function discordDeliveryFailure(error: unknown): DiscordDeliveryFailure {
+  const statusCode = safeExternalNumber(error, "status");
+  const code = safeExternalNumber(error, "code");
+  return {
+    status:
+      statusCode !== undefined && statusCode >= 400 && statusCode < 500 ? "failed" : "uncertain",
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(code !== undefined ? { code } : {})
+  };
+}
+
+function definiteAttachmentRejection(failure: DiscordDeliveryFailure): boolean {
+  return failure.status === "failed" && (failure.statusCode === 413 || failure.code === 40005);
+}
+
+function safeExternalNumber(value: unknown, key: string): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    const candidate = Reflect.get(value, key) as unknown;
+    return typeof candidate === "number" && Number.isSafeInteger(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function shouldAcceptDiscordMessage(

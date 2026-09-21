@@ -137,7 +137,7 @@ describe("sweep workflow", () => {
     }
   });
 
-  it("can sweep a Git URL through a managed checkout", async () => {
+  it("rejects non-HTTPS Git URLs before creating a managed checkout", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     const originalHome = process.env.AGENT_OPS_HOME;
     delete process.env.MINIMAX_API_KEY;
@@ -148,14 +148,12 @@ describe("sweep workflow", () => {
     try {
       const result = await runSweepWorkflow(`file://${repoPath}`);
 
-      expect(result.status).toBe("skipped");
+      expect(result.status).toBe("failed");
       expect(result.target.origin).toBe(`file://${repoPath}`);
       expect(result.target.source).toBe("git-url");
-      expect(result.workspace?.source).toBe("git-url");
-      expect(result.workspace?.origin).toBe(`file://${repoPath}`);
-      expect(result.workspace?.path && fs.existsSync(result.workspace.path)).toBe(false);
-      expect(result.reportPath!.startsWith(fs.realpathSync(historyArtifactsPath()))).toBe(true);
-      expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("Commit:");
+      expect(result.workspace).toBeUndefined();
+      expect(result.reportPath).toBeUndefined();
+      expect(fs.existsSync(path.join(agentOpsHome, "cache", "git"))).toBe(false);
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
@@ -415,8 +413,8 @@ describe("sweep failure and ownership boundaries", () => {
 
   it.each([false, true])("keeps cleanup failure separate, earlier failure=%s", async (primary) => {
     const prepare = workspaceTools.prepareWorkspace;
-    vi.spyOn(workspaceTools, "prepareWorkspace").mockImplementation((...args) => {
-      const lease = prepare(...args);
+    vi.spyOn(workspaceTools, "prepareWorkspace").mockImplementation(async (...args) => {
+      const lease = await prepare(...args);
       return {
         ...lease,
         cleanup: async () => {

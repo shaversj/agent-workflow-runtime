@@ -9,7 +9,7 @@ import {
   projectExternalError,
   type ExternalErrorProjection
 } from "../harness/external-error.js";
-import { beginInteraction } from "../harness/interaction.js";
+import { beginInteraction, RecordingFailure } from "../harness/interaction.js";
 import type { InteractionRecorder } from "../harness/interaction.js";
 import { toPiAgentTools } from "../harness/pi-tools.js";
 import { WorkflowResultSchema } from "../harness/schemas.js";
@@ -71,17 +71,24 @@ export async function runChatAgentWorkflow(
     recording.assertHealthy();
     options.onResponseRecorded?.(messageId);
     return response;
-  } catch {
+  } catch (error) {
     const failure = projectExternalError("chat_workflow_failed", {
       interactionId: recording?.interactionId,
       runId: recording?.runId
     });
     const status =
-      !executionFinished && recording !== undefined && recording.signal.aborted
+      !(error instanceof RecordingFailure) &&
+      !executionFinished &&
+      recording !== undefined &&
+      recording.signal.aborted
         ? "cancelled"
         : "failed";
     const text =
-      status === "cancelled" ? "The request was cancelled." : externalErrorMessage(failure);
+      error instanceof RecordingFailure
+        ? error.message
+        : status === "cancelled"
+          ? "The request was cancelled."
+          : externalErrorMessage(failure);
     if (recording?.claimed && !executionFinished) {
       try {
         recording.assertHealthy();

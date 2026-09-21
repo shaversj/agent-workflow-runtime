@@ -72,14 +72,17 @@ it("inspects CLI and nested chat sweeps through the real CLI without provider ca
     execFileSync("git", ["add", "README.md"], { cwd: repo });
     execFileSync("git", ["commit", "-m", "fixture"], { cwd: repo, stdio: "ignore" });
     expect(cli("sweep", repo)).toContain("Status: skipped");
-    const response = await handleChatMessage({
-      platform: "discord",
-      applicationId: "test-bot",
-      channelId: "test-channel",
-      messageId: "test-message",
-      userId: "test-user",
-      text: `sweep repo=${repo}`
-    });
+    const response = await handleChatMessage(
+      {
+        platform: "discord",
+        applicationId: "test-bot",
+        channelId: "test-channel",
+        messageId: "test-message",
+        userId: "test-user",
+        text: "sweep this repository"
+      },
+      { defaultRepoPath: repo }
+    );
     expect(response).toMatchObject({ kind: "message", status: "skipped" });
     const list = parseHistory(
       HistoryListResultSchema,

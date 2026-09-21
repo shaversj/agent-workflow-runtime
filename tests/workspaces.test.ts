@@ -23,6 +23,12 @@ import {
   workspaceSummary
 } from "../src/workspaces/index.js";
 import type { WorkspaceLease } from "../src/workspaces/index.js";
+import {
+  GitOperationError,
+  inspectRepository,
+  resolveCommit,
+  resolveGitRoot
+} from "../src/workspaces/git.js";
 
 describe("workspace leases", () => {
   it("prepares a disposable checkout for a local git target", async () => {
@@ -32,7 +38,7 @@ describe("workspace leases", () => {
     const repoPath = gitRepo();
 
     try {
-      const lease = prepareWorkspace(repoPath);
+      const lease = await prepareWorkspace(repoPath);
 
       expect(lease.source).toBe("local-git");
       expect(lease.origin).toBe(fs.realpathSync(repoPath));
@@ -57,7 +63,7 @@ describe("workspace leases", () => {
     fs.writeFileSync(path.join(repoPath, "UNCOMMITTED.md"), "# Draft\n");
 
     try {
-      const lease = prepareWorkspace(repoPath);
+      const lease = await prepareWorkspace(repoPath);
 
       expect(fs.existsSync(path.join(lease.path, "README.md"))).toBe(true);
       expect(fs.existsSync(path.join(lease.path, "UNCOMMITTED.md"))).toBe(false);
@@ -235,6 +241,98 @@ describe("workspace target policy", () => {
   });
 });
 
+describe("hardened Git runner", () => {
+  it.each(["flood-stdout", "flood-stderr"])(
+    "terminates a %s process at the output bound",
+    async (mode) => {
+      const fixture = fakeGitFixture(mode);
+      try {
+        await expect(
+          resolveGitRoot(fixture.cwd, { timeoutMs: 2_000, maxOutputBytes: 1_024 })
+        ).rejects.toMatchObject({ category: "git_output_limit" });
+      } finally {
+        fixture.restore();
+      }
+    }
+  );
+
+  it("terminates a stalled process and escalates across its process group", async () => {
+    const fixture = fakeGitFixture("ignore-term");
+    const started = Date.now();
+    try {
+      await expect(resolveGitRoot(fixture.cwd, { timeoutMs: 200 })).rejects.toMatchObject({
+        category: "git_timeout"
+      });
+      expect(Date.now() - started).toBeLessThan(2_000);
+      const childPid = Number(fs.readFileSync(path.join(fixture.cwd, ".fake-git-child"), "utf8"));
+      await expectProcessToExit(childPid);
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  it("composes caller cancellation with process cleanup", async () => {
+    const fixture = fakeGitFixture("stall");
+    const controller = new AbortController();
+    try {
+      const operation = resolveGitRoot(fixture.cwd, {
+        signal: controller.signal,
+        timeoutMs: 2_000
+      });
+      controller.abort();
+      await expect(operation).rejects.toMatchObject({ category: "git_aborted" });
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  it("uses an allowlisted environment and ignores hostile inherited Git variables", async () => {
+    const original = process.env.HOSTILE_GIT_VALUE;
+    process.env.HOSTILE_GIT_VALUE = "must-not-cross";
+    const fixture = fakeGitFixture("capture-env");
+    try {
+      await resolveGitRoot(fixture.cwd);
+      const captured = JSON.parse(
+        fs.readFileSync(path.join(fixture.cwd, ".fake-git-env"), "utf8")
+      ) as Record<string, unknown>;
+      expect(captured).toMatchObject({
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_ASKPASS: "/bin/false"
+      });
+      expect(captured.hostile).toBeUndefined();
+      expect(String(captured.HOME)).toContain("agent-ops-kit-home-");
+    } finally {
+      restoreEnv("HOSTILE_GIT_VALUE", original);
+      fixture.restore();
+    }
+  });
+
+  it("rejects option-shaped refs before starting Git", async () => {
+    const repoPath = gitRepo();
+    await expect(resolveCommit(repoPath, "--upload-pack=bad")).rejects.toMatchObject({
+      category: "git_ref_invalid"
+    });
+  });
+
+  it("rejects checkout expansion and unsupported repository features", async () => {
+    const repoPath = gitRepo();
+    const commit = git(["rev-parse", "HEAD"], repoPath);
+    await expect(
+      inspectRepository(repoPath, commit, { limits: { checkoutBytes: 1 } })
+    ).rejects.toMatchObject({ category: "git_checkout_too_large" });
+
+    fs.writeFileSync(path.join(repoPath, ".gitmodules"), '[submodule "x"]\n\tpath = x\n');
+    git(["add", ".gitmodules"], repoPath);
+    git(["commit", "-m", "Add unsupported submodule metadata"], repoPath);
+    const submoduleCommit = git(["rev-parse", "HEAD"], repoPath);
+    await expect(inspectRepository(repoPath, submoduleCommit)).rejects.toMatchObject({
+      category: "git_submodules_unsupported"
+    });
+  });
+});
+
 function gitRepo() {
   const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
   git(["init"], repoPath);
@@ -256,4 +354,37 @@ function restoreEnv(name: string, value: string | undefined) {
   } else {
     process.env[name] = value;
   }
+}
+
+function fakeGitFixture(mode: string): { cwd: string; restore: () => void } {
+  const originalPath = process.env.PATH;
+  const originalHome = process.env.AGENT_OPS_HOME;
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-fake-git-"));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-fake-bin-"));
+  const fixture = path.join(import.meta.dirname, "fixtures", "git", "git");
+  const executable = path.join(bin, "git");
+  fs.copyFileSync(fixture, executable);
+  fs.chmodSync(executable, 0o700);
+  fs.writeFileSync(path.join(cwd, ".fake-git-mode"), mode);
+  process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ""}`;
+  process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
+  return {
+    cwd,
+    restore: () => {
+      restoreEnv("PATH", originalPath);
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  };
+}
+
+async function expectProcessToExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } catch {
+      return;
+    }
+  }
+  throw new GitOperationError("fake_git_descendant_survived");
 }

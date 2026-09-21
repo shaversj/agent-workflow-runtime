@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { git, resolveCommit, resolveGitRoot } from "./git.js";
+import {
+  checkoutDetached,
+  cloneMirror,
+  cloneWithoutCheckout,
+  fetchMirror,
+  resolveCommit,
+  resolveGitRoot,
+  type GitRunnerOptions
+} from "./git.js";
 import { parseTargetRef, normalizedTargetRef } from "./target.js";
 import {
   targetStorageKey,
@@ -11,12 +19,16 @@ import {
 } from "./storage.js";
 import type { TargetRef, WorkspaceLease, WorkspaceSummary } from "./types.js";
 
-export function prepareWorkspace(input: string | TargetRef, ref?: string): WorkspaceLease {
+export async function prepareWorkspace(
+  input: string | TargetRef,
+  ref?: string,
+  options: GitRunnerOptions = {}
+): Promise<WorkspaceLease> {
   const target = typeof input === "string" ? parseTargetRef(input, ref) : input;
   const normalized = normalizedTargetRef(target);
   return normalized.kind === "git-url"
-    ? prepareGitUrlWorkspace(normalized)
-    : prepareLocalGitWorkspace(normalized);
+    ? prepareGitUrlWorkspace(normalized, options)
+    : prepareLocalGitWorkspace(normalized, options);
 }
 
 export function workspaceSummary(lease: WorkspaceLease): WorkspaceSummary {
@@ -32,10 +44,13 @@ export function workspaceSummary(lease: WorkspaceLease): WorkspaceSummary {
   };
 }
 
-function prepareLocalGitWorkspace(target: Extract<TargetRef, { kind: "local-git" }>) {
-  const root = resolveGitRoot(path.resolve(target.path));
+async function prepareLocalGitWorkspace(
+  target: Extract<TargetRef, { kind: "local-git" }>,
+  options: GitRunnerOptions
+) {
+  const root = await resolveGitRoot(path.resolve(target.path), options);
   const ref = target.ref ?? "HEAD";
-  const commitSha = resolveCommit(root, ref);
+  const commitSha = await resolveCommit(root, ref, options);
   return checkoutWorkspace({
     target: { ...target, path: root },
     source: "local-git",
@@ -43,33 +58,31 @@ function prepareLocalGitWorkspace(target: Extract<TargetRef, { kind: "local-git"
     displayOrigin: root,
     ref,
     commitSha,
-    remote: root
+    remote: root,
+    options
   });
 }
 
-function prepareGitUrlWorkspace(target: Extract<TargetRef, { kind: "git-url" }>) {
+async function prepareGitUrlWorkspace(
+  target: Extract<TargetRef, { kind: "git-url" }>,
+  options: GitRunnerOptions
+) {
   const ref = target.ref ?? "HEAD";
   const cachePath = path.join(workspaceCachePath(), `${targetStorageKey(target)}.git`);
   const displayOrigin = safeGitUrlForDisplay(target.url);
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   if (fs.existsSync(cachePath)) {
-    git(["remote", "set-url", "origin", target.url], cachePath);
-    try {
-      git(["fetch", "--prune", "origin"], cachePath);
-    } finally {
-      git(["remote", "set-url", "origin", displayOrigin], cachePath);
-    }
+    await fetchMirror(target.url, cachePath, target.policy, options);
   } else {
     try {
-      git(["clone", "--mirror", target.url, cachePath]);
-      git(["remote", "set-url", "origin", displayOrigin], cachePath);
+      await cloneMirror(target.url, cachePath, target.policy, options);
     } catch (error) {
       fs.rmSync(cachePath, { recursive: true, force: true });
       throw error;
     }
   }
 
-  const commitSha = resolveCommit(cachePath, ref);
+  const commitSha = await resolveCommit(cachePath, ref, options);
   return checkoutWorkspace({
     target,
     source: "git-url",
@@ -77,11 +90,12 @@ function prepareGitUrlWorkspace(target: Extract<TargetRef, { kind: "git-url" }>)
     displayOrigin,
     ref,
     commitSha,
-    remote: cachePath
+    remote: cachePath,
+    options
   });
 }
 
-function checkoutWorkspace(input: {
+async function checkoutWorkspace(input: {
   target: TargetRef;
   source: WorkspaceLease["source"];
   origin: string;
@@ -89,14 +103,15 @@ function checkoutWorkspace(input: {
   ref: string;
   commitSha: string;
   remote: string;
-}): WorkspaceLease {
+  options: GitRunnerOptions;
+}): Promise<WorkspaceLease> {
   const id = workspaceLeaseId();
   const scratchRoot = workspaceScratchPath();
   fs.mkdirSync(scratchRoot, { recursive: true });
   const workspacePath = path.join(scratchRoot, id);
   try {
-    git(["clone", "--no-checkout", input.remote, workspacePath]);
-    git(["checkout", "--detach", input.commitSha], workspacePath);
+    await cloneWithoutCheckout(input.remote, workspacePath, input.options);
+    await checkoutDetached(workspacePath, input.commitSha, input.options);
   } catch (error) {
     fs.rmSync(workspacePath, { recursive: true, force: true });
     throw error;

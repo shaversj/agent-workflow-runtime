@@ -31,7 +31,7 @@ export async function gatherGitHubEvidenceForWorkspace(
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubEvidence | undefined> {
   const origin = "displayOrigin" in workspace ? workspace.displayOrigin : workspace.origin;
-  const identity = resolveGitHubIdentity(origin);
+  const identity = await resolveGitHubIdentityForTarget(origin, options);
   if (!identity) return undefined;
   return collectGitHubEvidence(identity, options);
 }
@@ -40,7 +40,7 @@ export async function gatherGitHubRepositoryContextForTarget(
   repoTarget: string,
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubRepositoryContextResult> {
-  const identity = resolveGitHubIdentity(repoTarget);
+  const identity = await resolveGitHubIdentityForTarget(repoTarget, options);
   if (!identity) return notGitHubResult(options);
   return collectGitHubRepositoryContext(identity, options);
 }
@@ -49,7 +49,7 @@ export async function gatherGitHubWorkflowRunsForTarget(
   repoTarget: string,
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubWorkflowRunsResult> {
-  const identity = resolveGitHubIdentity(repoTarget);
+  const identity = await resolveGitHubIdentityForTarget(repoTarget, options);
   if (!identity) return notGitHubResult(options);
   return collectGitHubWorkflowRuns(identity, options);
 }
@@ -58,7 +58,7 @@ export async function gatherGitHubPullRequestsForTarget(
   repoTarget: string,
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubPullRequestsResult> {
-  const identity = resolveGitHubIdentity(repoTarget);
+  const identity = await resolveGitHubIdentityForTarget(repoTarget, options);
   if (!identity) return notGitHubResult(options);
   return collectGitHubPullRequests(identity, options);
 }
@@ -67,7 +67,7 @@ export async function gatherGitHubIssuesForTarget(
   repoTarget: string,
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubIssuesResult> {
-  const identity = resolveGitHubIdentity(repoTarget);
+  const identity = await resolveGitHubIdentityForTarget(repoTarget, options);
   if (!identity) return notGitHubResult(options);
   return collectGitHubIssues(identity, options);
 }
@@ -76,16 +76,13 @@ export async function gatherGitHubReleasesForTarget(
   repoTarget: string,
   options: GitHubEvidenceClientOptions = {}
 ): Promise<GitHubReleasesResult> {
-  const identity = resolveGitHubIdentity(repoTarget);
+  const identity = await resolveGitHubIdentityForTarget(repoTarget, options);
   if (!identity) return notGitHubResult(options);
   return collectGitHubReleases(identity, options);
 }
 
 export function resolveGitHubIdentity(target: string | OriginLike): GitHubIdentity | undefined {
-  const candidates =
-    typeof target === "string"
-      ? [target, localRemoteUrl(target)]
-      : [target.displayOrigin, target.origin];
+  const candidates = typeof target === "string" ? [target] : [target.displayOrigin, target.origin];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
@@ -93,6 +90,16 @@ export function resolveGitHubIdentity(target: string | OriginLike): GitHubIdenti
     if (identity) return identity;
   }
   return undefined;
+}
+
+export async function resolveGitHubIdentityForTarget(
+  target: string | OriginLike,
+  options: Pick<GitHubEvidenceClientOptions, "signal"> = {}
+): Promise<GitHubIdentity | undefined> {
+  const direct = resolveGitHubIdentity(target);
+  if (direct || typeof target !== "string") return direct;
+  const remote = await localRemoteUrl(target, options);
+  return remote ? resolveGitHubIdentity(remote) : undefined;
 }
 
 function identityFromGitHubRemote(remote: string): GitHubIdentity | undefined {
@@ -132,9 +139,12 @@ function githubIdentity(owner: string, repo: string): GitHubIdentity {
   };
 }
 
-function localRemoteUrl(target: string): string | undefined {
+async function localRemoteUrl(
+  target: string,
+  options: Pick<GitHubEvidenceClientOptions, "signal">
+): Promise<string | undefined> {
   try {
-    return remoteUrl(path.resolve(target));
+    return await remoteUrl(path.resolve(target), options);
   } catch {
     return undefined;
   }
