@@ -4,6 +4,10 @@
 
 Keep command parsing small and delegate behavior to workflow code under `src/workflows/`.
 
+Parse the complete command grammar before opening databases, preparing workspaces, or starting
+network/model work. Reject unknown or repeated flags, missing values, extra positionals, malformed
+integers, and misplaced separators consistently; usage errors must be side-effect free.
+
 CLI output should be concise and human-readable. Always show where artifacts were written.
 
 Run/report inspection commands should read Agent Ops Kit managed state only. They should not

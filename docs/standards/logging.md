@@ -140,3 +140,5 @@ Tests should cover:
 - failure logs include `error_type`
 - normal workflow lifecycle logs include `run_id`, `workflow_name`, `model`, and `status` when available
 - recording failures and delivery uncertainty are distinguishable without logging payloads
+- external Git, GitHub, Discord, model, and database failures expose stable projected categories,
+  never raw response bodies, command output, credentialed URLs, or provider exception objects

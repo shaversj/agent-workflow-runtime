@@ -63,3 +63,10 @@ Live testing is not blanket permission to approve publication, push code, open
 PRs, or perform destructive external actions. Obtain explicit authorization for
 those actions and preserve the application's human approval boundaries. Do not
 broaden allowlists or enable publication merely to make a test pass.
+
+## Public Release Gate
+
+Before a public source release, run `make check`, `pnpm test:web`, the pinned-image
+`make test-coding-worker` suite, and the production dependency audit. Record live
+Discord evidence separately from deterministic coverage. Never treat skipped live
+or container tests as a passing release gate.

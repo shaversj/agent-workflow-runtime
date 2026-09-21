@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Tool-centered harness for agent-friendly software repositories.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm build:web",
@@ -67,5 +68,10 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@10.32.1"
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "js-yaml": "4.3.2"
+    }
+  }
 }

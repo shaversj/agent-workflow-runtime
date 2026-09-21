@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a bounded capability or workflow improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator problem should Agent Ops Kit solve?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior, not only an implementation choice.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Trust boundaries
+      description: Note repository writes, credentials, external calls, approvals, or new surfaces involved.
+    validations:
+      required: true

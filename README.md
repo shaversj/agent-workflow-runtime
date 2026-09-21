@@ -91,7 +91,8 @@ Mention the Discord bot with `code prepare owner/repo main <task>` (task up to 1
 It returns a pinned target/task confirmation. Reply with `code confirm <confirmation-id>` within
 five minutes; confirmation is user/channel bound, single-use and discarded on restart.
 Then use `code show <job-id>`, `code approve <job-id> <digest>`, `code reject <job-id>`,
-`code cancel <job-id>`, `code expire <job-id>` or `code reconcile <job-id> <digest>`.
+`code cancel <job-id>`, `code expire <job-id>`, `code recover <job-id>` or
+`code reconcile <job-id> <digest>`.
 Only platform-authenticated allowlisted human messages authorize execution/publication; the
 LLM router cannot manufacture approval. Browser inspection remains read-only.
 
@@ -279,3 +280,11 @@ pnpm test:web
 The browser suite starts the production server against temporary local history and drives Chromium.
 CI installs Chromium and its system dependencies; Electron, Xvfb, and sandbox-helper setup are no
 longer required. Test screenshots remain under the ignored `test-results/` directory.
+
+## Community
+
+Agent Ops Kit is distributed as source under the [MIT License](LICENSE); npm publication and a
+global CLI installation are not supported. See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing
+changes and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation expectations. Report
+security vulnerabilities privately by following [SECURITY.md](SECURITY.md), not through a public
+issue.

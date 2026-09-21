@@ -34,6 +34,8 @@ Do not reintroduce a deterministic readiness checker as the main sweep path. Evi
 - Use `discord.js` for the Discord bot surface.
 - Use TanStack Start, React, and Tailwind for local browser inspection; keep SQLite access server-only.
 - Use ESLint, Prettier, Vitest, and `tsc` for validation.
+- Distribute the project from a source checkout under MIT. Keep `private: true`; npm publication and
+  global CLI installation are unsupported unless a later design explicitly changes that contract.
 
 ## Environment Setup
 
@@ -55,6 +57,7 @@ make sweep REPO=https://github.com/org/repo REF=main
 make discord
 make web
 pnpm test:web
+make test-coding-worker CODING_TEST_IMAGE=<pinned-image-digest>
 ```
 
 Set `GITHUB_TOKEN` or `GH_TOKEN` only when private repository context or higher GitHub API limits are needed.

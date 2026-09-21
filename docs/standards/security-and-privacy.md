@@ -111,3 +111,11 @@ Apply the same response policy in development and production, including TanStack
 Read only registered artifacts owned by the selected interaction; reject symlinks and paths outside
 the artifact directory. Bound file reads through the verified descriptor. Render raw HTML, links,
 and images inertly; do not fetch external resources while displaying captured content.
+
+## Public Source Releases
+
+Keep package publication disabled and treat repository visibility as a separate human-controlled
+operation. Before making the source public, scan the current tree and every advertised remote ref,
+review all GitHub surfaces that inherit visibility, and route vulnerability reports through GitHub's
+private vulnerability reporting. Never place credentials, raw scanner matches, or private source in
+issues, pull requests, Actions logs, release artifacts, or public reproductions.
