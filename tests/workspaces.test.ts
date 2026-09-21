@@ -3,11 +3,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
+  createChatRequestContext,
+  resolveAuthenticatedRequestTarget
+} from "../src/surfaces/chat/request-context.js";
+import {
+  CLI_TARGET_PROVENANCE,
+  discordExplicitTargetProvenance,
+  normalizedTargetRef,
+  OPERATOR_DEFAULT_TARGET_PROVENANCE,
+  parseTargetRef,
   prepareWorkspace,
   safeGitUrlForDisplay,
+  TargetRefSchema,
+  validateTargetRef,
   workspaceSummary
 } from "../src/workspaces/index.js";
 import type { WorkspaceLease } from "../src/workspaces/index.js";
@@ -88,6 +100,138 @@ describe("workspace leases", () => {
     expect(summary.origin).toBe(displayOrigin);
     expect(JSON.stringify(summary)).not.toContain("token");
     expect(JSON.stringify(summary)).not.toContain("secret");
+  });
+});
+
+describe("workspace target policy", () => {
+  it("preserves distinct target provenance through normalization and persistence", () => {
+    const repoPath = gitRepo();
+    const targets = [
+      normalizedTargetRef(parseTargetRef(repoPath)),
+      normalizedTargetRef(parseTargetRef("https://example.com/acme/demo.git")),
+      normalizedTargetRef(
+        parseTargetRef(
+          "https://github.com/acme/demo.git",
+          undefined,
+          discordExplicitTargetProvenance()
+        )
+      ),
+      normalizedTargetRef(parseTargetRef(repoPath, undefined, OPERATOR_DEFAULT_TARGET_PROVENANCE))
+    ];
+
+    expect(targets.map((target) => target.provenance.source)).toEqual([
+      "cli",
+      "cli",
+      "discord-explicit",
+      "operator-default"
+    ]);
+    expect(targets.map((target) => target.policy.protocol)).toEqual([
+      "local",
+      "https",
+      "https",
+      "local"
+    ]);
+    expect(targets.map((target) => target.policy.localPathCapability)).toEqual([
+      "direct-cli",
+      "direct-cli",
+      "none",
+      "operator-default"
+    ]);
+
+    for (const target of targets) {
+      expect(Value.Check(TargetRefSchema, target)).toBe(true);
+      expect(validateTargetRef(JSON.parse(JSON.stringify(target)))).toEqual(target);
+    }
+  });
+
+  it("defaults Discord targets to credential-free exact github.com HTTPS", () => {
+    const target = parseTargetRef(
+      "https://github.com/acme/demo.git",
+      "main",
+      discordExplicitTargetProvenance()
+    );
+
+    expect(target).toEqual({
+      kind: "git-url",
+      url: "https://github.com/acme/demo.git",
+      ref: "main",
+      provenance: { source: "discord-explicit", exactHost: "github.com" },
+      policy: {
+        protocol: "https",
+        exactHost: "github.com",
+        allowRedirects: false,
+        allowSecondaryFetches: false,
+        localPathCapability: "none"
+      }
+    });
+  });
+
+  it.each([
+    ["credentials", "https://user:secret@github.com/acme/demo.git", undefined],
+    ["ambiguous HTTPS", "https:github.com/acme/demo.git", undefined],
+    ["SCP syntax", "git@github.com:acme/demo.git", undefined],
+    ["HTTP", "http://github.com/acme/demo.git", undefined],
+    ["lookalike host", "https://github.com.evil.example/acme/demo.git", undefined],
+    ["custom port", "https://github.com:8443/acme/demo.git", undefined],
+    ["query", "https://github.com/acme/demo.git?ref=main", undefined],
+    ["fragment", "https://github.com/acme/demo.git#main", undefined],
+    ["IP literal", "https://127.0.0.1/acme/demo.git", undefined],
+    ["option-shaped ref", "https://github.com/acme/demo.git", "--upload-pack=marker"]
+  ])("rejects Discord %s before transport work", (_case, input, ref) => {
+    expect(() => parseTargetRef(input, ref, discordExplicitTargetProvenance())).toThrow();
+  });
+
+  it("rejects local paths without a provenance capability", () => {
+    expect(() =>
+      parseTargetRef("/tmp/demo", undefined, discordExplicitTargetProvenance())
+    ).toThrow();
+    expect(() =>
+      parseTargetRef("/tmp/demo", undefined, {
+        source: "operator-default",
+        localPathCapability: "none"
+      } as never)
+    ).toThrow();
+  });
+
+  it("rejects persisted targets whose policy was widened or no longer matches", () => {
+    const target = parseTargetRef(
+      "https://github.com/acme/demo.git",
+      undefined,
+      discordExplicitTargetProvenance()
+    );
+
+    expect(() =>
+      validateTargetRef({ ...target, policy: { ...target.policy, allowRedirects: true } })
+    ).toThrow();
+    expect(() =>
+      validateTargetRef({ ...target, policy: { ...target.policy, exactHost: "example.com" } })
+    ).toThrow();
+    expect(() => validateTargetRef({ ...target, provenance: CLI_TARGET_PROVENANCE })).toThrow();
+  });
+
+  it("binds chat work to the authenticated request-context target", () => {
+    const request = createChatRequestContext(
+      "sweep --repo https://github.com/acme/demo.git --ref main",
+      { defaultRepoPath: "/operator/default" }
+    );
+
+    expect(request.repositoryTarget).toMatchObject({
+      kind: "git-url",
+      provenance: { source: "discord-explicit" },
+      policy: { exactHost: "github.com", allowRedirects: false }
+    });
+    expect(
+      resolveAuthenticatedRequestTarget(request, "https://github.com/attacker/replacement.git")
+    ).toEqual(request.repositoryTarget);
+
+    const operatorDefault = createChatRequestContext("sweep this repository", {
+      defaultRepoPath: "/operator/default"
+    });
+    expect(operatorDefault.repositoryTarget).toMatchObject({
+      kind: "local-git",
+      provenance: { source: "operator-default" },
+      policy: { localPathCapability: "operator-default" }
+    });
   });
 });
 

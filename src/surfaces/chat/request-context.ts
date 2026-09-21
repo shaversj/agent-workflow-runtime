@@ -1,4 +1,11 @@
-import { isGitUrl } from "../../workspaces/index.js";
+import {
+  discordExplicitTargetProvenance,
+  isGitUrl,
+  OPERATOR_DEFAULT_TARGET_PROVENANCE,
+  parseTargetRef,
+  validateTargetRef
+} from "../../workspaces/index.js";
+import type { TargetRef } from "../../workspaces/index.js";
 
 import type { ChatRequestContext, ChatRouterOptions } from "./types.js";
 
@@ -9,11 +16,19 @@ export function createChatRequestContext(
   const sourceText = text.trim();
   const explicitRepoTarget = readOptionValue(sourceText, "repo") ?? readTargetArgument(sourceText);
   const timeoutMs = readPositiveIntegerOption(sourceText, "timeout-ms") ?? options.defaultTimeoutMs;
+  const ref = readOptionValue(sourceText, "ref");
+  const repositoryTarget = explicitRepoTarget
+    ? parseTargetRef(explicitRepoTarget, ref, discordExplicitTargetProvenance())
+    : options.defaultRepoPath
+      ? parseTargetRef(options.defaultRepoPath, ref, OPERATOR_DEFAULT_TARGET_PROVENANCE)
+      : undefined;
+  const repoTarget = repositoryTarget ? targetValue(repositoryTarget) : undefined;
   return {
     sourceText,
-    explicitRepoTarget,
-    repoTarget: explicitRepoTarget ?? options.defaultRepoPath,
-    ref: readOptionValue(sourceText, "ref"),
+    ...(explicitRepoTarget && repoTarget ? { explicitRepoTarget: repoTarget } : {}),
+    ...(repoTarget ? { repoTarget } : {}),
+    ...(repositoryTarget ? { repositoryTarget } : {}),
+    ref,
     reportPath: readOptionValue(sourceText, "report") ?? readOptionValue(sourceText, "report-path"),
     model:
       readOptionValue(sourceText, "model") ??
@@ -21,6 +36,14 @@ export function createChatRequestContext(
       options.defaultModel,
     timeoutMs
   };
+}
+
+export function resolveAuthenticatedRequestTarget(
+  request: Pick<ChatRequestContext, "repositoryTarget">,
+  modelToolTarget?: string
+): TargetRef | undefined {
+  void modelToolTarget;
+  return request.repositoryTarget ? validateTargetRef(request.repositoryTarget) : undefined;
 }
 
 function readOptionValue(text: string, name: string): string | undefined {
@@ -62,4 +85,8 @@ function cleanTargetToken(value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function targetValue(target: TargetRef): string {
+  return target.kind === "git-url" ? target.url : target.path;
 }
