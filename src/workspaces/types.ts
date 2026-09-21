@@ -8,9 +8,9 @@ const targetRef = Type.Optional(
   Type.String({ minLength: 1, maxLength: 1024, pattern: "^(?!-)[^\\u0000-\\u001f\\u007f]+$" })
 );
 
-export const CliTargetProvenanceSchema = Type.Object({ source: Type.Literal("cli") }, closedObject);
+const CliTargetProvenanceSchema = Type.Object({ source: Type.Literal("cli") }, closedObject);
 
-export const DiscordExplicitTargetProvenanceSchema = Type.Object(
+const DiscordExplicitTargetProvenanceSchema = Type.Object(
   {
     source: Type.Literal("discord-explicit"),
     exactHost: Type.String({ minLength: 1, maxLength: 253 })
@@ -18,7 +18,7 @@ export const DiscordExplicitTargetProvenanceSchema = Type.Object(
   closedObject
 );
 
-export const OperatorDefaultTargetProvenanceSchema = Type.Object(
+const OperatorDefaultTargetProvenanceSchema = Type.Object(
   {
     source: Type.Literal("operator-default"),
     localPathCapability: Type.Literal("operator-default")

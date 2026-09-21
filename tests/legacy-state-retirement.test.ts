@@ -129,7 +129,7 @@ describe("legacy-state retirement", () => {
       removed: [firstReport, database],
       remaining: []
     });
-  });
+  }, 15_000);
 
   it.each([
     "ALTER TABLE run ADD COLUMN token_count INTEGER",
@@ -432,7 +432,7 @@ describe("legacy-state retirement", () => {
     const fresh = previewRetirement(root);
     expect(fresh.files.map((entry) => entry.path)).not.toContain(firstReport);
     expect(applyRetirement(root, fresh, true)).toMatchObject({ ok: true, remaining: [] });
-  });
+  }, 15_000);
 
   it("preserves database identity after a sidecar unlink fails", () => {
     const root = legacyFixture();

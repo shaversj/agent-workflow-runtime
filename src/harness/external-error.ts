@@ -10,7 +10,7 @@ export type ExternalErrorCategory =
   | "github_request_failed"
   | "model_provider_failed";
 
-export interface ExternalErrorContext {
+interface ExternalErrorContext {
   correlationId?: string;
   interactionId?: string;
   runId?: number;

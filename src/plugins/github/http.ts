@@ -13,7 +13,7 @@ export interface GitHubHttpLimits {
   redirects: number;
 }
 
-export interface GitHubJsonRequestOptions {
+interface GitHubJsonRequestOptions {
   headers: Record<string, string>;
   timeoutMs: number;
   signal?: AbortSignal;

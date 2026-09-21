@@ -1,9 +1,7 @@
 import path from "node:path";
 
 import { remoteUrl } from "../../repository.js";
-import type { WorkflowTargetSummary, WorkspaceSummary } from "../../workspaces/types.js";
 import {
-  collectGitHubEvidence,
   collectGitHubIssues,
   collectGitHubPullRequests,
   collectGitHubReleases,
@@ -12,7 +10,6 @@ import {
   type GitHubEvidenceClientOptions
 } from "./client.js";
 import type {
-  GitHubEvidence,
   GitHubIdentity,
   GitHubIssuesResult,
   GitHubPullRequestsResult,
@@ -24,16 +21,6 @@ import type {
 interface OriginLike {
   origin?: string;
   displayOrigin?: string;
-}
-
-export async function gatherGitHubEvidenceForWorkspace(
-  workspace: WorkspaceSummary | WorkflowTargetSummary,
-  options: GitHubEvidenceClientOptions = {}
-): Promise<GitHubEvidence | undefined> {
-  const origin = "displayOrigin" in workspace ? workspace.displayOrigin : workspace.origin;
-  const identity = await resolveGitHubIdentityForTarget(origin, options);
-  if (!identity) return undefined;
-  return collectGitHubEvidence(identity, options);
 }
 
 export async function gatherGitHubRepositoryContextForTarget(

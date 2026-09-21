@@ -63,7 +63,7 @@ export function normalizedTargetRef(target: TargetRef): TargetRef {
     : validateTargetRef({ ...validated, path: path.resolve(validated.path) });
 }
 
-export function resolveTargetPolicy(
+function resolveTargetPolicy(
   target:
     | Pick<Extract<TargetRef, { kind: "local-git" }>, "kind" | "path">
     | Pick<Extract<TargetRef, { kind: "git-url" }>, "kind" | "url">,

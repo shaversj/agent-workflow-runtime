@@ -6,20 +6,7 @@ export {
   normalizedTargetRef,
   OPERATOR_DEFAULT_TARGET_PROVENANCE,
   parseTargetRef,
-  resolveTargetPolicy,
   validateTargetRef
 } from "./target.js";
-export {
-  CliTargetProvenanceSchema,
-  DiscordExplicitTargetProvenanceSchema,
-  OperatorDefaultTargetProvenanceSchema,
-  TargetProvenanceSchema,
-  TargetRefSchema,
-  TargetTransportPolicySchema
-} from "./types.js";
-export type {
-  TargetProvenance,
-  TargetRef,
-  TargetTransportPolicy,
-  WorkspaceLease
-} from "./types.js";
+export { TargetRefSchema } from "./types.js";
+export type { TargetRef, WorkspaceLease } from "./types.js";
