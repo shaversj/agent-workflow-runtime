@@ -1,32 +1,31 @@
 #!/usr/bin/env node
-import { loadLocalEnv } from "./env.js";
-import { runReportsCli } from "./surfaces/cli/reports.js";
-import { runRunsCli } from "./surfaces/cli/runs.js";
-import { runSweepCli } from "./surfaces/cli/sweep.js";
-import { runHistoryCli } from "./surfaces/cli/history.js";
-import { runCodingCli } from "./surfaces/cli/code.js";
-
-loadLocalEnv();
+import { loadTrustedEnv, TrustedEnvError } from "./env.js";
 
 async function main() {
+  loadTrustedEnv();
   const [command, ...args] = process.argv.slice(2);
   if (command === "code") {
+    const { runCodingCli } = await import("./surfaces/cli/code.js");
     await runCodingCli(args);
     return;
   }
   if (command === "history") {
+    const { runHistoryCli } = await import("./surfaces/cli/history.js");
     runHistoryCli(args);
     return;
   }
   if (command === "sweep") {
+    const { runSweepCli } = await import("./surfaces/cli/sweep.js");
     await runSweepCli(args);
     return;
   }
   if (command === "runs") {
+    const { runRunsCli } = await import("./surfaces/cli/runs.js");
     runRunsCli(args);
     return;
   }
   if (command === "reports") {
+    const { runReportsCli } = await import("./surfaces/cli/reports.js");
     runReportsCli(args);
     return;
   }
@@ -52,6 +51,12 @@ function printUsage() {
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(
+    error instanceof TrustedEnvError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : "agent_ops_cli_failed"
+  );
   process.exitCode = 1;
 });

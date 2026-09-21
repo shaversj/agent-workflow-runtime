@@ -2,22 +2,85 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { loadLocalEnv } from "../src/env.js";
+import { loadTrustedEnv, trustedEnvPath } from "../src/env.js";
 
-describe("env loading", () => {
-  it("loads variables from a local .env file", () => {
-    const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
-    const key = "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED";
-    delete process.env[key];
-    fs.writeFileSync(path.join(repoPath, ".env"), `${key}=yes\n`);
+const keys = [
+  "AGENT_OPS_ENV_FILE",
+  "AGENT_OPS_HOME",
+  "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED",
+  "GIT_CONFIG_GLOBAL"
+] as const;
+const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+
+afterEach(() => {
+  for (const key of keys) restoreEnv(key, original[key]);
+});
+
+describe("trusted env loading", () => {
+  it("ignores a .env file in the process working directory", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-target-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-home-"));
+    const previousCwd = process.cwd();
+    fs.writeFileSync(
+      path.join(cwd, ".env"),
+      "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED=target\nGIT_CONFIG_GLOBAL=/tmp/hostile\n"
+    );
+    delete process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED;
+    delete process.env.GIT_CONFIG_GLOBAL;
+    delete process.env.AGENT_OPS_ENV_FILE;
+    process.env.AGENT_OPS_HOME = home;
 
     try {
-      loadLocalEnv(repoPath);
-      expect(process.env[key]).toBe("yes");
+      process.chdir(cwd);
+      expect(loadTrustedEnv()).toBeUndefined();
+      expect(process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED).toBeUndefined();
+      expect(process.env.GIT_CONFIG_GLOBAL).toBeUndefined();
     } finally {
-      delete process.env[key];
+      process.chdir(previousCwd);
+    }
+  });
+
+  it("loads the application-home default without overriding operator values", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-home-"));
+    const envPath = path.join(home, ".env");
+    fs.writeFileSync(envPath, "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED=file\n");
+    process.env.AGENT_OPS_HOME = home;
+    process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED = "operator";
+    delete process.env.AGENT_OPS_ENV_FILE;
+
+    expect(loadTrustedEnv()).toBe(fs.realpathSync(envPath));
+    expect(process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED).toBe("operator");
+  });
+
+  it("loads an explicit absolute env file", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-config-"));
+    const envPath = path.join(directory, "runtime.env");
+    fs.writeFileSync(envPath, "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED=yes\n");
+    process.env.AGENT_OPS_ENV_FILE = envPath;
+    delete process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED;
+
+    expect(loadTrustedEnv()).toBe(fs.realpathSync(envPath));
+    expect(process.env.AGENT_OPS_KIT_TEST_ENV_FILE_LOADED).toBe("yes");
+  });
+
+  it.each([
+    ["relative path", "runtime.env"],
+    ["missing file", path.join(os.tmpdir(), "agent-ops-missing-runtime.env")]
+  ])("rejects an explicit %s without disclosing the configured path", (_label, configured) => {
+    process.env.AGENT_OPS_ENV_FILE = configured;
+
+    expect(() => trustedEnvPath()).toThrowError("trusted_env_file_invalid");
+    try {
+      trustedEnvPath();
+    } catch (error) {
+      expect(String(error)).not.toContain(configured);
     }
   });
 });
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}

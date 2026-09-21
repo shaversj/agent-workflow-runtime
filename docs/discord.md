@@ -4,6 +4,10 @@ Agent Ops Kit can run readiness tools from Discord mentions or direct messages.
 
 ## Environment
 
+Put bot configuration in `$AGENT_OPS_HOME/.env` (default:
+`~/.agent-ops-kit/.env`), or set `AGENT_OPS_ENV_FILE` to an absolute operator-owned file before
+startup. The bot never loads `.env` from its process working directory or a target repository.
+
 ```bash
 DISCORD_BOT_TOKEN=
 DISCORD_ALLOWED_GUILD_IDS=

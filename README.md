@@ -38,7 +38,9 @@ digest-pinned image before enabling it. Do not use this container backend for ho
 hosting. Images must contain Node for the trusted file protocol and all required dependencies;
 network access and implicit dependency downloads are disabled.
 
-Configure `.env` using the coding section of `.env.example`. Allow explicit principals
+Configure `$AGENT_OPS_HOME/.env` using the coding section of `.env.example`, or set
+`AGENT_OPS_ENV_FILE` to an absolute operator-owned file before startup. Agent Ops Kit never loads
+runtime configuration from the process working directory. Allow explicit principals
 (`cli:<uid>` or `discord:<user-id>`) and repository profiles with a digest-pinned image,
 required verification commands, ignored generated directory names, and the allowed principal.
 Profiles are operator configuration, never repository/model configuration. The built-in Node
@@ -126,7 +128,7 @@ make test-coding-worker CODING_TEST_IMAGE=node@sha256:c2d5ade763cacfb03fe9cb8e8a
 Run a read-only readiness sweep:
 
 ```bash
-# Reads MINIMAX_API_KEY from .env when present.
+# Reads MINIMAX_API_KEY from $AGENT_OPS_HOME/.env when present.
 make sweep REPO=/path/to/repo
 make sweep REPO=https://github.com/org/repo REF=main
 ```
