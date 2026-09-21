@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { projectExternalError } from "../src/harness/external-error.js";
 import { createLogger } from "../src/logger.js";
 
 describe("logger", () => {
@@ -63,18 +64,32 @@ describe("logger", () => {
     expect(output).not.toContain('report_path: "/tmp/reports/report.md"');
   });
 
-  it("preserves error type context for failure logs", () => {
+  it("logs projected external failures without inspecting hostile throwables", () => {
     const lines: string[] = [];
     const logger = createLogger({
       level: "error",
       stream: { write: (message) => lines.push(message) }
     });
-    const error = new Error("boom");
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile getter was inspected");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor was inspected");
+      },
+      ownKeys() {
+        throw new Error("hostile keys were inspected");
+      }
+    });
+    const failure = projectExternalError("model_provider_failed", {
+      correlationId: "33333333-3333-4333-8333-333333333333",
+      interactionId: "interaction-123"
+    });
 
     logger.error(
       {
-        err: error,
-        error_type: error.name,
+        ...failure,
+        err: hostile,
         workflow_name: "readiness_sweep"
       },
       "readiness_sweep.failed"
@@ -82,8 +97,10 @@ describe("logger", () => {
 
     const record = JSON.parse(lines.join("")) as Record<string, unknown>;
 
-    expect(record.error_type).toBe("Error");
+    expect(record.error_category).toBe("model_provider_failed");
+    expect(record.correlation_id).toBe("33333333-3333-4333-8333-333333333333");
     expect(record.workflow_name).toBe("readiness_sweep");
-    expect(record.err).toMatchObject({ message: "boom" });
+    expect(record.err).toBe("[UNPROJECTED_ERROR_OMITTED]");
+    expect(lines.join("")).not.toContain("hostile");
   });
 });

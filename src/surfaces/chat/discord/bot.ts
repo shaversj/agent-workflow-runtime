@@ -10,8 +10,12 @@ import {
 import { Agent } from "undici";
 
 import type { WorkflowProgressEvent } from "../../../harness/types.js";
-import { RecordingFailure } from "../../../harness/interaction.js";
 import type { InteractionRecorder } from "../../../harness/interaction.js";
+import {
+  externalErrorAsError,
+  externalErrorMessage,
+  projectExternalError
+} from "../../../harness/external-error.js";
 import { logger } from "../../../logger.js";
 import { beginChatInteraction } from "../../../workflows/chat-agent.js";
 import { handleChatMessage } from "../runner.js";
@@ -64,6 +68,7 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
     void handleDiscordMessage(message, config, options).catch(() => {
       logger.error(
         {
+          ...projectExternalError("discord_gateway_failed"),
           message_id: message.id
         },
         "discord_bot.message_failed"
@@ -112,7 +117,11 @@ export async function handleDiscordMessage(
       defaultRepoPath: botConfig.defaultRepoPath
     });
   } catch {
-    await message.reply("history_recording_failed: request was not started");
+    try {
+      await message.reply("history_recording_failed: request was not started");
+    } catch {
+      logger.warn(projectExternalError("discord_reply_failed"), "discord_bot.reply_failed");
+    }
     return;
   }
   let statusMessage: Message | undefined;
@@ -131,15 +140,21 @@ export async function handleDiscordMessage(
         status: "acknowledged",
         surfaceMessageId: statusMessage.id
       });
-    } catch (error) {
+    } catch {
+      const failure = projectExternalError("discord_reply_failed", {
+        interactionId: recording.interactionId,
+        runId: recording.runId,
+        attempt: 1,
+        part: 1
+      });
       recording.deliveryFinish({
         id: acknowledgment,
-        status: deliveryFailureStatus(error),
-        error: "initial_acknowledgment_failed"
+        status: "uncertain",
+        error: failure
       });
-      recording.finishRun({ status: "skipped", error: "initial_acknowledgment_failed" });
-      recording.finishInteraction({ status: "skipped", error: "initial_acknowledgment_failed" });
-      logger.warn({ interaction_id: recording.interactionId }, "discord_bot.acknowledgment_failed");
+      recording.finishRun({ status: "skipped", error: failure });
+      recording.finishInteraction({ status: "skipped", error: failure });
+      logger.warn(failure, "discord_bot.acknowledgment_failed");
       return;
     }
     let answerId: number | undefined;
@@ -173,16 +188,14 @@ export async function handleDiscordMessage(
     for (const [index, reply] of replies.entries()) {
       await sendDiscordReply(message, reply, { recording, messageId: answerId, part: index + 1 });
     }
-  } catch (error) {
-    logger.warn({ interaction_id: recording.interactionId }, "discord_bot.delivery_failed");
-    if (error instanceof RecordingFailure) {
-      // Storage failure must be visible even when its terminal metadata is pending recovery.
-      try {
-        await message.reply(error.message);
-      } catch {
-        /* Local diagnostic remains. */
-      }
-    }
+  } catch {
+    logger.warn(
+      projectExternalError("discord_reply_failed", {
+        interactionId: recording.interactionId,
+        runId: recording.runId
+      }),
+      "discord_bot.delivery_failed"
+    );
   } finally {
     progressing = false;
     if (statusMessage) await deleteDiscordStatus(statusMessage);
@@ -206,38 +219,20 @@ export async function sendDiscordReply(
   let sent: Message;
   try {
     sent = await message.reply({ content: reply.content, files });
-  } catch (error) {
-    const fallback = !!files?.length && definiteAttachmentRejection(error);
+  } catch {
+    const failure = projectExternalError("discord_reply_failed", {
+      interactionId: delivery?.recording.interactionId,
+      runId: delivery?.recording.runId,
+      attempt: 1,
+      part: delivery?.part
+    });
     if (delivery && attempt !== undefined)
       delivery.recording.deliveryFinish({
         id: attempt,
-        status: deliveryFailureStatus(error),
-        error: fallback ? "attachment_rejected:attachment_omitted" : "discord_send_failed"
+        status: "uncertain",
+        error: failure
       });
-    if (!fallback) throw error;
-    const retry = delivery?.recording.deliveryStart({
-      messageId: delivery.messageId,
-      part: delivery.part,
-      attempt: 2
-    });
-    try {
-      sent = await message.reply({ content: reply.content });
-    } catch (retryError) {
-      if (delivery && retry !== undefined)
-        delivery.recording.deliveryFinish({
-          id: retry,
-          status: deliveryFailureStatus(retryError),
-          error: "discord_text_fallback_failed:attachment_omitted"
-        });
-      throw retryError;
-    }
-    if (delivery && retry !== undefined)
-      delivery.recording.deliveryFinish({
-        id: retry,
-        status: "acknowledged",
-        surfaceMessageId: sent.id
-      });
-    return sent;
+    throw externalErrorAsError(failure);
   }
   if (delivery && attempt !== undefined)
     delivery.recording.deliveryFinish({
@@ -246,32 +241,6 @@ export async function sendDiscordReply(
       surfaceMessageId: sent.id
     });
   return sent;
-}
-
-function deliveryFailureStatus(error: unknown): "failed" | "uncertain" {
-  return typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    typeof error.status === "number" &&
-    error.status >= 400 &&
-    error.status < 500
-    ? "failed"
-    : "uncertain";
-}
-
-function definiteAttachmentRejection(error: unknown): boolean {
-  if (deliveryFailureStatus(error) !== "failed" || typeof error !== "object" || error === null)
-    return false;
-  if ("status" in error && error.status === 413) return true;
-  if (!("code" in error)) return false;
-  if (error.code === 40005) return true;
-  if (error.code !== 50035 || !("rawError" in error)) return false;
-  const raw = error.rawError;
-  if (typeof raw !== "object" || raw === null || !("errors" in raw)) return false;
-  const errors = raw.errors;
-  return (
-    typeof errors === "object" && errors !== null && ("attachments" in errors || "files" in errors)
-  );
 }
 
 export function shouldAcceptDiscordMessage(
@@ -341,13 +310,12 @@ async function updateDiscordStatus(message: Message, content: string | undefined
   if (!content) return;
   try {
     await message.edit(content);
-  } catch (error) {
+  } catch {
     logger.warn(
       {
+        ...projectExternalError("discord_status_failed"),
         surface: "discord",
-        message_id: message.id,
-        error_type: error instanceof Error ? error.name : typeof error,
-        error: error instanceof Error ? error.message : String(error)
+        message_id: message.id
       },
       "discord_bot.status_update_failed"
     );
@@ -357,13 +325,12 @@ async function updateDiscordStatus(message: Message, content: string | undefined
 async function deleteDiscordStatus(message: Message) {
   try {
     await message.delete();
-  } catch (error) {
+  } catch {
     logger.warn(
       {
+        ...projectExternalError("discord_deletion_failed"),
         surface: "discord",
-        message_id: message.id,
-        error_type: error instanceof Error ? error.name : typeof error,
-        error: error instanceof Error ? error.message : String(error)
+        message_id: message.id
       },
       "discord_bot.status_delete_failed"
     );

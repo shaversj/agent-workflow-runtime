@@ -511,28 +511,41 @@ describe("Discord chat surface", () => {
     );
   });
 
-  it("retries Discord replies without attachments on definite upload rejection", async () => {
+  it("projects hostile Discord reply failures without inspecting them", async () => {
     const repoPath = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
     const { reportPath } = writeReport(repoPath, "latest.md", "# Latest Report\n");
     const sentReplies: unknown[] = [];
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile getter was inspected");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor was inspected");
+      },
+      getPrototypeOf() {
+        throw new Error("hostile prototype was inspected");
+      },
+      ownKeys() {
+        throw new Error("hostile keys were inspected");
+      }
+    });
     const message = {
       id: "message-1",
       reply(payload: unknown) {
         sentReplies.push(payload);
-        if (sentReplies.length === 1)
-          throw Object.assign(new Error("upload rejected"), { status: 413 });
-        return Promise.resolve({ id: "fallback-1" });
+        throw hostile;
       }
     };
 
-    await sendDiscordReply(message as never, {
-      content: "Readiness sweep completed.",
-      attachments: [{ path: reportPath, name: "latest.md" }]
-    });
+    await expect(
+      sendDiscordReply(message as never, {
+        content: "Readiness sweep completed.",
+        attachments: [{ path: reportPath, name: "latest.md" }]
+      })
+    ).rejects.toThrow(/^The request could not be completed\. Reference: [0-9a-f-]+\.$/);
 
-    expect(sentReplies).toHaveLength(2);
+    expect(sentReplies).toHaveLength(1);
     expect((sentReplies[0] as { files?: unknown[] }).files).toHaveLength(1);
-    expect(sentReplies[1]).toEqual({ content: "Readiness sweep completed." });
   });
 
   it("loads Discord bot guardrail config from environment variables", () => {

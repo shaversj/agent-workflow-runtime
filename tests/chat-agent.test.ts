@@ -460,6 +460,44 @@ describe("chat agent workflow", () => {
     expect(response).toMatchObject({ kind: "message", status: "completed", text: "not found" });
     expect(calls).toEqual([{ run_ref: "42", repo_path: "/scoped/repo" }]);
   });
+
+  it("does not inspect or expose hostile external tool failures", async () => {
+    const hostile = new Proxy(Object.create(null) as object, {
+      get() {
+        throw new Error("hostile getter was inspected");
+      },
+      getOwnPropertyDescriptor() {
+        throw new Error("hostile descriptor was inspected");
+      },
+      getPrototypeOf() {
+        throw new Error("hostile prototype was inspected");
+      },
+      ownKeys() {
+        throw new Error("hostile keys were inspected");
+      }
+    });
+    const tool = defineRegisteredTool({
+      pluginName: "readiness",
+      name: "show_run",
+      label: "Show run",
+      description: "Fail externally.",
+      parameters: Type.Object({ run_ref: Type.String(), repo_path: Type.String() }),
+      resultSchema: Type.Unknown(),
+      execute() {
+        throw hostile;
+      }
+    });
+
+    const response = await runChatAgentWorkflow(chatMessage("show run 42"), {
+      availableTools: [tool],
+      defaultRepoPath: "https://github.com/example/demo"
+    });
+
+    expect(response).toMatchObject({ kind: "message", status: "failed" });
+    expect(response.text).toMatch(/^The request could not be completed\. Reference: [0-9a-f-]+\.$/);
+    expect(response.text).not.toContain("hostile");
+    expect(response.text).not.toContain("github.com");
+  });
 });
 
 function chatMessage(text: string): ChatMessage {

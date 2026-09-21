@@ -5,7 +5,12 @@ import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-ag
 import { Value } from "typebox/value";
 
 import { captureHistory } from "../harness/history-capture.js";
-import { beginInteraction, RecordingFailure } from "../harness/interaction.js";
+import {
+  externalErrorMessage,
+  projectExternalError,
+  type ExternalErrorProjection
+} from "../harness/external-error.js";
+import { beginInteraction } from "../harness/interaction.js";
 import type { InteractionRecorder } from "../harness/interaction.js";
 import { toPiAgentTools } from "../harness/pi-tools.js";
 import { WorkflowResultSchema } from "../harness/schemas.js";
@@ -67,15 +72,17 @@ export async function runChatAgentWorkflow(
     recording.assertHealthy();
     options.onResponseRecorded?.(messageId);
     return response;
-  } catch (error) {
-    const text =
-      error instanceof RecordingFailure
-        ? error.message
-        : `Chat agent failed: ${captureHistory(error instanceof Error ? error.message : String(error)).text}`;
+  } catch {
+    const failure = projectExternalError("chat_workflow_failed", {
+      interactionId: recording?.interactionId,
+      runId: recording?.runId
+    });
     const status =
-      !executionFinished && recording?.signal.aborted && !(error instanceof RecordingFailure)
+      !executionFinished && recording !== undefined && recording.signal.aborted
         ? "cancelled"
         : "failed";
+    const text =
+      status === "cancelled" ? "The request was cancelled." : externalErrorMessage(failure);
     if (recording?.claimed && !executionFinished) {
       try {
         recording.assertHealthy();
@@ -198,6 +205,7 @@ async function executeChatAgent(
   let lastWorkflowResult: WorkflowResult | undefined;
   let turn = 0;
   let active = true;
+  let modelFailure: ExternalErrorProjection | undefined;
   const agent = new Agent({
     initialState: {
       systemPrompt: buildChatAgentSystemPrompt(availableTools, catalog.catalogTools),
@@ -231,7 +239,14 @@ async function executeChatAgent(
                         ? "failed"
                         : "completed",
                   ...(usage ? { usage } : {}),
-                  ...(result.errorMessage ? { error: result.errorMessage } : {})
+                  ...(result.stopReason === "error" || result.stopReason === "aborted"
+                    ? {
+                        error: (modelFailure ??= projectExternalError("model_provider_failed", {
+                          interactionId: recording.interactionId,
+                          runId: recording.runId
+                        }))
+                      }
+                    : {})
                 });
                 return result;
               };
@@ -239,9 +254,13 @@ async function executeChatAgent(
             return typeof value === "function" ? (value.bind(target) as unknown) : value;
           }
         });
-      } catch (error) {
-        if (active) recording.modelFinish({ id, status: "failed", error });
-        throw error;
+      } catch {
+        modelFailure ??= projectExternalError("model_provider_failed", {
+          interactionId: recording.interactionId,
+          runId: recording.runId
+        });
+        if (active) recording.modelFinish({ id, status: "failed", error: modelFailure });
+        throw new Error(externalErrorMessage(modelFailure));
       }
     },
     toolExecution: "sequential",
@@ -296,18 +315,24 @@ async function executeChatAgent(
       (item) =>
         item.role === "assistant" && (item.stopReason === "error" || item.stopReason === "aborted")
     );
-    if (failedAssistant?.role === "assistant")
-      throw new Error(failedAssistant.errorMessage ?? "model_failed");
-  } catch (error) {
-    workflowLogger.error(
-      {
-        err: error,
-        error_type: error instanceof Error ? error.name : typeof error,
-        error: error instanceof Error ? error.message : String(error)
-      },
-      "chat_agent.failed"
-    );
-    throw error;
+    if (failedAssistant?.role === "assistant") {
+      modelFailure ??= projectExternalError("model_provider_failed", {
+        interactionId: recording.interactionId,
+        runId: recording.runId
+      });
+      throw new Error(externalErrorMessage(modelFailure));
+    }
+  } catch {
+    modelFailure ??= projectExternalError("model_provider_failed", {
+      interactionId: recording.interactionId,
+      runId: recording.runId
+    });
+    workflowLogger.error(modelFailure, "chat_agent.failed");
+    return {
+      kind: "message",
+      status: "failed",
+      text: externalErrorMessage(modelFailure)
+    };
   } finally {
     active = false;
     recording.signal.removeEventListener("abort", abort);
@@ -384,11 +409,18 @@ async function runDeterministicTool(
   let output: RegisteredToolResult<unknown>;
   try {
     output = await tool.execute(request.args, toolContext);
-  } catch (error) {
+  } catch {
+    const failure = projectExternalError(
+      request.toolName.startsWith("github_") ? "github_request_failed" : "external_tool_failed",
+      {
+        interactionId: toolContext.recording?.interactionId,
+        runId: toolContext.recording?.runId
+      }
+    );
     return {
       kind: "message",
       status: "failed",
-      text: error instanceof Error ? error.message : String(error)
+      text: externalErrorMessage(failure)
     };
   }
   const result = workflowResultFromDetails(output.result);

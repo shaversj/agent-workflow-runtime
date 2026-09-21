@@ -1,6 +1,5 @@
 import {
   discordExplicitTargetProvenance,
-  isGitUrl,
   OPERATOR_DEFAULT_TARGET_PROVENANCE,
   parseTargetRef,
   validateTargetRef
@@ -71,7 +70,11 @@ function readTargetArgument(text: string): string | undefined {
     .split(/\s+/)
     .find(
       (item) =>
-        item.startsWith("/") || item.startsWith("./") || item.startsWith("../") || isGitUrl(item)
+        item.startsWith("/") ||
+        item.startsWith("./") ||
+        item.startsWith("../") ||
+        /^(?:https?|ssh|git|file):\/\//i.test(item) ||
+        /^[^/@\s]+@[^/:\s]+:.+$/.test(item)
     );
   return token ? cleanTargetToken(token) : undefined;
 }

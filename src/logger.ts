@@ -38,6 +38,10 @@ interface CreateLoggerOptions {
 export function createLogger(options: CreateLoggerOptions = {}) {
   const loggerOptions: LoggerOptions = {
     level: options.level ?? defaultLogLevel(),
+    serializers: {
+      // External failures must arrive as a safe projection, never as a throwable.
+      err: () => "[UNPROJECTED_ERROR_OMITTED]"
+    },
     redact: {
       paths: redactPaths,
       censor: "[REDACTED]"

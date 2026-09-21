@@ -1,4 +1,5 @@
 import { loadTrustedEnv, TrustedEnvError } from "../../../env.js";
+import { projectExternalError } from "../../../harness/external-error.js";
 
 await bootstrap().catch((error: unknown) => {
   console.error(error instanceof TrustedEnvError ? error.message : "discord_bot.startup_failed");
@@ -23,7 +24,7 @@ async function bootstrap(): Promise<void> {
   }
 
   client.login(config.token).catch(() => {
-    logger.error({ error_category: "discord_login_failed" }, "discord_bot.login_failed");
+    logger.error(projectExternalError("discord_gateway_failed"), "discord_bot.login_failed");
     process.exitCode = 1;
   });
 
