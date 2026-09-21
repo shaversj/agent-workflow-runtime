@@ -2,7 +2,8 @@
 
 ## Modeling
 
-Use Drizzle for persisted SQLite tables. Keep table definitions under `src/db/schema.ts`.
+Use Drizzle for persisted SQLite tables. Keep shared-history definitions in `src/db/schema.ts` and
+dedicated coordination-store definitions under `src/db/`.
 
 Use [Runtime Contracts](runtime-contracts.md) for TypeBox guidance at API-shaped
 boundaries and database-read projections.
@@ -19,6 +20,10 @@ Shared interaction history belongs at `AGENT_OPS_HOME/history/agent-ops.db`, def
 `~/.agent-ops-kit/history/agent-ops.db`. Registered artifacts belong in `history/artifacts/`.
 Workspace caches and disposable checkouts are independent of history. Never write history into
 the inspected source tree.
+
+Cross-process mirror coordination belongs at `AGENT_OPS_HOME/cache/git/.mirror-locks.db`. It stores
+only canonical hashed mirror identities, monotonic fencing counters, owner identity, staging
+basenames, and the current immutable mirror pointer. It is not interaction history.
 
 ## Durability
 
@@ -40,6 +45,13 @@ operations. Sum usage from model-call rows rather than adding parent and child s
 Only a writer may recover unfinished work whose same-host process is provably absent. PID reuse,
 permission failures, live processes, and foreign hosts remain unresolved. Pending deliveries may
 become uncertain while completed execution stays completed. Never resume or replay work implicitly.
+
+Mirror mutation follows the same conservative ownership rule. Hold no SQLite transaction across
+Git or filesystem work. Acquire a monotonically increasing fence in a short transaction, build in
+a unique fence-owned directory, and publish the current pointer only when the same token still owns
+the fence. Cleanup may remove only the owner's staging path or a superseded immutable mirror after
+publication. A live, foreign, permission-denied, or otherwise ambiguous owner must time out instead
+of being stolen.
 
 ## Legacy Retirement
 

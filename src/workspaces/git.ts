@@ -111,6 +111,29 @@ export async function cloneMirror(
   await inspectRepository(ownedDestination, undefined, options);
 }
 
+export async function cloneMirrorFromLocal(
+  sourcePath: string,
+  destination: string,
+  options: GitRunnerOptions = {}
+): Promise<void> {
+  const source = validatedOwnedExistingPath(sourcePath);
+  rejectUnsupportedRepositoryState(source);
+  const ownedDestination = validatedOwnedDestination(destination);
+  await runGit(
+    ["clone", "--mirror", "--no-local", "--no-hardlinks", "--", source, ownedDestination],
+    undefined,
+    "local",
+    {
+      ...options,
+      diskBudget: {
+        path: ownedDestination,
+        maxBytes: options.limits?.repositoryBytes ?? DEFAULT_REPOSITORY_LIMITS.repositoryBytes
+      }
+    }
+  );
+  await inspectRepository(ownedDestination, undefined, options);
+}
+
 export async function fetchMirror(
   remoteUrl: string,
   mirrorPath: string,

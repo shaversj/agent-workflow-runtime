@@ -49,6 +49,8 @@ function safeGitIdentity(url: string): string {
     const parsed = new URL(url);
     parsed.username = "";
     parsed.password = "";
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.pathname = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/i, "") || "/";
     return parsed.toString();
   } catch {
     return url.replace(/^([^@\s]+)@([^:\s]+:.+)$/i, "$2");

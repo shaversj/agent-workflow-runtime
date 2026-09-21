@@ -13,6 +13,10 @@ The GitHub repository intelligence plugin may call GitHub read-only APIs for rep
 metadata, Actions status, open pull requests, open issues, and releases. It must not mutate
 GitHub state.
 
+Remote Git mirrors are immutable after publication. Serialize refresh and publication by canonical
+target identity with a SQLite fencing token. Failed or recovered owners may remove only their own
+unpublished staging path; they must never mutate or delete a successor's mirror.
+
 Chat-supplied GitHub targets must not spend ambient process credentials by default. Use the bot's
 GitHub token only for configured or otherwise trusted repository context. Query explicit chat URLs
 without credentials unless a documented trusted-target policy says otherwise.

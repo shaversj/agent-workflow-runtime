@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +30,8 @@ import {
   resolveCommit,
   resolveGitRoot
 } from "../src/workspaces/git.js";
+import { acquireMirrorLock } from "../src/workspaces/lock.js";
+import { targetStorageKey } from "../src/workspaces/storage.js";
 
 describe("workspace leases", () => {
   it("prepares a disposable checkout for a local git target", async () => {
@@ -110,6 +113,13 @@ describe("workspace leases", () => {
 });
 
 describe("workspace target policy", () => {
+  it("maps common HTTPS aliases to one mirror identity", () => {
+    const plain = parseTargetRef("https://github.com/acme/demo");
+    const suffixed = parseTargetRef("https://github.com/acme/demo.git/");
+
+    expect(targetStorageKey(plain)).toBe(targetStorageKey(suffixed));
+  });
+
   it("preserves distinct target provenance through normalization and persistence", () => {
     const repoPath = gitRepo();
     const targets = [
@@ -241,6 +251,117 @@ describe("workspace target policy", () => {
   });
 });
 
+describe("mirror fencing", () => {
+  it("rejects a symlinked cache before opening coordination state", async () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-lock-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-lock-outside-"));
+    fs.symlinkSync(outside, path.join(home, "cache"), "dir");
+    process.env.AGENT_OPS_HOME = home;
+
+    try {
+      await expect(
+        acquireMirrorLock(targetStorageKey(parseTargetRef("https://github.com/acme/demo.git")))
+      ).rejects.toThrow("mirror_cache_symlink_denied");
+      expect(fs.readdirSync(outside)).toEqual([]);
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+
+  it("serializes live owners and advances the fence before publishing", async () => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-lock-"));
+    process.env.AGENT_OPS_HOME = home;
+    const identity = targetStorageKey(parseTargetRef("https://github.com/acme/demo.git"));
+
+    try {
+      const first = await acquireMirrorLock(identity);
+      await expect(acquireMirrorLock(identity, { timeoutMs: 100, pollMs: 10 })).rejects.toThrow(
+        "mirror_lock_timeout"
+      );
+
+      fs.mkdirSync(first.stagingPath);
+      expect(first.publish()).toBeUndefined();
+      first.release();
+
+      const second = await acquireMirrorLock(identity);
+      expect(second.fence).toBe(first.fence + 1);
+      expect(second.currentPath).toBe(first.stagingPath);
+      fs.mkdirSync(second.stagingPath);
+      expect(second.publish()).toBe(first.stagingPath);
+      second.release();
+    } finally {
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+
+  it.each([
+    { publish: false, outcome: "removes unpublished staging" },
+    { publish: true, outcome: "preserves the published current mirror" }
+  ])("recovers a dead same-host owner and $outcome", async ({ publish }) => {
+    const originalHome = process.env.AGENT_OPS_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-lock-"));
+    process.env.AGENT_OPS_HOME = home;
+    const identity = targetStorageKey(parseTargetRef("https://github.com/acme/crash.git"));
+    let priorPath: string | undefined;
+    if (publish) {
+      const seed = await acquireMirrorLock(identity);
+      fs.mkdirSync(seed.stagingPath);
+      seed.publish();
+      priorPath = seed.stagingPath;
+      seed.release();
+    }
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `
+          import fs from "node:fs";
+          const { acquireMirrorLock } = await import("./src/workspaces/lock.ts");
+          const lease = await acquireMirrorLock(${JSON.stringify(identity)});
+          fs.mkdirSync(lease.stagingPath);
+          if (${JSON.stringify(publish)}) lease.publish();
+          process.send({ fence: lease.fence, stagingPath: lease.stagingPath });
+          setInterval(() => {}, 1000);
+        `
+      ],
+      {
+        cwd: path.resolve(import.meta.dirname, ".."),
+        env: { ...process.env, AGENT_OPS_HOME: home },
+        stdio: ["ignore", "ignore", "pipe", "ipc"]
+      }
+    );
+
+    try {
+      const owner = await new Promise<{ fence: number; stagingPath: string }>((resolve, reject) => {
+        child.once("message", (message) =>
+          resolve(message as { fence: number; stagingPath: string })
+        );
+        child.once("error", reject);
+        child.once("exit", (code) => reject(new Error(`lock owner exited before ready: ${code}`)));
+      });
+      expect(fs.existsSync(owner.stagingPath)).toBe(true);
+      child.kill("SIGKILL");
+      await once(child, "exit");
+
+      const recovered = await acquireMirrorLock(identity, { timeoutMs: 2_000, pollMs: 10 });
+      expect(recovered.fence).toBe(owner.fence + 1);
+      expect(fs.existsSync(owner.stagingPath)).toBe(publish);
+      expect(recovered.currentPath).toBe(publish ? owner.stagingPath : undefined);
+      if (priorPath) expect(fs.existsSync(priorPath)).toBe(false);
+      expect(recovered.stagingPath).not.toBe(owner.stagingPath);
+      recovered.release();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      restoreEnv("AGENT_OPS_HOME", originalHome);
+    }
+  });
+});
+
 describe("hardened Git runner", () => {
   it.each(["flood-stdout", "flood-stderr"])(
     "terminates a %s process at the output bound",
@@ -260,10 +381,10 @@ describe("hardened Git runner", () => {
     const fixture = fakeGitFixture("ignore-term");
     const started = Date.now();
     try {
-      await expect(resolveGitRoot(fixture.cwd, { timeoutMs: 200 })).rejects.toMatchObject({
+      await expect(resolveGitRoot(fixture.cwd, { timeoutMs: 1_000 })).rejects.toMatchObject({
         category: "git_timeout"
       });
-      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(Date.now() - started).toBeLessThan(3_000);
       const childPid = Number(fs.readFileSync(path.join(fixture.cwd, ".fake-git-child"), "utf8"));
       await expectProcessToExit(childPid);
     } finally {

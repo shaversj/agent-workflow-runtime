@@ -4,12 +4,14 @@ import path from "node:path";
 import {
   checkoutDetached,
   cloneMirror,
+  cloneMirrorFromLocal,
   cloneWithoutCheckout,
   fetchMirror,
   resolveCommit,
   resolveGitRoot,
   type GitRunnerOptions
 } from "./git.js";
+import { acquireMirrorLock } from "./lock.js";
 import { parseTargetRef, normalizedTargetRef } from "./target.js";
 import {
   targetStorageKey,
@@ -68,31 +70,52 @@ async function prepareGitUrlWorkspace(
   options: GitRunnerOptions
 ) {
   const ref = target.ref ?? "HEAD";
-  const cachePath = path.join(workspaceCachePath(), `${targetStorageKey(target)}.git`);
+  const cacheKey = targetStorageKey(target);
   const displayOrigin = safeGitUrlForDisplay(target.url);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  if (fs.existsSync(cachePath)) {
-    await fetchMirror(target.url, cachePath, target.policy, options);
-  } else {
-    try {
-      await cloneMirror(target.url, cachePath, target.policy, options);
-    } catch (error) {
-      fs.rmSync(cachePath, { recursive: true, force: true });
-      throw error;
-    }
-  }
+  fs.mkdirSync(workspaceCachePath(), { recursive: true });
+  const lock = await acquireMirrorLock(cacheKey, { signal: options.signal });
+  let published = false;
+  let workspace: WorkspaceLease | undefined;
 
-  const commitSha = await resolveCommit(cachePath, ref, options);
-  return checkoutWorkspace({
-    target,
-    source: "git-url",
-    origin: target.url,
-    displayOrigin,
-    ref,
-    commitSha,
-    remote: cachePath,
-    options
-  });
+  try {
+    if (lock.currentPath) {
+      try {
+        await cloneMirrorFromLocal(lock.currentPath, lock.stagingPath, options);
+      } catch (error) {
+        fs.rmSync(lock.stagingPath, { recursive: true, force: true });
+        if (options.signal?.aborted) throw error;
+        await cloneMirror(target.url, lock.stagingPath, target.policy, options);
+      }
+      await fetchMirror(target.url, lock.stagingPath, target.policy, options);
+    } else {
+      await cloneMirror(target.url, lock.stagingPath, target.policy, options);
+    }
+
+    const commitSha = await resolveCommit(lock.stagingPath, ref, options);
+    workspace = await checkoutWorkspace({
+      target,
+      source: "git-url",
+      origin: target.url,
+      displayOrigin,
+      ref,
+      commitSha,
+      remote: lock.stagingPath,
+      options
+    });
+    lock.assertOwned();
+    const previousPath = lock.publish();
+    published = true;
+    if (previousPath) fs.rmSync(previousPath, { recursive: true, force: true });
+    return workspace;
+  } catch (error) {
+    if (workspace) await workspace.cleanup();
+    throw error;
+  } finally {
+    if (!published) {
+      fs.rmSync(lock.stagingPath, { recursive: true, force: true });
+    }
+    lock.release();
+  }
 }
 
 async function checkoutWorkspace(input: {
