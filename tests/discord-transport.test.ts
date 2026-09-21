@@ -27,7 +27,13 @@ it("uploads multipart replies after the real coding SDK loads in the bot process
       });
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
-      const client = createDiscordClient(loadDiscordBotConfig({ DISCORD_BOT_TOKEN: "local-test" }));
+      const client = createDiscordClient(
+        loadDiscordBotConfig({
+          DISCORD_BOT_TOKEN: "local-test",
+          DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+          DISCORD_ALLOWED_GUILD_IDS: "20000000000000001"
+        })
+      );
       client.rest.setToken("local-test");
       client.rest.options.api = "http://127.0.0.1:" + server.address().port;
       client.rest.options.timeout = 1000;

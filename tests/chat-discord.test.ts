@@ -31,7 +31,13 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("Discord chat surface", () => {
   it("disables SDK retries so uncertain sends cannot bypass delivery tracking", async () => {
-    const client = createDiscordClient(loadDiscordBotConfig({ DISCORD_BOT_TOKEN: "test" }));
+    const client = createDiscordClient(
+      loadDiscordBotConfig({
+        DISCORD_BOT_TOKEN: "test",
+        DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001"
+      })
+    );
     try {
       expect(client.rest.options.retries).toBe(0);
     } finally {
@@ -552,44 +558,104 @@ describe("Discord chat surface", () => {
   it("loads Discord bot guardrail config from environment variables", () => {
     const config = loadDiscordBotConfig({
       DISCORD_BOT_TOKEN: "token-value",
-      DISCORD_ALLOWED_GUILD_IDS: "guild-1, guild-2",
-      DISCORD_ALLOWED_CHANNEL_IDS: "channel-1",
+      DISCORD_ALLOWED_USER_IDS: "10000000000000001,10000000000000002",
+      DISCORD_ALLOWED_GUILD_IDS: "20000000000000001,20000000000000002",
+      DISCORD_ALLOWED_CHANNEL_IDS: "30000000000000001",
+      DISCORD_LOCAL_REPO_USER_IDS: "10000000000000001",
       DISCORD_DEFAULT_REPO_PATH: "/tmp/demo",
       DISCORD_DEFAULT_MODEL: "MiniMax-M3",
       DISCORD_TIMEOUT_MS: "1000",
-      DISCORD_ENABLED_PLUGIN_SOURCES: "readiness,deploy",
-      DISCORD_ALLOW_DMS: "true"
+      DISCORD_ENABLED_PLUGIN_SOURCES: "readiness,deploy"
     });
 
     expect(config.token).toBe("token-value");
-    expect([...config.allowedGuildIds]).toEqual(["guild-1", "guild-2"]);
-    expect([...config.allowedChannelIds]).toEqual(["channel-1"]);
+    expect([...config.allowedUserIds]).toEqual(["10000000000000001", "10000000000000002"]);
+    expect([...config.allowedGuildIds]).toEqual(["20000000000000001", "20000000000000002"]);
+    expect([...config.allowedChannelIds]).toEqual(["30000000000000001"]);
+    expect([...config.localRepoUserIds]).toEqual(["10000000000000001"]);
     expect(config.defaultRepoPath).toBe("/tmp/demo");
     expect(config.defaultModel).toBe("MiniMax-M3");
     expect(config.defaultTimeoutMs).toBe(1000);
     expect([...config.enabledPluginSources]).toEqual(["readiness", "deploy"]);
-    expect(config.allowDms).toBe(true);
+    expect(config.allowDms).toBe(false);
   });
 
   it("enables readiness and GitHub plugin sources by default", () => {
     const config = loadDiscordBotConfig({
-      DISCORD_BOT_TOKEN: "token-value"
+      DISCORD_BOT_TOKEN: "token-value",
+      DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+      DISCORD_ALLOWED_CHANNEL_IDS: "30000000000000001"
     });
 
     expect([...config.enabledPluginSources]).toEqual(["readiness", "github"]);
   });
 
+  it.each([
+    ["missing users", { DISCORD_ALLOWED_GUILD_IDS: "20000000000000001" }],
+    ["missing guild and channel", { DISCORD_ALLOWED_USER_IDS: "10000000000000001" }],
+    [
+      "malformed user IDs",
+      {
+        DISCORD_ALLOWED_USER_IDS: "not-a-discord-id",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001"
+      }
+    ],
+    [
+      "direct messages",
+      {
+        DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001",
+        DISCORD_ALLOW_DMS: "true"
+      }
+    ],
+    [
+      "local defaults without a local-path capability",
+      {
+        DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001",
+        DISCORD_DEFAULT_REPO_PATH: "/tmp/demo"
+      }
+    ],
+    [
+      "local-path capability outside the user allowlist",
+      {
+        DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001",
+        DISCORD_LOCAL_REPO_USER_IDS: "10000000000000002"
+      }
+    ]
+  ])("rejects %s before Discord startup", (_name, policy) => {
+    expect(() => loadDiscordBotConfig({ DISCORD_BOT_TOKEN: "token-value", ...policy })).toThrow();
+  });
+
+  it("accepts guild-only and channel-only restrictions", () => {
+    const shared = {
+      DISCORD_BOT_TOKEN: "token-value",
+      DISCORD_ALLOWED_USER_IDS: "10000000000000001"
+    };
+    expect(
+      loadDiscordBotConfig({ ...shared, DISCORD_ALLOWED_GUILD_IDS: "20000000000000001" })
+        .allowedGuildIds
+    ).toEqual(new Set(["20000000000000001"]));
+    expect(
+      loadDiscordBotConfig({ ...shared, DISCORD_ALLOWED_CHANNEL_IDS: "30000000000000001" })
+        .allowedChannelIds
+    ).toEqual(new Set(["30000000000000001"]));
+  });
+
   it("accepts only allowed Discord messages", () => {
     const config = {
+      allowedUserIds: new Set(["user-1"]),
       allowedGuildIds: new Set(["guild-1"]),
-      allowedChannelIds: new Set(["channel-1"]),
-      allowDms: false
+      allowedChannelIds: new Set(["channel-1"])
     };
 
     expect(
       shouldAcceptDiscordMessage(
         {
           isBot: false,
+          isWebhook: false,
+          authorId: "user-1",
           guildId: "guild-1",
           channelId: "channel-1",
           mentionedUserIds: new Set(["bot-1"]),
@@ -602,6 +668,8 @@ describe("Discord chat surface", () => {
       shouldAcceptDiscordMessage(
         {
           isBot: false,
+          isWebhook: false,
+          authorId: "user-1",
           guildId: "guild-1",
           channelId: "channel-1",
           mentionedUserIds: new Set(),
@@ -614,6 +682,8 @@ describe("Discord chat surface", () => {
       shouldAcceptDiscordMessage(
         {
           isBot: true,
+          isWebhook: false,
+          authorId: "user-1",
           guildId: "guild-1",
           channelId: "channel-1",
           mentionedUserIds: new Set(["bot-1"]),
@@ -622,6 +692,29 @@ describe("Discord chat surface", () => {
         config
       )
     ).toBe(false);
+    for (const denied of [
+      { authorId: "user-2" },
+      { guildId: "guild-2" },
+      { channelId: "channel-2" },
+      { guildId: undefined },
+      { isWebhook: true }
+    ]) {
+      expect(
+        shouldAcceptDiscordMessage(
+          {
+            isBot: false,
+            isWebhook: false,
+            authorId: "user-1",
+            guildId: "guild-1",
+            channelId: "channel-1",
+            mentionedUserIds: new Set(["bot-1"]),
+            botUserId: "bot-1",
+            ...denied
+          },
+          config
+        )
+      ).toBe(false);
+    }
   });
 });
 

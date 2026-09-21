@@ -28,7 +28,8 @@ vi.mock("../src/harness/model.js", () => ({
 
 const config = loadDiscordBotConfig({
   DISCORD_BOT_TOKEN: "fake-no-login",
-  DISCORD_ALLOW_DMS: "true"
+  DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+  DISCORD_ALLOWED_GUILD_IDS: "20000000000000001"
 });
 beforeEach(() => {
   vi.stubEnv("AGENT_OPS_HOME", fs.mkdtempSync(path.join(os.tmpdir(), "discord-history-")));
@@ -45,13 +46,13 @@ function inbound() {
   const reply = vi.fn().mockResolvedValue(status);
   const message = {
     id: "source-1",
-    guildId: null,
-    channelId: "channel-1",
+    guildId: "20000000000000001",
+    channelId: "30000000000000001",
     content: "run a readiness sweep",
-    author: { id: "user-1", bot: false },
+    author: { id: "10000000000000001", bot: false },
     client: { user: { id: "bot-user-1" }, application: { id: "application-1" } },
-    mentions: { users: { map: () => [] } },
-    channel: { type: 1 },
+    mentions: { users: { map: () => ["bot-user-1"] } },
+    channel: { type: 0 },
     reply
   };
   return {
@@ -92,15 +93,20 @@ function answer(text: string) {
 }
 
 describe("Discord durable delivery", () => {
-  it.each(["ambient", "unauthorized", "bot"])(
+  it.each(["wrong-guild", "wrong-channel", "wrong-user", "dm", "bot", "webhook"])(
     "excludes %s before consulting history",
     async (kind) => {
       const accept = vi.spyOn(interactions, "beginInteraction");
       const input = inbound();
       input.message.author.bot = kind === "bot";
-      if (kind === "ambient") Object.assign(input.message, { guildId: "guild-1" });
+      if (kind === "wrong-guild") input.message.guildId = "20000000000000002";
+      if (kind === "wrong-user") input.message.author.id = "10000000000000002";
+      if (kind === "dm") input.message.guildId = null;
+      if (kind === "webhook") Object.assign(input.message, { webhookId: "40000000000000001" });
       const policy =
-        kind === "unauthorized" ? { ...config, allowedChannelIds: new Set(["other"]) } : config;
+        kind === "wrong-channel"
+          ? { ...config, allowedChannelIds: new Set(["30000000000000002"]) }
+          : config;
       await handleDiscordMessage(input.message as unknown as Message, policy);
       expect(input.reply).not.toHaveBeenCalled();
       expect(accept).not.toHaveBeenCalled();
@@ -108,6 +114,35 @@ describe("Discord durable delivery", () => {
       expect(transport).not.toHaveBeenCalled();
     }
   );
+
+  it("rejects unsafe explicit repository targets before history and model work", async () => {
+    const accept = vi.spyOn(interactions, "beginInteraction");
+    const input = inbound();
+    input.message.content =
+      "<@bot-user-1> sweep repo=https://token@github.com/example/demo?secret=value";
+
+    await input.handle();
+
+    expect(input.reply).not.toHaveBeenCalled();
+    expect(accept).not.toHaveBeenCalled();
+    expect(openHistoryReader()).toBeUndefined();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("does not expose a configured local default to an admitted user without capability", async () => {
+    const accept = vi.spyOn(interactions, "beginInteraction");
+    const input = inbound();
+
+    await handleDiscordMessage(input.message as unknown as Message, {
+      ...config,
+      defaultRepoPath: "/configured/repo"
+    });
+
+    expect(input.reply).not.toHaveBeenCalled();
+    expect(accept).not.toHaveBeenCalled();
+    expect(openHistoryReader()).toBeUndefined();
+    expect(transport).not.toHaveBeenCalled();
+  });
 
   it("claims before acknowledgment and deduplicates across handlers by application identity", async () => {
     const input = inbound();
@@ -158,7 +193,8 @@ describe("Discord durable delivery", () => {
     });
     await handleDiscordMessage(input.message as unknown as Message, {
       ...config,
-      defaultRepoPath: "/configured/repo"
+      defaultRepoPath: "/configured/repo",
+      localRepoUserIds: new Set(["10000000000000001"])
     });
     expect(input.reply).toHaveBeenCalled();
     const reader = openHistoryReader()!;

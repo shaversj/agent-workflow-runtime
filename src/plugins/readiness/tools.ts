@@ -19,6 +19,7 @@ import {
   type InspectionRunShowResult
 } from "../../db/inspection.js";
 import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
+import { resolveAuthenticatedRequestTarget } from "../../surfaces/chat/request-context.js";
 import { definePlugin } from "../manifest.js";
 import { readinessPluginManifest } from "./manifest.js";
 import {
@@ -243,6 +244,13 @@ const readinessPlugin = definePlugin({
 export const readinessTools: RegisteredTool[] = readinessPlugin.tools;
 
 function resolveRepoTarget(repoTarget: string | undefined, context: RegisteredToolContext): string {
+  if (context.surface === "discord" || context.surface === "slack") {
+    const target = context.requestContext
+      ? resolveAuthenticatedRequestTarget(context.requestContext, repoTarget)
+      : undefined;
+    if (!target) throw new Error("Repository target is required.");
+    return target.kind === "git-url" ? target.url : target.path;
+  }
   const resolved = repoTarget ?? context.requestContext?.repoTarget;
   if (!resolved) {
     throw new Error("Repository target is required.");

@@ -4,6 +4,7 @@ import { collectGitHubEvidence, collectGitHubIssues } from "../src/plugins/githu
 import { resolveGitHubIdentity } from "../src/plugins/github/evidence.js";
 import { createGitHubTools, githubTools } from "../src/plugins/github/tools.js";
 import { ToolRegistry } from "../src/tools/registry.js";
+import { createChatRequestContext } from "../src/surfaces/chat/request-context.js";
 
 describe("github repository intelligence", () => {
   it("resolves safe GitHub identities from URL and SSH targets", () => {
@@ -185,19 +186,10 @@ describe("github repository intelligence", () => {
     });
   });
 
-  it("exposes read-only GitHub tools through the plugin registry", async () => {
+  it("exposes read-only GitHub tools through the plugin registry", () => {
     const registry = new ToolRegistry();
     registry.registerMany(githubTools);
-
-    const result = await registry
-      .get("github_get_repository_context")!
-      .execute({ repo_target: "https://gitlab.com/example/demo" }, { surface: "discord" });
-
-    expect(result.result).toMatchObject({
-      available: false,
-      reason: "not_github"
-    });
-    expect(result.text).toContain('"available"');
+    expect(registry.get("github_get_repository_context")).toBeDefined();
     expect(githubTools.every((tool) => tool.readOnly === true)).toBe(true);
     expect(githubTools.every((tool) => tool.requiresApproval === false)).toBe(true);
     expect(githubTools.every((tool) => tool.allowedSurfaces?.includes("discord"))).toBe(true);
@@ -223,11 +215,9 @@ describe("github repository intelligence", () => {
         { repo_target: "https://github.com/example/demo" },
         {
           surface: "discord",
-          requestContext: {
-            sourceText: "github actions repo=https://github.com/example/demo",
-            explicitRepoTarget: "https://github.com/example/demo",
-            repoTarget: "https://github.com/example/demo"
-          }
+          requestContext: createChatRequestContext(
+            "github actions repo=https://github.com/example/demo"
+          )
         }
       );
 
@@ -240,6 +230,34 @@ describe("github repository intelligence", () => {
     } finally {
       vi.unstubAllGlobals();
       restoreEnv("GITHUB_TOKEN", originalToken);
+    }
+  });
+
+  it("ignores a model-supplied repository that differs from authenticated Discord context", async () => {
+    const requested: string[] = [];
+    const registry = new ToolRegistry();
+    vi.stubGlobal("fetch", (url: string | URL | Request) => {
+      const requestUrl = fetchUrl(url);
+      requested.push(requestUrl);
+      return Promise.resolve(jsonResponse(responseBodyFor(requestUrl)));
+    });
+    registry.registerMany(createGitHubTools({ fetch: globalThis.fetch }));
+
+    try {
+      await registry.get("github_get_repository_context")!.execute(
+        { repo_target: "https://github.com/attacker/override" },
+        {
+          surface: "discord",
+          requestContext: createChatRequestContext(
+            "github context repo=https://github.com/example/demo"
+          )
+        }
+      );
+
+      expect(requested).toEqual(["https://api.github.com/repos/example/demo"]);
+      expect(requested.every((url) => !url.includes("attacker"))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 
@@ -261,10 +279,9 @@ describe("github repository intelligence", () => {
         {},
         {
           surface: "discord",
-          requestContext: {
-            sourceText: "github context",
-            repoTarget: "https://github.com/example/demo"
-          }
+          requestContext: createChatRequestContext("github context", {
+            defaultRepoPath: "https://github.com/example/demo"
+          })
         }
       );
 

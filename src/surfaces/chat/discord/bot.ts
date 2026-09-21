@@ -14,6 +14,7 @@ import type { InteractionRecorder } from "../../../harness/interaction.js";
 import { externalErrorAsError, projectExternalError } from "../../../harness/external-error.js";
 import { logger } from "../../../logger.js";
 import { beginChatInteraction } from "../../../workflows/chat-agent.js";
+import { createChatRequestContext } from "../request-context.js";
 import { handleChatMessage } from "../runner.js";
 import type { ChatHandlerOptions } from "../types.js";
 import {
@@ -27,6 +28,8 @@ import { handleDiscordCoding } from "./coding.js";
 
 interface DiscordMessagePolicyInput {
   isBot: boolean;
+  isWebhook: boolean;
+  authorId: string;
   guildId?: string;
   channelId: string;
   mentionedUserIds: Set<string>;
@@ -91,6 +94,21 @@ export async function handleDiscordMessage(
   if (!chatMessage) return;
   if (/^code(?:\s|$)/.test(chatMessage.text)) {
     await handleDiscordCoding(message, chatMessage.text, options.signal);
+    return;
+  }
+
+  try {
+    const request = createChatRequestContext(chatMessage.text, {
+      defaultRepoPath: botConfig.defaultRepoPath
+    });
+    if (
+      request.repositoryTarget?.provenance.source === "operator-default" &&
+      request.repositoryTarget.kind === "local-git" &&
+      !botConfig.localRepoUserIds.has(inbound.authorId)
+    ) {
+      return;
+    }
+  } catch {
     return;
   }
 
@@ -309,20 +327,22 @@ function safeExternalNumber(value: unknown, key: string): number | undefined {
 
 export function shouldAcceptDiscordMessage(
   input: DiscordMessagePolicyInput,
-  botConfig: Pick<DiscordBotConfig, "allowedGuildIds" | "allowedChannelIds" | "allowDms">
+  botConfig: Pick<DiscordBotConfig, "allowedUserIds" | "allowedGuildIds" | "allowedChannelIds">
 ): boolean {
-  if (input.isBot) return false;
-  if (input.guildId && !isAllowed(input.guildId, botConfig.allowedGuildIds)) return false;
-  if (!input.guildId && !botConfig.allowDms) return false;
-  if (!isAllowed(input.channelId, botConfig.allowedChannelIds)) return false;
-  if (input.guildId && !input.mentionedUserIds.has(input.botUserId)) return false;
+  if (input.isBot || input.isWebhook || !input.guildId) return false;
+  if (!botConfig.allowedUserIds.has(input.authorId)) return false;
+  if (botConfig.allowedGuildIds.size > 0 && !botConfig.allowedGuildIds.has(input.guildId))
+    return false;
+  if (botConfig.allowedChannelIds.size > 0 && !botConfig.allowedChannelIds.has(input.channelId))
+    return false;
+  if (!input.mentionedUserIds.has(input.botUserId)) return false;
   return true;
 }
 
 function buildDiscordInboundMessage(message: Message, botUserId: string): DiscordInboundMessage {
   return {
     guildId: message.guildId ?? undefined,
-    channelId: message.channelId,
+    channelId: discordParentChannelId(message),
     threadId: discordThreadId(message),
     messageId: message.id,
     authorId: message.author.id,
@@ -336,11 +356,21 @@ function buildDiscordInboundMessage(message: Message, botUserId: string): Discor
 function discordPolicyInput(message: Message, botUserId: string): DiscordMessagePolicyInput {
   return {
     isBot: message.author.bot,
+    isWebhook: Boolean(message.webhookId),
+    authorId: message.author.id,
     guildId: message.guildId ?? undefined,
-    channelId: message.channelId,
+    channelId: discordParentChannelId(message),
     mentionedUserIds: new Set(message.mentions.users.map((user) => user.id)),
     botUserId
   };
+}
+
+function discordParentChannelId(message: Message): string {
+  return message.channel.type === ChannelType.PublicThread ||
+    message.channel.type === ChannelType.PrivateThread ||
+    message.channel.type === ChannelType.AnnouncementThread
+    ? (message.channel.parentId ?? message.channelId)
+    : message.channelId;
 }
 
 function discordThreadId(message: Message): string | undefined {
@@ -349,10 +379,6 @@ function discordThreadId(message: Message): string | undefined {
     message.channel.type === ChannelType.AnnouncementThread
     ? message.channelId
     : undefined;
-}
-
-function isAllowed(id: string, allowedIds: Set<string>): boolean {
-  return allowedIds.size === 0 || allowedIds.has(id);
 }
 
 function formatDiscordProgress(event: WorkflowProgressEvent): string | undefined {

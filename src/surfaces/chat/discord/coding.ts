@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { types } from "node:util";
 
-import { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder, ChannelType } from "discord.js";
 import type { Message } from "discord.js";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -17,6 +17,7 @@ import type { CodingTask } from "../../../plugins/coding/schemas.js";
 import { prepareCoding } from "../../../workflows/code.js";
 import { codingDecision, inspectCoding } from "../../../workflows/coding-approval.js";
 import { publishProposal } from "../../../workflows/publish-proposal.js";
+import { discordExplicitTargetProvenance, parseTargetRef } from "../../../workspaces/index.js";
 
 const pending = new Map<
   string,
@@ -47,6 +48,11 @@ export function parseDiscordCoding(text: string) {
   if (action === "prepare") {
     const [repository, baseBranch, ...words] = args;
     const task = parseCoding(CodingTaskSchema, { repository, baseBranch, task: words.join(" ") });
+    parseTargetRef(
+      `https://github.com/${task.repository}`,
+      task.baseBranch,
+      discordExplicitTargetProvenance()
+    );
     if (task.task.length > 1000) throw new Error("coding_discord_task_limit");
     return { action: "prepare" as const, task };
   }
@@ -69,7 +75,7 @@ export async function handleDiscordCoding(
 ): Promise<void> {
   if (message.author.bot) return;
   const principal = `discord:${message.author.id}`;
-  const conversation = `${message.guildId ?? "dm"}:${message.channelId}`;
+  const conversation = `${message.guildId ?? "dm"}:${discordParentChannelId(message)}`;
   const recording = beginInteraction(
     {
       source: "discord",
@@ -195,6 +201,14 @@ export async function handleDiscordCoding(
   } finally {
     recording.close();
   }
+}
+
+function discordParentChannelId(message: Message): string {
+  return message.channel.type === ChannelType.PublicThread ||
+    message.channel.type === ChannelType.PrivateThread ||
+    message.channel.type === ChannelType.AnnouncementThread
+    ? (message.channel.parentId ?? message.channelId)
+    : message.channelId;
 }
 
 const HttpStatusSchema = Type.Integer({ minimum: 400, maximum: 599 });

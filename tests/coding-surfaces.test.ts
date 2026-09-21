@@ -37,12 +37,20 @@ function discordFixture() {
   const reply = vi.fn<(input: unknown) => Promise<{ id: string }>>(() =>
     Promise.resolve({ id: "response" })
   );
-  const message = (id: string, user = "1", channel = "channel") =>
+  const message = (
+    id: string,
+    user = "1",
+    channel = "channel",
+    options: { parentId?: string } = {}
+  ) =>
     ({
       id,
       author: { id: user, bot: false },
       guildId: "guild",
       channelId: channel,
+      channel: options.parentId
+        ? { type: 11, parentId: options.parentId }
+        : { type: 0, parentId: null },
       client: { application: { id: "application" }, user: { id: "application" } },
       reply
     }) as unknown as Message;
@@ -72,6 +80,24 @@ describe("coding surface contracts", () => {
     expect(prepare).toHaveBeenCalledTimes(1);
     for (const call of f.reply.mock.calls)
       expect(call[0]).toMatchObject({ allowedMentions: { parse: [] } });
+  });
+  it("normalizes a thread and its parent channel to one coding conversation", async () => {
+    const f = discordFixture();
+    vi.spyOn(CodingGitHubSource.prototype, "base").mockResolvedValue("b".repeat(40));
+    const prepare = vi
+      .spyOn(coding, "prepareCoding")
+      .mockRejectedValue(new Error("coding_fixture_stop"));
+
+    await handleDiscordCoding(
+      f.message("prepare", "1", "thread", { parentId: "channel" }),
+      "code prepare owner/repo main Fix bug"
+    );
+    const content = f.reply.mock.calls[0]![0] as { content: string };
+    const id = /code confirm ([a-z0-9-]+)/.exec(content.content)![1]!;
+    await handleDiscordCoding(f.message("confirm", "1", "channel"), `code confirm ${id}`);
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(prepare.mock.calls[0]![4]).toMatchObject({ conversationKey: "guild:channel" });
   });
   it("deduplicates Discord requests and denies principals before GitHub acquisition", async () => {
     const f = discordFixture();

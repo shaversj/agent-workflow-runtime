@@ -6,6 +6,7 @@ import type { InteractionRecorder, RecordedToolInput } from "../harness/interact
 import { assertToolExecution } from "../harness/execution-policy.js";
 import type { ExecutionAuthority } from "../harness/execution-policy.js";
 import type { WorkflowProgressEvent } from "../harness/types.js";
+import type { TargetRef } from "../workspaces/types.js";
 
 const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
 
@@ -43,6 +44,7 @@ export interface ToolRequestContext {
   sourceText?: string;
   explicitRepoTarget?: string;
   repoTarget?: string;
+  repositoryTarget?: TargetRef;
   ref?: string;
   reportPath?: string;
   model?: string;

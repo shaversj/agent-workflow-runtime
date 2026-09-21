@@ -1,6 +1,7 @@
 # Discord Bot
 
-Agent Ops Kit can run readiness tools from Discord mentions or direct messages.
+Agent Ops Kit can run readiness and repository intelligence tools from authorized Discord
+mentions. Direct messages are intentionally unsupported.
 
 ## Environment
 
@@ -10,9 +11,11 @@ startup. The bot never loads `.env` from its process working directory or a targ
 
 ```bash
 DISCORD_BOT_TOKEN=
+DISCORD_ALLOWED_USER_IDS=
 DISCORD_ALLOWED_GUILD_IDS=
 DISCORD_ALLOWED_CHANNEL_IDS=
-DISCORD_DEFAULT_REPO_PATH=/path/to/repo
+DISCORD_LOCAL_REPO_USER_IDS=
+DISCORD_DEFAULT_REPO_PATH=https://github.com/org/repo
 DISCORD_DEFAULT_MODEL=MiniMax-M3
 DISCORD_TIMEOUT_MS=120000
 DISCORD_ENABLED_PLUGIN_SOURCES=readiness,github
@@ -21,9 +24,23 @@ MINIMAX_API_KEY=
 GITHUB_TOKEN=
 ```
 
-`DISCORD_BOT_TOKEN` is required. The allowlists are comma-separated Discord IDs. Empty allowlists mean the bot will accept any guild or channel it can see, so production use should set at least `DISCORD_ALLOWED_GUILD_IDS`.
+`DISCORD_BOT_TOKEN` and a nonempty `DISCORD_ALLOWED_USER_IDS` are required. At least one of
+`DISCORD_ALLOWED_GUILD_IDS` or `DISCORD_ALLOWED_CHANNEL_IDS` must also be nonempty. The values are
+comma-separated immutable numeric Discord IDs. When both guild and channel restrictions are set,
+both must match. The bot refuses to start when this policy is missing or malformed.
 
-Direct messages are disabled unless `DISCORD_ALLOW_DMS=true`.
+Direct messages, bot-authored messages, and webhook-authored messages are always rejected before
+history, model, tool, Git, or network work begins. `DISCORD_ALLOW_DMS=true` is rejected at startup.
+
+An explicit repository in chat must be a credential-free `https://github.com/...` URL. Local
+paths, other schemes or hosts, IP literals, ports, redirects, queries, and fragments are rejected.
+The authenticated request target is authoritative; a model-generated tool argument cannot replace
+it.
+
+`DISCORD_DEFAULT_REPO_PATH` may be a trusted operator-configured GitHub URL. It may also be a local
+path, but only users listed in both `DISCORD_ALLOWED_USER_IDS` and
+`DISCORD_LOCAL_REPO_USER_IDS` can use that local default. Chat messages can never select a local
+path directly.
 
 `DISCORD_ENABLED_PLUGIN_SOURCES` controls which plugin sources Discord can expose to the
 chat-agent workflow. It defaults to `readiness,github`. Source selection stays at the plugin
@@ -49,10 +66,9 @@ Enable these gateway intents for the bot:
 make discord
 ```
 
-The bot responds when mentioned in an allowed guild channel:
+The bot responds when an allowed user mentions it in an allowed guild channel:
 
 ```text
-@agent-ops sweep repo=/Users/wu36/Code/incident-triage-demo
 @agent-ops sweep repo=https://github.com/org/repo ref=main
 @agent-ops can you check whether this repo is ready for agents?
 @agent-ops where is the latest readiness report?
@@ -85,5 +101,5 @@ that selected tool locally. The readiness source can run a sweep, list runs, sho
 the latest report, or read a report. The GitHub source can read repository metadata, recent
 Actions runs, open pull requests, open issues, and releases for GitHub-backed targets. GitHub tool
 discovery includes each tool's input schema so the model does not have to guess argument names.
-Repeated delivery of the same Discord message ID is ignored in memory to avoid duplicate local
-runs.
+Repeated delivery of the same Discord message ID is rejected through durable platform,
+bot/application, and message identity so restarts do not duplicate work.

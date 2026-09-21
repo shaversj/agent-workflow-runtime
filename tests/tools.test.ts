@@ -24,6 +24,7 @@ import {
 import { displayInspectionTarget } from "../src/db/inspection.js";
 import { openHistoryStore } from "../src/db/index.js";
 import { historyArtifactsPath } from "../src/workspaces/storage.js";
+import { createChatRequestContext } from "../src/surfaces/chat/request-context.js";
 
 let testHome: string;
 beforeEach(() => {
@@ -267,11 +268,11 @@ describe("readiness plugin tools", () => {
       const sweep = await runSweepWorkflow(repoPath);
       const list = await registry
         .get("readiness_list_runs")!
-        .execute({ repo_path: repoPath }, { surface: "discord" });
+        .execute({ repo_path: repoPath }, discordRepoContext(repoPath));
       const runRef = (list.result as { runs: { run_ref: string }[] }).runs[0]!.run_ref;
       const show = await registry
         .get("readiness_show_run")!
-        .execute({ run_ref: runRef, repo_path: repoPath }, { surface: "discord" });
+        .execute({ run_ref: runRef, repo_path: repoPath }, discordRepoContext(repoPath));
 
       expect(list.text).toContain("status=skipped");
       expect(list.result).toMatchObject({
@@ -321,10 +322,10 @@ describe("readiness plugin tools", () => {
     try {
       const latest = await registry
         .get("readiness_get_latest_report")!
-        .execute({ repo_path: repoPath }, { surface: "discord" });
+        .execute({ repo_path: repoPath }, discordRepoContext(repoPath));
       const read = await registry
         .get("readiness_read_report")!
-        .execute({ repo_path: repoPath }, { surface: "discord" });
+        .execute({ repo_path: repoPath }, discordRepoContext(repoPath));
 
       expect(latest.text).toContain(reportPath);
       expect(latest.terminate).toBe(false);
@@ -345,7 +346,7 @@ describe("readiness plugin tools", () => {
     try {
       const latest = await registry
         .get("readiness_get_latest_report")!
-        .execute({ repo_path: repoPath }, { surface: "discord" });
+        .execute({ repo_path: repoPath }, discordRepoContext(repoPath));
 
       expect(latest.result).toEqual({ repo_path: displayInspectionTarget(repoPath), bytes: 0 });
       expect(latest.text).toContain("No readiness reports were found");
@@ -358,16 +359,17 @@ describe("readiness plugin tools", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoTarget = "https://token:secret@example.com/org/repo.git?api_key=abc";
+    const authenticatedTarget = "https://github.com/example/demo";
     const registry = new ToolRegistry();
     registry.registerMany(readinessTools);
 
     try {
       const latest = await registry
         .get("readiness_get_latest_report")!
-        .execute({ repo_path: repoTarget }, { surface: "discord" });
+        .execute({ repo_path: repoTarget }, discordRepoContext(authenticatedTarget));
       const output = `${latest.text}\n${JSON.stringify(latest.result)}`;
 
-      expect(output).toContain("[REDACTED]");
+      expect(output).toContain("https://github.com/example/demo");
       expect(output).not.toContain("token");
       expect(output).not.toContain("secret");
       expect(output).not.toContain("abc");
@@ -380,22 +382,23 @@ describe("readiness plugin tools", () => {
     const originalHome = process.env.AGENT_OPS_HOME;
     process.env.AGENT_OPS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-home-"));
     const repoTarget = "https://token:secret@example.com/org/repo.git?api_key=abc";
+    const authenticatedTarget = "https://github.com/example/demo";
     const registry = new ToolRegistry();
     registry.registerMany(readinessTools);
-    writeReport(repoTarget, "latest.md", "# Latest\n");
+    writeReport(authenticatedTarget, "latest.md", "# Latest\n");
 
     try {
       const latest = await registry
         .get("readiness_get_latest_report")!
-        .execute({ repo_path: repoTarget }, { surface: "discord" });
+        .execute({ repo_path: repoTarget }, discordRepoContext(authenticatedTarget));
       const read = await registry
         .get("readiness_read_report")!
-        .execute({ repo_path: repoTarget }, { surface: "discord" });
+        .execute({ repo_path: repoTarget }, discordRepoContext(authenticatedTarget));
 
       expect(latest.text).not.toContain("token");
       expect(latest.text).not.toContain("secret");
       expect(latest.text).not.toContain("abc");
-      expect(JSON.stringify(latest.result)).toContain("[REDACTED]");
+      expect(JSON.stringify(latest.result)).toContain("https://github.com/example/demo");
       expect(JSON.stringify(read.result)).not.toContain("token");
       expect(JSON.stringify(read.result)).not.toContain("secret");
       expect(JSON.stringify(read.result)).not.toContain("abc");
@@ -421,7 +424,7 @@ describe("readiness plugin tools", () => {
       expect(() =>
         registry
           .get("readiness_read_report")!
-          .execute({ repo_path: repoPath, report_path: symlinkPath }, { surface: "discord" })
+          .execute({ repo_path: repoPath, report_path: symlinkPath }, discordRepoContext(repoPath))
       ).toThrow(/registered readiness report/);
     } finally {
       restoreEnv("AGENT_OPS_HOME", originalHome);
@@ -438,7 +441,7 @@ describe("readiness plugin tools", () => {
     await expect(
       registry
         .get("readiness_run_sweep")!
-        .execute({ repo_path: repoPath }, { surface: "discord" }, controller.signal)
+        .execute({ repo_path: repoPath }, discordRepoContext(repoPath), controller.signal)
     ).resolves.toMatchObject({
       result: { status: "cancelled", error: "workflow_aborted", toolCalls: [] }
     });
@@ -448,6 +451,15 @@ describe("readiness plugin tools", () => {
 
 function tempRepo() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-"));
+}
+
+function discordRepoContext(repoTarget: string) {
+  return {
+    surface: "discord" as const,
+    requestContext: createChatRequestContext("inspect this repository", {
+      defaultRepoPath: repoTarget
+    })
+  };
 }
 
 function writeReport(repoPath: string, name: string, content: string): string {

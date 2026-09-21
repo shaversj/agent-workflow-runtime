@@ -5,6 +5,7 @@ import {
   type RegisteredTool,
   type RegisteredToolContext
 } from "../../tools/registry.js";
+import { resolveAuthenticatedRequestTarget } from "../../surfaces/chat/request-context.js";
 import { definePlugin } from "../manifest.js";
 import type { GitHubEvidenceClientOptions } from "./client.js";
 import {
@@ -126,6 +127,13 @@ function resolveGitHubToolTarget(
   params: GitHubTargetParamsType,
   context: RegisteredToolContext
 ): string {
+  if (context.surface === "discord" || context.surface === "slack") {
+    const target = context.requestContext
+      ? resolveAuthenticatedRequestTarget(context.requestContext, params.repo_target)
+      : undefined;
+    if (!target) throw new Error("Repository target is required.");
+    return target.kind === "git-url" ? target.url : target.path;
+  }
   const repoTarget = params.repo_target ?? context.requestContext?.repoTarget;
   if (!repoTarget) throw new Error("Repository target is required.");
   return repoTarget;
@@ -136,6 +144,5 @@ function shouldUseAmbientGitHubToken(
   context: RegisteredToolContext
 ): boolean {
   if (context.surface !== "discord" && context.surface !== "slack") return true;
-  if (params.repo_target) return false;
   return Boolean(context.requestContext?.repoTarget && !context.requestContext.explicitRepoTarget);
 }

@@ -50,8 +50,8 @@ database records.
 If a check detects a likely secret, record only safe evidence such as file path,
 line number, key name shape, or finding category. Do not copy the secret value.
 
-Raw credentialed Git URLs are allowed only at the clone/fetch boundary. Persist, log, report, and
-return sanitized display identities such as `https://github.com/org/repo` or a redacted URL.
+Credentialed Git URLs are rejected at target parsing and never reach clone/fetch. Persist, log,
+report, and return sanitized display identities such as `https://github.com/org/repo`.
 Do not store GitHub API tokens, authorization headers, or credential-bearing URLs in tool results.
 Redact secret-shaped text from GitHub API summaries before storing tool calls, sending evidence to
 the model, or rendering reports.
@@ -73,11 +73,18 @@ persist completeness flags. Full report artifacts use the same secret redaction 
 transcript size cap. These controls do not guarantee detection of arbitrary unlabeled sensitive
 text and do not cap total history disk consumption.
 
-Authorize Discord messages before durable claiming. Deduplicate by platform, bot/application
-identity, and source message ID. Duplicate requests do not replay work or expose the old answer.
-Keep user-specific conversation grouping and full transcripts local; existing Discord tools may
-return only request-scoped run metadata and registered report content. Reject symlinked or
-unregistered report paths. Read-only queries must not recover or mutate interaction state.
+Authorize Discord messages before target parsing or durable claiming. Require a nonempty immutable
+user allowlist and at least one immutable guild or channel restriction at startup; configured
+dimensions match conjunctively. Reject DMs, bots, webhooks, missing mentions, and authorization
+mismatches without history, model, tool, Git, or network activity. Explicit chat targets are
+credential-free HTTPS URLs on the exact approved host. A Discord local default requires a separate
+user capability, and model tool arguments cannot replace the authenticated request target.
+
+Deduplicate accepted requests by platform, bot/application identity, and source message ID.
+Duplicate requests do not replay work or expose the old answer. Keep user-specific conversation
+grouping and full transcripts local; existing Discord tools may return only request-scoped run
+metadata and registered report content. Reject symlinked or unregistered report paths. Read-only
+queries must not recover or mutate interaction state.
 
 ## Browser Inspection
 
