@@ -78,6 +78,26 @@ describe("trusted env loading", () => {
       expect(String(error)).not.toContain(configured);
     }
   });
+
+  it("rejects explicit configuration stored inside a Git checkout", () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-target-"));
+    fs.mkdirSync(path.join(checkout, ".git"));
+    const envPath = path.join(checkout, "runtime.env");
+    fs.writeFileSync(envPath, "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED=target\n");
+    process.env.AGENT_OPS_ENV_FILE = envPath;
+
+    expect(() => trustedEnvPath()).toThrowError("trusted_env_file_invalid");
+  });
+
+  it("rejects configuration writable by another local principal", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-config-"));
+    const envPath = path.join(directory, "runtime.env");
+    fs.writeFileSync(envPath, "AGENT_OPS_KIT_TEST_ENV_FILE_LOADED=unsafe\n", { mode: 0o666 });
+    fs.chmodSync(envPath, 0o666);
+    process.env.AGENT_OPS_ENV_FILE = envPath;
+
+    expect(() => trustedEnvPath()).toThrowError("trusted_env_file_invalid");
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined) {

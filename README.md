@@ -40,7 +40,8 @@ network access and implicit dependency downloads are disabled.
 
 Configure `$AGENT_OPS_HOME/.env` using the coding section of `.env.example`, or set
 `AGENT_OPS_ENV_FILE` to an absolute operator-owned file before startup. Agent Ops Kit never loads
-runtime configuration from the process working directory. Allow explicit principals
+runtime configuration from the process working directory or a Git checkout. The file and its parent
+directory must be owned by the current user and not writable by other users. Allow explicit principals
 (`cli:<uid>` or `discord:<user-id>`) and repository profiles with a digest-pinned image,
 required verification commands, ignored generated directory names, and the allowed principal.
 Profiles are operator configuration, never repository/model configuration. The built-in Node
