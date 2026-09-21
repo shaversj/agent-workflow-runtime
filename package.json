@@ -2,13 +2,8 @@
   "name": "agent-ops-kit",
   "version": "0.1.0",
   "description": "Tool-centered harness for agent-friendly software repositories.",
+  "private": true,
   "type": "module",
-  "bin": {
-    "agent-ops": "./dist/cli.js"
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && pnpm build:web",
     "build:web": "vite build",

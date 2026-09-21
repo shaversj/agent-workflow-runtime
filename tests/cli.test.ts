@@ -9,6 +9,21 @@ import { runReportsCli } from "../src/surfaces/cli/reports.js";
 import { runRunsCli } from "../src/surfaces/cli/runs.js";
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 
+describe("package contract", () => {
+  it("is source-only and cannot be published to npm", () => {
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(import.meta.dirname, "..", "package.json"), "utf8")
+    ) as Record<string, unknown>;
+
+    expect(packageJson.private).toBe(true);
+    expect(packageJson).not.toHaveProperty("bin");
+    expect(packageJson).not.toHaveProperty("files");
+    expect(packageJson.scripts).toMatchObject({
+      sweep: "tsx src/cli.ts sweep",
+    });
+  });
+});
+
 describe("inspection CLI", () => {
   afterEach(() => {
     process.exitCode = undefined;
