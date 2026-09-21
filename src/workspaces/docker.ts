@@ -9,6 +9,9 @@ import { logger } from "../logger.js";
 import { parseProfile } from "./execution.js";
 import type { CodingProfile } from "./execution.js";
 
+const workerOwner = crypto.randomUUID();
+const activeWorkers = new Set<DockerWorker>();
+
 // Trusted worker protocol. Repository code and paths never become host command strings.
 const fileProtocol = String.raw`
 const fs = require('node:fs'), path = require('node:path');
@@ -100,6 +103,8 @@ export class DockerWorker {
         worker.id,
         "--label",
         "agent-ops.coding=true",
+        "--label",
+        `agent-ops.owner=${workerOwner}`,
         ...(jobId ? ["--label", `agent-ops.job=${jobId}`] : []),
         "--network=none",
         "--read-only",
@@ -127,6 +132,7 @@ export class DockerWorker {
       if (created.exitCode !== 0) throw new Error("coding_worker_unavailable");
       const started = await worker.docker(["start", worker.id]);
       if (started.exitCode !== 0) throw new Error("coding_worker_unavailable");
+      activeWorkers.add(worker);
       logger.info({ worker_id: worker.id }, "coding.worker_started");
       return worker;
     } catch {
@@ -288,6 +294,35 @@ export class DockerWorker {
       if (removed.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");
     }
   }
+  static async closeOwnedWorkers(this: void): Promise<void> {
+    const results = await Promise.allSettled([...activeWorkers].map((worker) => worker.close()));
+    if (results.some((result) => result.status === "rejected"))
+      throw new Error("coding_worker_cleanup_failed");
+  }
+  static async forceCleanupOwnedWorkers(this: void): Promise<void> {
+    const worker = new DockerWorker("agent-ops-cleanup", {
+      image: "unused",
+      requiredChecks: [],
+      ignore: [],
+      principal: "unused"
+    });
+    const result = await worker.docker([
+      "ps",
+      "--all",
+      "--filter=label=agent-ops.coding=true",
+      `--filter=label=agent-ops.owner=${workerOwner}`,
+      "--format={{.ID}}"
+    ]);
+    if (result.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");
+    const ids = result.output.trim().split("\n").filter(Boolean);
+    if (ids.length > 16 || ids.some((id) => !/^[a-f0-9]{12,64}$/.test(id)))
+      throw new Error("coding_worker_cleanup_failed");
+    for (const id of ids) {
+      const removed = await worker.docker(["rm", "--force", id]);
+      if (removed.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");
+    }
+    activeWorkers.clear();
+  }
   async command(command: string, signal?: AbortSignal, timeoutMs = 120000) {
     const result = await this.docker(
       ["exec", this.id, "/bin/sh", "-c", command],
@@ -300,13 +335,13 @@ export class DockerWorker {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
-    this.closing = this.docker(["rm", "--force", this.id], undefined, undefined, 10000).then(
-      (result) => {
+    this.closing = this.docker(["rm", "--force", this.id], undefined, undefined, 10000)
+      .then((result) => {
         if (result.exitCode !== 0 && !result.output.includes("No such container"))
           throw new Error("coding_worker_cleanup_failed");
         logger.info({ worker_id: this.id }, "coding.worker_removed");
-      }
-    );
+      })
+      .finally(() => activeWorkers.delete(this));
     return this.closing;
   }
 }

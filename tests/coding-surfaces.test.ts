@@ -5,11 +5,13 @@ import path from "node:path";
 import type { Message } from "discord.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { openHistoryStore } from "../src/db/index.js";
 import { parseCodingCli } from "../src/surfaces/cli/code.js";
 import { parseDiscordCoding, handleDiscordCoding } from "../src/surfaces/chat/discord/coding.js";
 import { loadCodingPolicy, codingProfile } from "../src/plugins/coding/config.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
 import * as coding from "../src/workflows/code.js";
+import { DockerWorker } from "../src/workspaces/docker.js";
 
 const homes: string[] = [];
 afterEach(() => {
@@ -55,6 +57,35 @@ function discordFixture() {
       reply
     }) as unknown as Message;
   return { message, reply };
+}
+
+function seedDiscordJob(home: string, id: string, active = false) {
+  const store = openHistoryStore({ home });
+  try {
+    const accepted = store.acceptInteraction({
+      source: "discord",
+      kind: "coding_prepare",
+      userMessage: "seed",
+      applicationId: "application",
+      sourceMessageId: `seed-${id}`,
+      conversationKey: "guild:channel"
+    });
+    store.coding(accepted.runId).create({
+      id,
+      principal: "discord:1",
+      repository: "owner/repo",
+      baseBranch: "main",
+      baseCommit: "b".repeat(40),
+      runId: accepted.runId,
+      conversationKey: "guild:channel",
+      status: "preparing",
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString()
+    });
+    if (!active) store.finishInteraction({ id: accepted.interactionId, status: "failed" });
+  } finally {
+    store.close();
+  }
 }
 
 describe("coding surface contracts", () => {
@@ -110,6 +141,38 @@ describe("coding surface contracts", () => {
     expect(base).toHaveBeenCalledTimes(1);
     expect(f.reply).toHaveBeenCalledTimes(2);
   });
+  it("recovers only the original Discord principal and conversation without replay", async () => {
+    const f = discordFixture();
+    seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-recover");
+    const cleanup = vi.spyOn(DockerWorker, "cleanupJob").mockResolvedValue(undefined);
+    const source = vi.spyOn(CodingGitHubSource.prototype, "base");
+
+    await handleDiscordCoding(f.message("wrong-user", "2"), "code recover job-recover");
+    await handleDiscordCoding(f.message("wrong-channel", "1", "other"), "code recover job-recover");
+    expect(cleanup).not.toHaveBeenCalled();
+
+    await handleDiscordCoding(f.message("recover"), "code recover job-recover");
+    await handleDiscordCoding(f.message("recover-again"), "code recover job-recover");
+
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(source).not.toHaveBeenCalled();
+    const replies = f.reply.mock.calls.map((call) => call[0] as { content: string });
+    expect(replies.filter((reply) => reply.content.includes("Work was not replayed"))).toHaveLength(
+      2
+    );
+  });
+  it("denies recovery while the original coding owner is active", async () => {
+    const f = discordFixture();
+    seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-active", true);
+    const cleanup = vi.spyOn(DockerWorker, "cleanupJob").mockResolvedValue(undefined);
+
+    await handleDiscordCoding(f.message("recover-active"), "code recover job-active");
+
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
+      content: "coding_recovery_unavailable"
+    });
+  });
   it("requires explicit repository, base and task; no default target or model approval claims", () => {
     expect(parseCodingCli(["prepare", "owner/repo", "main", "fix", "bug"]).action).toBe("prepare");
     for (const args of [
@@ -126,6 +189,10 @@ describe("coding surface contracts", () => {
     ])
       expect(() => parseCodingCli(args)).toThrow();
     expect(parseDiscordCoding("code prepare owner/repo main fix bug").action).toBe("prepare");
+    expect(parseDiscordCoding("code recover job-1")).toEqual({
+      action: "recover",
+      id: "job-1"
+    });
     expect(() => parseDiscordCoding("code approve job yes")).toThrow();
     expect(() => parseDiscordCoding("code confirm job extra claims")).toThrow();
   });

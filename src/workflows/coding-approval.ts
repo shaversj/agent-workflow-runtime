@@ -6,6 +6,7 @@ import type { InteractionRecorder } from "../harness/interaction.js";
 import { codingProfile } from "../plugins/coding/config.js";
 import type { CodingPolicy } from "../plugins/coding/config.js";
 import { parseCoding } from "../plugins/coding/schemas.js";
+import { DockerWorker } from "../workspaces/docker.js";
 import { proposalDisplay, cancelCodingJob } from "./code.js";
 
 const DecisionSchema = Type.Object(
@@ -72,4 +73,25 @@ export function codingDecision(
       force: true
     });
   return next.status;
+}
+
+export async function recoverCoding(
+  jobId: string,
+  principal: string,
+  policy: CodingPolicy,
+  recording: InteractionRecorder,
+  conversationKey?: string
+): Promise<string> {
+  const details = inspectCoding(jobId, principal, policy, recording, conversationKey);
+  recording.coding((store) => store.recover(details.job.id, principal));
+  await recording.recordTool(
+    {
+      name: "coding.cleanup_workers",
+      source: "coding",
+      kind: "capability",
+      input: { jobId: details.job.id }
+    },
+    () => DockerWorker.cleanupJob(details.job.id)
+  );
+  return "Stopped coding job recovered; owned workers removed. Work was not replayed.";
 }

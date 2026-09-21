@@ -10,6 +10,7 @@ export interface DiscordBotConfig {
   defaultRepoPath?: string;
   defaultModel?: string;
   defaultTimeoutMs?: number;
+  shutdownGraceMs: number;
   enabledPluginSources: Set<string>;
   allowDms: false;
 }
@@ -52,7 +53,13 @@ export function loadDiscordBotConfig(env: NodeJS.ProcessEnv = process.env): Disc
     localRepoUserIds,
     defaultRepoPath,
     defaultModel: optionalEnv(env.DISCORD_DEFAULT_MODEL ?? env.HARNESS_MODEL),
-    defaultTimeoutMs: positiveIntegerEnv(env.DISCORD_TIMEOUT_MS ?? env.TIMEOUT_MS),
+    defaultTimeoutMs: positiveIntegerEnv(
+      env.DISCORD_TIMEOUT_MS ?? env.TIMEOUT_MS,
+      "DISCORD_TIMEOUT_MS"
+    ),
+    shutdownGraceMs:
+      positiveIntegerEnv(env.DISCORD_SHUTDOWN_GRACE_MS, "DISCORD_SHUTDOWN_GRACE_MS", 120_000) ??
+      10_000,
     enabledPluginSources: csvSet(env.DISCORD_ENABLED_PLUGIN_SOURCES ?? "readiness,github"),
     allowDms: false
   };
@@ -81,13 +88,17 @@ function optionalEnv(value: string | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-function positiveIntegerEnv(value: string | undefined): number | undefined {
+function positiveIntegerEnv(
+  value: string | undefined,
+  name: string,
+  maximum = Number.MAX_SAFE_INTEGER
+): number | undefined {
   const trimmed = optionalEnv(value);
   if (!trimmed) return undefined;
-  if (!/^\d+$/.test(trimmed)) throw new Error("DISCORD_TIMEOUT_MS must be a positive integer");
+  if (!/^\d+$/.test(trimmed)) throw new Error(`${name} must be a positive integer`);
   const parsed = Number(trimmed);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("DISCORD_TIMEOUT_MS must be a positive integer");
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > maximum) {
+    throw new Error(`${name} must be a positive integer no greater than ${maximum}`);
   }
   return parsed;
 }

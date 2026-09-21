@@ -8,9 +8,8 @@ import { redactApplicationText } from "../../harness/redaction.js";
 import { loadCodingPolicy, codingProfile } from "../../plugins/coding/config.js";
 import { codingPlugin } from "../../plugins/coding/tools.js";
 import { CodingTaskSchema, parseCoding } from "../../plugins/coding/schemas.js";
-import { codingDecision, inspectCoding } from "../../workflows/coding-approval.js";
+import { codingDecision, inspectCoding, recoverCoding } from "../../workflows/coding-approval.js";
 import { publishProposal } from "../../workflows/publish-proposal.js";
-import { DockerWorker } from "../../workspaces/docker.js";
 import { normalizeCliArgs } from "./args.js";
 
 const SelectorSchema = Type.Object(
@@ -103,18 +102,7 @@ export async function runCodingCli(args: string[]): Promise<void> {
       );
       output = result.text;
     } else if (request.action === "recover") {
-      const details = inspectCoding(request.jobId, principal, policy, recording);
-      recording.coding((store) => store.recover(details.job.id, principal));
-      await recording.recordTool(
-        {
-          name: "coding.cleanup_workers",
-          source: "coding",
-          kind: "capability",
-          input: { jobId: details.job.id }
-        },
-        () => DockerWorker.cleanupJob(details.job.id)
-      );
-      output = "Stopped coding job recovered; owned workers removed. Work was not replayed.";
+      output = await recoverCoding(request.jobId, principal, policy, recording);
     } else if (request.action === "approve" || request.action === "reconcile") {
       const details = inspectCoding(request.jobId, principal, policy, recording);
       if (!process.stdin.isTTY || !process.stdout.isTTY)

@@ -25,6 +25,7 @@ import {
 } from "./adapter.js";
 import type { DiscordBotConfig } from "./config.js";
 import { handleDiscordCoding } from "./coding.js";
+import { DiscordLifecycle } from "./lifecycle.js";
 
 interface DiscordMessagePolicyInput {
   isBot: boolean;
@@ -36,9 +37,13 @@ interface DiscordMessagePolicyInput {
   botUserId: string;
 }
 
-type DiscordBotOptions = Pick<ChatHandlerOptions, "availableTools" | "signal">;
+type DiscordMessageOptions = Pick<ChatHandlerOptions, "availableTools" | "signal">;
+type DiscordBotOptions = DiscordMessageOptions & {
+  lifecycle?: DiscordLifecycle;
+};
 
 export function createDiscordClient(config: DiscordBotConfig, options: DiscordBotOptions = {}) {
+  const lifecycle = options.lifecycle ?? new DiscordLifecycle();
   const client = new Client({
     // Pi loads Undici 8 and replaces the global dispatcher; keep Discord's legacy transport isolated.
     // A timed-out message may already exist remotely; retries would bypass delivery tracking.
@@ -64,15 +69,22 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
   });
 
   client.on(Events.MessageCreate, (message) => {
-    void handleDiscordMessage(message, config, options).catch(() => {
-      logger.error(
-        {
-          ...projectExternalError("discord_gateway_failed"),
-          message_id: message.id
-        },
-        "discord_bot.message_failed"
-      );
-    });
+    lifecycle.run(
+      (signal) =>
+        handleDiscordMessage(message, config, {
+          ...(options.availableTools ? { availableTools: options.availableTools } : {}),
+          signal: options.signal ? AbortSignal.any([options.signal, signal]) : signal
+        }),
+      () => {
+        logger.error(
+          {
+            ...projectExternalError("discord_gateway_failed"),
+            message_id: message.id
+          },
+          "discord_bot.message_failed"
+        );
+      }
+    );
   });
 
   return client;
@@ -81,7 +93,7 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
 export async function handleDiscordMessage(
   message: Message,
   botConfig: DiscordBotConfig,
-  options: DiscordBotOptions = {}
+  options: DiscordMessageOptions = {}
 ) {
   const botUser = message.client.user;
   if (!botUser) return;

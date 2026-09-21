@@ -18,6 +18,7 @@ DISCORD_LOCAL_REPO_USER_IDS=
 DISCORD_DEFAULT_REPO_PATH=https://github.com/org/repo
 DISCORD_DEFAULT_MODEL=MiniMax-M3
 DISCORD_TIMEOUT_MS=120000
+DISCORD_SHUTDOWN_GRACE_MS=10000
 DISCORD_ENABLED_PLUGIN_SOURCES=readiness,github
 DISCORD_ALLOW_DMS=false
 MINIMAX_API_KEY=
@@ -76,7 +77,17 @@ The bot responds when an allowed user mentions it in an allowed guild channel:
 @agent-ops runs list
 @agent-ops show run <run-id> repo=https://github.com/org/repo
 @agent-ops reports latest
+@agent-ops code recover <job-id>
 ```
+
+`code recover` is cleanup-only. It is accepted only from the original user and parent channel after
+the original preparation owner has stopped. It marks a still-preparing job interrupted and removes
+containers labelled for that job. Repeating it retries cleanup; it never reacquires source, calls a
+model, verifies code, grants approval, or publishes.
+
+On `SIGINT` or `SIGTERM`, the bot closes admission, aborts active request scopes, removes workers,
+and waits up to `DISCORD_SHUTDOWN_GRACE_MS` for handlers to drain. It then performs owner-scoped
+forced worker cleanup before closing Discord transports. Interrupted work is not replayed.
 
 If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 

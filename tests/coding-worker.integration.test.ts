@@ -8,6 +8,20 @@ import { DockerWorker } from "../src/workspaces/docker.js";
 
 const image = process.env.CODING_TEST_IMAGE;
 describe.skipIf(!image)("real coding worker containment", () => {
+  it("force-cleans only workers owned by this process", async () => {
+    const worker = await DockerWorker.start(
+      { image: image!, requiredChecks: ["true"], ignore: [], principal: "cli:test" },
+      undefined,
+      `shutdown-${Date.now()}`
+    );
+    try {
+      await DockerWorker.forceCleanupOwnedWorkers();
+      expect((await worker.command("echo should-not-run")).exitCode).not.toBe(0);
+    } finally {
+      await worker.close();
+    }
+  }, 30000);
+
   it("cleans owned containers after an unavailable pinned image fails startup", async () => {
     const jobId = `missing-image-${Date.now()}`;
     await expect(

@@ -15,7 +15,11 @@ import { CodingGitHubSource } from "../../../plugins/coding/github-source.js";
 import { CodingTaskSchema, parseCoding } from "../../../plugins/coding/schemas.js";
 import type { CodingTask } from "../../../plugins/coding/schemas.js";
 import { prepareCoding } from "../../../workflows/code.js";
-import { codingDecision, inspectCoding } from "../../../workflows/coding-approval.js";
+import {
+  codingDecision,
+  inspectCoding,
+  recoverCoding
+} from "../../../workflows/coding-approval.js";
 import { publishProposal } from "../../../workflows/publish-proposal.js";
 import { discordExplicitTargetProvenance, parseTargetRef } from "../../../workspaces/index.js";
 
@@ -32,6 +36,7 @@ const Selector = Type.Object(
       Type.Literal("reject"),
       Type.Literal("cancel"),
       Type.Literal("expire"),
+      Type.Literal("recover"),
       Type.Literal("reconcile")
     ]),
     id: Type.String({ pattern: "^[a-zA-Z0-9-]{1,128}$" }),
@@ -160,6 +165,8 @@ export async function handleDiscordCoding(
       if (request.action === "show") {
         content = `Job ${request.id}: ${details.job.status}\nDraft PR: ${details.publication?.prUrl ?? "none"}`;
         display = details.display;
+      } else if (request.action === "recover") {
+        content = await recoverCoding(request.id, principal, policy, recording, conversation);
       } else if (request.action === "approve" || request.action === "reconcile") {
         const operation = await publishProposal(
           request.id,

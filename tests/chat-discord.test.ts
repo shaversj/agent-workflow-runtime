@@ -565,6 +565,7 @@ describe("Discord chat surface", () => {
       DISCORD_DEFAULT_REPO_PATH: "/tmp/demo",
       DISCORD_DEFAULT_MODEL: "MiniMax-M3",
       DISCORD_TIMEOUT_MS: "1000",
+      DISCORD_SHUTDOWN_GRACE_MS: "5000",
       DISCORD_ENABLED_PLUGIN_SOURCES: "readiness,deploy"
     });
 
@@ -576,6 +577,7 @@ describe("Discord chat surface", () => {
     expect(config.defaultRepoPath).toBe("/tmp/demo");
     expect(config.defaultModel).toBe("MiniMax-M3");
     expect(config.defaultTimeoutMs).toBe(1000);
+    expect(config.shutdownGraceMs).toBe(5000);
     expect([...config.enabledPluginSources]).toEqual(["readiness", "deploy"]);
     expect(config.allowDms).toBe(false);
   });
@@ -606,6 +608,14 @@ describe("Discord chat surface", () => {
         DISCORD_ALLOWED_USER_IDS: "10000000000000001",
         DISCORD_ALLOWED_GUILD_IDS: "20000000000000001",
         DISCORD_ALLOW_DMS: "true"
+      }
+    ],
+    [
+      "an invalid shutdown grace",
+      {
+        DISCORD_ALLOWED_USER_IDS: "10000000000000001",
+        DISCORD_ALLOWED_GUILD_IDS: "20000000000000001",
+        DISCORD_SHUTDOWN_GRACE_MS: "0"
       }
     ],
     [

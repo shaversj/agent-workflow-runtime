@@ -31,8 +31,11 @@ const fixed = "module.exports = (a,b) => a+b;\n";
 const blockingCommand = `node -e "require('node:fs').writeFileSync('/tmp/cancel-ready','1'); setInterval(()=>{},1000)"`;
 const config: DiscordBotConfig = {
   token: "simulated-no-login",
+  allowedUserIds: new Set(["1"]),
   allowedGuildIds: new Set(["guild", "other-guild"]),
   allowedChannelIds: new Set(["channel", "other-channel"]),
+  localRepoUserIds: new Set(),
+  shutdownGraceMs: 10_000,
   allowDms: false,
   enabledPluginSources: new Set()
 };
@@ -450,8 +453,8 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
     it("denies an unallowed human before simulated source/model or real workers/publication", async () => {
       const message = inbound("code prepare owner/repo main Fix addition", { user: "3" });
       await message.handle();
-      expect(payload(message.reply.mock.calls[0]![0]).content).toBe("coding_permission_denied");
-      expect(history(message.message.id).interaction.status).toBe("failed");
+      expect(message.reply).not.toHaveBeenCalled();
+      expect(db.openHistoryReader({ home })).toBeUndefined();
       expect(github.transport).not.toHaveBeenCalled();
       expect(editor).not.toHaveBeenCalled();
       expect(workers.DockerWorker.start).not.toHaveBeenCalled();
@@ -470,7 +473,9 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
       ]) {
         const wrong = inbound(`code confirm ${id}`, overrides);
         await wrong.handle();
-        expect(payload(wrong.reply.mock.calls[0]![0]).content).toBe("coding_confirmation_denied");
+        if (overrides.user) expect(wrong.reply).not.toHaveBeenCalled();
+        else
+          expect(payload(wrong.reply.mock.calls[0]![0]).content).toBe("coding_confirmation_denied");
       }
       expect(editor).not.toHaveBeenCalled();
       expect(workers.DockerWorker.start).not.toHaveBeenCalled();
@@ -511,9 +516,11 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
       ]) {
         const wrong = inbound(`code approve ${job.id} ${proposal.digest}`, overrides);
         await wrong.handle();
-        expect(payload(wrong.reply.mock.calls[0]![0]).content).toMatch(
-          /coding_(principal|conversation)_denied/
-        );
+        if (overrides.user) expect(wrong.reply).not.toHaveBeenCalled();
+        else
+          expect(payload(wrong.reply.mock.calls[0]![0]).content).toMatch(
+            /coding_(principal|conversation)_denied/
+          );
       }
       const wrongDigest = inbound(`code approve ${job.id} ${"f".repeat(64)}`);
       await wrongDigest.handle();

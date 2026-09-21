@@ -46,6 +46,13 @@ merge, deploy or silently rebase. Record each remote stage and stop on fatal his
 Uncertain outcomes require explicit reconciliation before retries. Never automatically replay
 coding/publication on restart or delete a partially published branch.
 
+Discord shutdown closes admission before cancellation, aborts every active request scope, performs
+process-owner-scoped worker cleanup, waits only a bounded grace period, and then awaits Discord
+transport destruction. Explicit recovery is bound to the original principal and normalized parent
+channel, is unavailable while the original run remains active, and performs only durable
+interruption plus job-labelled container cleanup. Recovery never reacquires source, invokes a
+model, verifies changes, approves, publishes, or replays prior delivery.
+
 ## Secrets
 
 Never store secret values in reports, logs, fixtures, test snapshots, or local
