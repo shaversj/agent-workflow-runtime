@@ -1,6 +1,11 @@
+import { Readable } from "node:stream";
+import { format as formatUrl } from "node:url";
+
 import { Value } from "typebox/value";
+import { request as undiciRequest, type Dispatcher } from "undici";
 
 import { redactEvidenceText, type EvidenceRedactionStats } from "../../harness/redaction.js";
+import { requestBoundedJson, type GitHubHttpLimits, type GitHubJsonResponse } from "./http.js";
 import { GitHubEvidenceSchema, type GitHubEvidence, type GitHubIdentity } from "./schemas.js";
 import type {
   GitHubIssuesResult,
@@ -11,12 +16,14 @@ import type {
 } from "./schemas.js";
 
 export interface GitHubEvidenceClientOptions {
+  request?: typeof undiciRequest;
   fetch?: typeof fetch;
   token?: string;
   useAmbientToken?: boolean;
   apiBaseUrl?: string;
   now?: () => Date;
   limits?: Partial<GitHubEvidenceLimits>;
+  responseLimits?: Partial<GitHubHttpLimits>;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -28,12 +35,7 @@ interface GitHubEvidenceLimits {
   releases: number;
 }
 
-interface JsonResponse {
-  ok: boolean;
-  status: number;
-  headers: Headers;
-  data: unknown;
-}
+type JsonResponse = GitHubJsonResponse;
 
 const DEFAULT_LIMITS: GitHubEvidenceLimits = {
   workflowRuns: 5,
@@ -210,23 +212,14 @@ async function requestJson(
   url: string,
   options: GitHubEvidenceClientOptions
 ): Promise<JsonResponse> {
-  const fetchImpl = options.fetch ?? fetch;
   try {
-    const response = await withRequestTimeout(
-      fetchImpl(url, {
-        headers: requestHeaders(githubToken(options)),
-        signal: options.signal
-      }),
-      requestTimeoutMs(options),
-      options.signal
-    );
-    const text = await response.text();
-    return {
-      ok: response.ok,
-      status: response.status,
-      headers: response.headers,
-      data: text ? (JSON.parse(text) as unknown) : undefined
-    };
+    return await requestBoundedJson(url, {
+      headers: requestHeaders(githubToken(options)),
+      timeoutMs: requestTimeoutMs(options),
+      signal: options.signal,
+      limits: options.responseLimits,
+      request: options.request ?? (options.fetch ? fetchRequestAdapter(options.fetch) : undefined)
+    });
   } catch {
     return {
       ok: false,
@@ -235,6 +228,55 @@ async function requestJson(
       data: undefined
     };
   }
+}
+
+function fetchRequestAdapter(fetchImpl: typeof fetch): typeof undiciRequest {
+  return async (url, requestOptions) => {
+    const requestUrl =
+      typeof url === "string" ? url : url instanceof URL ? url.href : formatUrl(url);
+    const response = await fetchImpl(requestUrl, {
+      method: "GET",
+      headers: fetchHeaders(requestOptions?.headers),
+      redirect: "manual",
+      signal: requestOptions?.signal instanceof AbortSignal ? requestOptions.signal : undefined
+    });
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, name) => {
+      headers[name] = value;
+    });
+    const body = response.body ? Readable.fromWeb(response.body as never) : Readable.from([]);
+    return {
+      statusCode: response.status,
+      headers,
+      body,
+      trailers: {},
+      opaque: undefined,
+      context: {}
+    } as Dispatcher.ResponseData;
+  };
+}
+
+function fetchHeaders(headers: Dispatcher.RequestOptions["headers"]): Headers {
+  const projected = new Headers();
+  if (!headers) return projected;
+  if (Array.isArray(headers)) {
+    for (let index = 0; index < headers.length; index += 2) {
+      const name = headers[index];
+      const value = headers[index + 1];
+      if (name !== undefined && value !== undefined) projected.append(name, value);
+    }
+    return projected;
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === "string") projected.append(name, item);
+      }
+    } else if (typeof value === "string") {
+      projected.append(name, value);
+    }
+  }
+  return projected;
 }
 
 function repositoryUrl(identity: GitHubIdentity, options: GitHubEvidenceClientOptions): string {
@@ -250,38 +292,6 @@ function githubToken(options: GitHubEvidenceClientOptions): string | undefined {
 
 function requestTimeoutMs(options: GitHubEvidenceClientOptions): number {
   return options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-}
-
-function withRequestTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  signal: AbortSignal | undefined
-): Promise<T> {
-  if (signal?.aborted) return Promise.reject(new Error("github_request_aborted"));
-  let timeout: NodeJS.Timeout | undefined;
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      if (timeout) clearTimeout(timeout);
-      reject(new Error("github_request_aborted"));
-    };
-    timeout = setTimeout(() => {
-      if (signal) signal.removeEventListener("abort", onAbort);
-      reject(new Error(`github_request_timeout:${timeoutMs}`));
-    }, timeoutMs);
-    signal?.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        if (timeout) clearTimeout(timeout);
-        signal?.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        if (timeout) clearTimeout(timeout);
-        signal?.removeEventListener("abort", onAbort);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    );
-  });
 }
 
 function requestHeaders(token: string | undefined): Record<string, string> {

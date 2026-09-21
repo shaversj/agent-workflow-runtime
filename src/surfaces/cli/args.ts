@@ -9,7 +9,7 @@ export function normalizeCliArgs(args: string[]): string[] {
 
 export function parseCli<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (!Value.Check(schema, value)) throw new Error("cli_arguments_invalid");
-  return value as Static<T>;
+  return value;
 }
 
 export function takeOptionValue(args: string[], index: number, flag: string): string {

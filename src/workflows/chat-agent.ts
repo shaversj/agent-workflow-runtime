@@ -4,7 +4,6 @@ import path from "node:path";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { Value } from "typebox/value";
 
-import { captureHistory } from "../harness/history-capture.js";
 import {
   externalErrorMessage,
   projectExternalError,

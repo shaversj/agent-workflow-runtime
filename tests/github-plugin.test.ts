@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { collectGitHubEvidence, collectGitHubIssues } from "../src/plugins/github/client.js";
 import { resolveGitHubIdentity } from "../src/plugins/github/evidence.js";
-import { githubTools } from "../src/plugins/github/tools.js";
+import { createGitHubTools, githubTools } from "../src/plugins/github/tools.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 
 describe("github repository intelligence", () => {
@@ -208,7 +208,6 @@ describe("github repository intelligence", () => {
     process.env.GITHUB_TOKEN = "ambient-secret";
     const requested: { url: string; authorization?: string }[] = [];
     const registry = new ToolRegistry();
-    registry.registerMany(githubTools);
     vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = fetchUrl(url);
       requested.push({
@@ -217,6 +216,7 @@ describe("github repository intelligence", () => {
       });
       return Promise.resolve(jsonResponse(responseBodyFor(requestUrl)));
     });
+    registry.registerMany(createGitHubTools({ fetch: globalThis.fetch }));
 
     try {
       const result = await registry.get("github_get_actions_status")!.execute(
@@ -248,13 +248,13 @@ describe("github repository intelligence", () => {
     process.env.GITHUB_TOKEN = "ambient-secret";
     const requested: { authorization?: string }[] = [];
     const registry = new ToolRegistry();
-    registry.registerMany(githubTools);
     vi.stubGlobal("fetch", (url: string | URL | Request, init?: RequestInit) => {
       requested.push({
         authorization: new Headers(init?.headers).get("authorization") ?? undefined
       });
       return Promise.resolve(jsonResponse(responseBodyFor(fetchUrl(url))));
     });
+    registry.registerMany(createGitHubTools({ fetch: globalThis.fetch }));
 
     try {
       await registry.get("github_get_repository_context")!.execute(

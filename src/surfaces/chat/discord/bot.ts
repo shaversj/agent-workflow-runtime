@@ -11,11 +11,7 @@ import { Agent } from "undici";
 
 import type { WorkflowProgressEvent } from "../../../harness/types.js";
 import type { InteractionRecorder } from "../../../harness/interaction.js";
-import {
-  externalErrorAsError,
-  externalErrorMessage,
-  projectExternalError
-} from "../../../harness/external-error.js";
+import { externalErrorAsError, projectExternalError } from "../../../harness/external-error.js";
 import { logger } from "../../../logger.js";
 import { beginChatInteraction } from "../../../workflows/chat-agent.js";
 import { handleChatMessage } from "../runner.js";

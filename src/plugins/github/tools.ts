@@ -35,50 +35,59 @@ const GitHubTargetParams = Type.Object({
 
 type GitHubTargetParamsType = Static<typeof GitHubTargetParams>;
 
-const githubPlugin = definePlugin({
-  manifest: githubPluginManifest,
-  tools: [
-    githubTool({
-      name: "get_repository_context",
-      label: "Get GitHub Repository Context",
-      description:
-        "Return read-only GitHub repository metadata for a GitHub-backed repository target.",
-      resultSchema: GitHubRepositoryContextResultSchema,
-      collect: gatherGitHubRepositoryContextForTarget
-    }),
-    githubTool({
-      name: "get_actions_status",
-      label: "Get GitHub Actions Status",
-      description:
-        "Return recent GitHub Actions workflow runs for a GitHub-backed repository target.",
-      resultSchema: GitHubWorkflowRunsResultSchema,
-      collect: gatherGitHubWorkflowRunsForTarget
-    }),
-    githubTool({
-      name: "get_pull_requests",
-      label: "Get GitHub Pull Requests",
-      description: "Return recent open pull requests for a GitHub-backed repository target.",
-      resultSchema: GitHubPullRequestsResultSchema,
-      collect: gatherGitHubPullRequestsForTarget
-    }),
-    githubTool({
-      name: "get_issue_themes",
-      label: "Get GitHub Issue Themes",
-      description: "Return recent open issues for a GitHub-backed repository target.",
-      resultSchema: GitHubIssuesResultSchema,
-      collect: gatherGitHubIssuesForTarget
-    }),
-    githubTool({
-      name: "get_releases",
-      label: "Get GitHub Releases",
-      description: "Return recent releases for a GitHub-backed repository target.",
-      resultSchema: GitHubReleasesResultSchema,
-      collect: gatherGitHubReleasesForTarget
-    })
-  ]
-});
+export function createGitHubTools(
+  clientOptions: GitHubEvidenceClientOptions = {}
+): RegisteredTool[] {
+  return definePlugin({
+    manifest: githubPluginManifest,
+    tools: [
+      githubTool({
+        name: "get_repository_context",
+        label: "Get GitHub Repository Context",
+        description:
+          "Return read-only GitHub repository metadata for a GitHub-backed repository target.",
+        resultSchema: GitHubRepositoryContextResultSchema,
+        collect: gatherGitHubRepositoryContextForTarget,
+        clientOptions
+      }),
+      githubTool({
+        name: "get_actions_status",
+        label: "Get GitHub Actions Status",
+        description:
+          "Return recent GitHub Actions workflow runs for a GitHub-backed repository target.",
+        resultSchema: GitHubWorkflowRunsResultSchema,
+        collect: gatherGitHubWorkflowRunsForTarget,
+        clientOptions
+      }),
+      githubTool({
+        name: "get_pull_requests",
+        label: "Get GitHub Pull Requests",
+        description: "Return recent open pull requests for a GitHub-backed repository target.",
+        resultSchema: GitHubPullRequestsResultSchema,
+        collect: gatherGitHubPullRequestsForTarget,
+        clientOptions
+      }),
+      githubTool({
+        name: "get_issue_themes",
+        label: "Get GitHub Issue Themes",
+        description: "Return recent open issues for a GitHub-backed repository target.",
+        resultSchema: GitHubIssuesResultSchema,
+        collect: gatherGitHubIssuesForTarget,
+        clientOptions
+      }),
+      githubTool({
+        name: "get_releases",
+        label: "Get GitHub Releases",
+        description: "Return recent releases for a GitHub-backed repository target.",
+        resultSchema: GitHubReleasesResultSchema,
+        collect: gatherGitHubReleasesForTarget,
+        clientOptions
+      })
+    ]
+  }).tools;
+}
 
-export const githubTools: RegisteredTool[] = githubPlugin.tools;
+export const githubTools: RegisteredTool[] = createGitHubTools();
 
 function githubTool<TResult>(input: {
   name: string;
@@ -86,6 +95,7 @@ function githubTool<TResult>(input: {
   description: string;
   resultSchema: TSchema;
   collect: (repoTarget: string, options: GitHubEvidenceClientOptions) => Promise<TResult> | TResult;
+  clientOptions: GitHubEvidenceClientOptions;
 }): RegisteredTool {
   return defineRegisteredTool({
     pluginName: githubPluginManifest.name,
@@ -96,6 +106,7 @@ function githubTool<TResult>(input: {
     resultSchema: input.resultSchema,
     async execute(params: GitHubTargetParamsType, context: RegisteredToolContext, signal) {
       const result = await input.collect(resolveGitHubToolTarget(params, context), {
+        ...input.clientOptions,
         signal,
         useAmbientToken: shouldUseAmbientGitHubToken(params, context)
       });

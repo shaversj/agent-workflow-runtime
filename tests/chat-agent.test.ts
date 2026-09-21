@@ -484,6 +484,7 @@ describe("chat agent workflow", () => {
       parameters: Type.Object({ run_ref: Type.String(), repo_path: Type.String() }),
       resultSchema: Type.Unknown(),
       execute() {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- verifies hostile non-Error values stay opaque
         throw hostile;
       }
     });

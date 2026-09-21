@@ -533,6 +533,7 @@ describe("Discord chat surface", () => {
       id: "message-1",
       reply(payload: unknown) {
         sentReplies.push(payload);
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- verifies hostile non-Error values stay opaque
         throw hostile;
       }
     };
