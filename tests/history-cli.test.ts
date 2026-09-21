@@ -11,6 +11,18 @@ import {
   parseHistory
 } from "../src/harness/history-schemas.js";
 import { handleChatMessage } from "../src/surfaces/chat/runner.js";
+import { runHistoryCli } from "../src/surfaces/cli/history.js";
+
+it("rejects duplicate flags and misplaced separators before history reads", () => {
+  for (const args of [
+    ["list", "--json", "--json"],
+    ["list", "--limit", "2", "--limit", "3"],
+    ["list", "--"],
+    ["show", "interaction", "extra"]
+  ]) {
+    expect(() => runHistoryCli(args)).toThrow();
+  }
+});
 
 it("inspects CLI and nested chat sweeps through the real CLI without provider calls", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "history-cli-e2e-"));

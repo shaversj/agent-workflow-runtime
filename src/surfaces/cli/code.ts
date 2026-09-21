@@ -11,6 +11,7 @@ import { CodingTaskSchema, parseCoding } from "../../plugins/coding/schemas.js";
 import { codingDecision, inspectCoding } from "../../workflows/coding-approval.js";
 import { publishProposal } from "../../workflows/publish-proposal.js";
 import { DockerWorker } from "../../workspaces/docker.js";
+import { normalizeCliArgs } from "./args.js";
 
 const SelectorSchema = Type.Object(
   {
@@ -31,7 +32,7 @@ const SelectorSchema = Type.Object(
 );
 
 export function parseCodingCli(args: string[]) {
-  const clean = args.filter((arg) => arg !== "--");
+  const clean = normalizeCliArgs(args);
   const [action, first, second, ...remaining] = clean;
   if (action === "prepare") {
     if (remaining.some((arg) => arg.startsWith("--")))

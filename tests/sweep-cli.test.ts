@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { openHistoryReader } from "../src/db/index.js";
-import { runSweepCli } from "../src/surfaces/cli/sweep.js";
+import { parseSweepArgs, runSweepCli } from "../src/surfaces/cli/sweep.js";
 
 const model = vi.hoisted(() => ({ complete: vi.fn() }));
 vi.mock("../src/harness/model.js", () => ({
@@ -80,6 +80,25 @@ function history() {
 }
 
 describe("sweep CLI recording", () => {
+  it("parses the documented grammar and rejects malformed variants", () => {
+    expect(parseSweepArgs(["--", "repo", "--ref", "main", "--timeout-ms", "25"])).toEqual({
+      repoTarget: "repo",
+      ref: "main",
+      harnessModel: "MiniMax-M3",
+      timeoutMs: 25
+    });
+    for (const args of [
+      ["repo", "extra"],
+      ["repo", "--unknown"],
+      ["repo", "--ref", "main", "--ref", "other"],
+      ["repo", "--timeout-ms", "12ms"],
+      ["repo", "--timeout-ms"],
+      ["repo", "--"]
+    ]) {
+      expect(() => parseSweepArgs(args)).toThrow();
+    }
+  });
+
   it("records the canonical summary before stdout and acknowledges the stream", async () => {
     const write = captureOutput();
     await runSweepCli([repo]);

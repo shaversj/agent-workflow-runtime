@@ -1,22 +1,44 @@
 import path from "node:path";
 
+import { Type } from "typebox";
+
 import {
   listInspectionRuns,
   showInspectionRun,
   type InspectionRunDetail,
   type InspectionRunSummary
 } from "../../db/inspection.js";
+import { markOption, normalizeCliArgs, parseCli, takeOptionValue } from "./args.js";
+
+const RunsArgsSchema = Type.Union([
+  Type.Object(
+    {
+      command: Type.Literal("list"),
+      repoTarget: Type.Optional(Type.String({ minLength: 1 })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 }))
+    },
+    { additionalProperties: false }
+  ),
+  Type.Object(
+    {
+      command: Type.Literal("show"),
+      runRef: Type.String({ minLength: 1 }),
+      repoTarget: Type.Optional(Type.String({ minLength: 1 }))
+    },
+    { additionalProperties: false }
+  )
+]);
 
 export function runRunsCli(args: string[]) {
-  const [subcommand, ...rest] = args.filter((arg) => arg !== "--");
-  if (subcommand === "list") {
-    const { repoTarget, limit } = parseListArgs(rest);
+  const parsed = parseRunsCliArgs(args);
+  if (parsed.command === "list") {
+    const { repoTarget, limit } = parsed;
     const result = listInspectionRuns({ repoTarget, limit });
     console.log(formatRunList(result.runs));
     return;
   }
-  if (subcommand === "show") {
-    const { runRef, repoTarget } = parseShowArgs(rest);
+  if (parsed.command === "show") {
+    const { runRef, repoTarget } = parsed;
     const result = showInspectionRun(runRef, { repoTarget });
     if (!result.found) {
       console.log(result.reason);
@@ -27,30 +49,42 @@ export function runRunsCli(args: string[]) {
     console.log(formatRunDetail(result.run));
     return;
   }
+}
+
+export function parseRunsCliArgs(args: string[]) {
+  const [command, ...rest] = normalizeCliArgs(args);
+  if (command === "list") return parseListArgs(rest);
+  if (command === "show") return parseShowArgs(rest);
   throw new Error("runs requires a subcommand: list or show");
 }
 
-function parseListArgs(args: string[]): { repoTarget?: string; limit?: number } {
+function parseListArgs(args: string[]) {
   const positional: string[] = [];
+  const seen = new Set<string>();
   let limit: number | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--limit") {
-      const value = args[index + 1];
-      if (!value) throw new Error("--limit requires a value");
+      markOption(seen, arg);
+      const value = takeOptionValue(args, index, arg);
       limit = parsePositiveInteger(value, "--limit");
       index += 1;
+    } else if (arg?.startsWith("--")) {
+      throw new Error(`Unknown runs argument: ${arg}`);
     } else if (arg) {
       positional.push(arg);
     }
   }
-  return { repoTarget: positional[0], limit };
+  if (positional.length > 1) throw new Error("runs list accepts at most one repository target");
+  return parseCli(RunsArgsSchema, { command: "list", repoTarget: positional[0], limit });
 }
 
-function parseShowArgs(args: string[]): { runRef: string; repoTarget?: string } {
+function parseShowArgs(args: string[]) {
+  if (args.some((arg) => arg.startsWith("--"))) throw new Error("runs show accepts no options");
   const [runRef, repoTarget] = args;
   if (!runRef) throw new Error("runs show requires a run reference");
-  return { runRef, repoTarget };
+  if (args.length > 2) throw new Error("runs show accepts one optional repository target");
+  return parseCli(RunsArgsSchema, { command: "show", runRef, repoTarget });
 }
 
 function parsePositiveInteger(value: string, flag: string): number {

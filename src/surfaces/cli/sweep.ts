@@ -1,7 +1,20 @@
-import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
+import { Type } from "typebox";
+
 import { beginInteraction } from "../../harness/interaction.js";
 import { captureHistory } from "../../harness/history-capture.js";
 import type { WorkflowProgressEvent } from "../../harness/types.js";
+import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.js";
+import { markOption, normalizeCliArgs, parseCli, takeOptionValue } from "./args.js";
+
+const SweepArgsSchema = Type.Object(
+  {
+    repoTarget: Type.String({ minLength: 1 }),
+    ref: Type.Optional(Type.String({ minLength: 1 })),
+    harnessModel: Type.String({ minLength: 1 }),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1 }))
+  },
+  { additionalProperties: false }
+);
 
 export async function runSweepCli(args: string[]) {
   const { repoTarget, ref, harnessModel, timeoutMs } = parseSweepArgs(args);
@@ -111,41 +124,43 @@ function writeSummary(summary: string): Promise<void> {
   });
 }
 
-function parseSweepArgs(args: string[]) {
+export function parseSweepArgs(args: string[]) {
+  const normalized = normalizeCliArgs(args);
   const positional: string[] = [];
+  const seen = new Set<string>();
   let harnessModel = DEFAULT_HARNESS_MODEL;
   let ref: string | undefined;
   let timeoutMs: number | undefined;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--") {
-      continue;
-    }
+  for (let index = 0; index < normalized.length; index += 1) {
+    const arg = normalized[index];
     if (arg === "--harness-model") {
-      const value = args[index + 1];
-      if (!value) throw new Error("--harness-model requires a value");
+      markOption(seen, arg);
+      const value = takeOptionValue(normalized, index, arg);
       harnessModel = value;
       index += 1;
     } else if (arg === "--ref") {
-      const value = args[index + 1];
-      if (!value) throw new Error("--ref requires a value");
+      markOption(seen, arg);
+      const value = takeOptionValue(normalized, index, arg);
       ref = value;
       index += 1;
     } else if (arg === "--timeout-ms") {
-      const value = args[index + 1];
-      if (!value) throw new Error("--timeout-ms requires a value");
-      timeoutMs = Number.parseInt(value, 10);
-      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      markOption(seen, arg);
+      const value = takeOptionValue(normalized, index, arg);
+      if (!/^[1-9][0-9]*$/.test(value)) {
         throw new Error("--timeout-ms must be a positive integer");
       }
+      timeoutMs = Number(value);
       index += 1;
+    } else if (arg?.startsWith("--")) {
+      throw new Error(`Unknown sweep argument: ${arg}`);
     } else if (arg) {
       positional.push(arg);
     }
   }
+  if (positional.length > 1) throw new Error("sweep accepts one repository target");
   const repoTarget = positional[0];
   if (!repoTarget) throw new Error("sweep requires a repository target");
-  return { repoTarget, ref, harnessModel, timeoutMs };
+  return parseCli(SweepArgsSchema, { repoTarget, ref, harnessModel, timeoutMs });
 }
 
 function formatSweepProgress(event: WorkflowProgressEvent): string | undefined {

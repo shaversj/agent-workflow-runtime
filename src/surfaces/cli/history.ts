@@ -5,9 +5,10 @@ import type {
   HistoryDetailResult,
   HistoryListResult
 } from "../../harness/history-schemas.js";
+import { markOption, normalizeCliArgs, takeOptionValue } from "./args.js";
 
 export function runHistoryCli(args: string[]): void {
-  const [command, ...rest] = args.filter((arg) => arg !== "--");
+  const [command, ...rest] = normalizeCliArgs(args);
   if (command !== "list" && command !== "show")
     throw new Error("history requires a subcommand: list or show");
   const id = command === "show" ? rest.shift() : undefined;
@@ -15,9 +16,11 @@ export function runHistoryCli(args: string[]): void {
     throw new Error("history show requires an interaction UUID");
   const options: Record<string, unknown> = {};
   let json = false;
+  const seen = new Set<string>();
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i]!;
     if (flag === "--json") {
+      markOption(seen, flag);
       json = true;
       continue;
     }
@@ -28,9 +31,9 @@ export function runHistoryCli(args: string[]): void {
         : ["limit", "cursor"];
     if (!flag.startsWith("--") || !allowed.includes(name))
       throw new Error(`Unknown history argument: ${flag}`);
-    const value = rest[++i];
-    if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value`);
-    if (Object.hasOwn(options, name)) throw new Error(`Duplicate history option: ${flag}`);
+    markOption(seen, flag);
+    const value = takeOptionValue(rest, i, flag);
+    i += 1;
     if (name === "limit" && !/^[1-9][0-9]*$/.test(value))
       throw new Error("--limit must be an integer between 1 and 100");
     options[name] = name === "limit" ? Number(value) : value;

@@ -1,17 +1,36 @@
+import { Type } from "typebox";
+
 import {
   displayInspectionTarget,
   getLatestInspectionReport,
   type InspectionReportSummary
 } from "../../db/inspection.js";
+import { normalizeCliArgs, parseCli } from "./args.js";
+
+const ReportsArgsSchema = Type.Object(
+  {
+    command: Type.Literal("latest"),
+    repoTarget: Type.Optional(Type.String({ minLength: 1 }))
+  },
+  { additionalProperties: false }
+);
 
 export function runReportsCli(args: string[]) {
-  const [subcommand, ...rest] = args.filter((arg) => arg !== "--");
-  if (subcommand !== "latest") {
-    throw new Error("reports requires a subcommand: latest");
-  }
-  const repoTarget = rest[0];
+  const { repoTarget } = parseReportsCliArgs(args);
   const report = getLatestInspectionReport({ repoTarget });
   console.log(formatLatestReport(report, repoTarget));
+}
+
+export function parseReportsCliArgs(args: string[]) {
+  const [command, ...rest] = normalizeCliArgs(args);
+  if (command !== "latest") {
+    throw new Error("reports requires a subcommand: latest");
+  }
+  if (rest.some((arg) => arg.startsWith("--")))
+    throw new Error("reports latest accepts no options");
+  if (rest.length > 1) throw new Error("reports latest accepts one optional repository target");
+  const repoTarget = rest[0];
+  return parseCli(ReportsArgsSchema, { command, repoTarget });
 }
 
 function formatLatestReport(

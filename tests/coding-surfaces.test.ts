@@ -94,6 +94,7 @@ describe("coding surface contracts", () => {
       ["show", "../escape"],
       ["prepare", "owner/..", "main", "fix"],
       ["show", "job", "--json", "--json"],
+      ["show", "job", "--"],
       ["reject", "job", "--digest"],
       ["approve", "job", "--digest", "a".repeat(64), "--digest", "a".repeat(64)]
     ])

@@ -6,7 +6,8 @@ import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runReportsCli } from "../src/surfaces/cli/reports.js";
-import { runRunsCli } from "../src/surfaces/cli/runs.js";
+import { parseReportsCliArgs } from "../src/surfaces/cli/reports.js";
+import { parseRunsCliArgs, runRunsCli } from "../src/surfaces/cli/runs.js";
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 
 describe("package contract", () => {
@@ -19,7 +20,7 @@ describe("package contract", () => {
     expect(packageJson).not.toHaveProperty("bin");
     expect(packageJson).not.toHaveProperty("files");
     expect(packageJson.scripts).toMatchObject({
-      sweep: "tsx src/cli.ts sweep",
+      sweep: "tsx src/cli.ts sweep"
     });
   });
 });
@@ -91,6 +92,30 @@ describe("inspection CLI", () => {
     expect(() => runRunsCli(["list", "--limit", "2abc"])).toThrow(
       /--limit must be an integer between 1 and 100/
     );
+  });
+
+  it.each([
+    ["runs", () => parseRunsCliArgs(["list", "repo-a", "repo-b"])],
+    ["runs", () => parseRunsCliArgs(["list", "--limit", "2", "--limit", "3"])],
+    ["runs", () => parseRunsCliArgs(["list", "--unknown"])],
+    ["runs", () => parseRunsCliArgs(["show", "12", "repo", "extra"])],
+    ["reports", () => parseReportsCliArgs(["latest", "repo", "extra"])],
+    ["reports", () => parseReportsCliArgs(["latest", "--unknown"])],
+    ["separator", () => parseRunsCliArgs(["list", "repo", "--"])]
+  ])("rejects malformed %s grammar before inspection", (_label, parse) => {
+    expect(parse).toThrow();
+  });
+
+  it("accepts one leading package-manager separator", () => {
+    expect(parseRunsCliArgs(["--", "list", "repo", "--limit", "2"])).toEqual({
+      command: "list",
+      repoTarget: "repo",
+      limit: 2
+    });
+    expect(parseReportsCliArgs(["--", "latest", "repo"])).toEqual({
+      command: "latest",
+      repoTarget: "repo"
+    });
   });
 
   it("prints latest report metadata", async () => {
