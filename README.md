@@ -3,45 +3,64 @@
 [![CI](https://github.com/shaversj/agent-workflow-runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/shaversj/agent-workflow-runtime/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Agent Workflow Runtime is a TypeScript runtime for auditable, policy-bound AI workflows that operate on software repositories.
+Agent Workflow Runtime is a TypeScript runtime for auditable coding agents and repository workflows. It turns a human task into an isolated code change, verifies the result, preserves a reviewable proposal, and requires explicit approval before publishing a draft pull request.
 
 ## The Problem
 
-Connecting an LLM to repository tools is easy. Making the resulting work explainable, repeatable, bounded, and safe across CLI, chat, GitHub, and isolated workers is the harder engineering problem.
+Connecting an LLM to repository tools is easy. Letting a coding agent edit real source while keeping execution isolated, publication human-controlled, and every step inspectable is the harder engineering problem.
 
-This project explores that runtime layer: deterministic evidence collection, typed plugin contracts, durable execution history, human approval boundaries, and disposable workspaces around model-driven interpretation and coding.
+This project builds that runtime layer: typed plugin contracts, disposable workspaces, offline coding workers, fresh verification, sealed proposals, durable execution history, and human approval boundaries. The same foundation also supports read-only repository intelligence and readiness sweeps.
 
 ## What It Does
 
-- Runs read-only repository readiness sweeps from a local Git checkout or Git URL.
+- Runs Pi coding-agent sessions inside constrained, offline Docker workers.
+- Pins repository source and verifies proposed changes in a separate fresh worker.
+- Seals the exact proposal and requires a principal-bound human approval before publication.
+- Publishes only a new branch and draft pull request; it cannot force-push, merge, or deploy.
 - Discovers tools through validated plugin manifests instead of hard-coded surface commands.
 - Accepts natural-language requests through CLI and Discord surfaces.
 - Records interactions, tool calls, model usage, delivery state, and reports in SQLite.
 - Provides a local TanStack Start history inspector for prior runs and artifacts.
-- Supports opt-in coding proposals inside constrained Docker workers, with explicit human approval before creating a draft pull request.
+- Runs read-only repository readiness sweeps from a local Git checkout or Git URL.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  CLI[CLI] --> Admission[Request admission]
-  Discord[Discord] --> Admission
-  Admission --> Catalog[Plugin catalog]
-  Catalog --> Runtime[Workflow runtime]
-  Runtime --> Workspace[Disposable Git workspace]
-  Runtime --> Evidence[Deterministic evidence]
-  Runtime --> Model[Pi model runtime]
-  Runtime --> Reports[Reports and artifacts]
-  Runtime --> History[(SQLite history)]
-  History --> Inspector[Local history inspector]
-  Runtime -. opt-in .-> Worker[Isolated coding worker]
-  Worker --> Approval[Human approval]
-  Approval --> DraftPR[Draft pull request]
-```
+![Agent Workflow Runtime coding-agent architecture](docs/images/coding-agent-architecture.svg)
+
+The supported path is intentionally narrow: authenticated requests pass policy admission, repository code enters a disposable offline worker, verification runs against sealed source, and only a human-approved digest can reach a new GitHub draft pull request. Direct tooling and direct publication bypasses stop at the trust boundary. SQLite records the accepted interaction and runtime activity independently of delivery.
 
 Plugins own domain tools, skills, and policy metadata. Surfaces expose an allowed subset of plugin sources. Workflows coordinate validated inputs, disposable workspaces, model calls, persistence, and delivery.
 
-## Quick Demonstration
+## Plugin Model
+
+Plugins are TypeBox-validated capability bundles. Each manifest declares what the plugin can do, what authority it needs, where its tools may appear, and whether human approval is required. CLI and Discord surfaces enable plugin sources; the runtime presents a small searchable catalog to the model and resolves the selected tool behind that boundary.
+
+| Plugin               | Responsibility                                                         | Authority                                                                  |
+| -------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `coding`             | Prepare an isolated, verified change proposal with the Pi coding agent | Repository write access inside a disposable worker; never publishes        |
+| `github-publication` | Publish an approved proposal to a new branch and draft pull request    | Separate write credential plus approval bound to the exact proposal digest |
+| `readiness`          | Gather repository evidence, interpret readiness, and inspect reports   | Read-only target access; writes managed reports and history                |
+| `github`             | Read repository, pull request, issue, release, and Actions context     | Read-only GitHub access                                                    |
+
+This split keeps capability discovery separate from execution authority. Adding a plugin does not automatically expose its tools to every surface, and preparing code does not grant permission to publish it.
+
+## Coding Agent Workflow
+
+1. **Prepare:** a CLI or Discord request selects an operator-allowed repository and pins its base commit.
+2. **Execute:** Pi edits the checkout through bounded tools inside an offline, non-root Docker worker.
+3. **Verify:** required checks run in a fresh worker against immutable source plus the proposed change set.
+4. **Review:** the runtime stores an exact private proposal, records model and tool activity, and exposes a sealed digest for inspection.
+5. **Approve and publish:** the initiating human approves that exact digest; the runtime may then create a new branch and draft pull request.
+
+Coding is disabled by default. Enabling it requires a trusted digest-pinned image, an operator-owned repository profile, allowlisted principals, scoped GitHub credentials, and Docker. See [Coding workflow and containment](docs/coding.md) for the complete setup and threat boundaries.
+
+```bash
+pnpm exec tsx src/cli.ts code prepare example/example-repository main "Fix the cart calculation"
+pnpm exec tsx src/cli.ts code show <job-id>
+pnpm exec tsx src/cli.ts code approve <job-id> --digest <64-hex-digest>
+```
+
+## Read-Only Sweep Demo
 
 Requirements: Node.js 24+, pnpm, Git, and a MiniMax API key for model-backed interpretation.
 
