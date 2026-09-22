@@ -93,7 +93,7 @@ describe("Discord chat surface", () => {
       channelId: "channel-1",
       messageId: "message-1",
       authorId: "user-1",
-      content: "sweep https://github.com/shaversj/incident-triage-agent"
+      content: "sweep https://github.com/example/example-repository"
     });
 
     expect(message).toBeDefined();
@@ -102,10 +102,10 @@ describe("Discord chat surface", () => {
     expect(intent).toMatchObject({
       kind: "run_workflow",
       workflow: "readiness_sweep",
-      repoPath: "https://github.com/shaversj/incident-triage-agent"
+      repoPath: "https://github.com/example/example-repository"
     });
     expect(repoTargetForChatMessage(message!, { defaultRepoPath: "/tmp/default" }, intent)).toBe(
-      "https://github.com/shaversj/incident-triage-agent"
+      "https://github.com/example/example-repository"
     );
   });
 

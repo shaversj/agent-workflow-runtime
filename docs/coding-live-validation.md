@@ -10,7 +10,7 @@ Create a private scenario JSON file outside the repository:
 {
   "scenario": "prepare",
   "authorization": {
-    "repository": "shaversj/agent-ops-kit-coding-fixture",
+    "repository": "example-org/agent-coding-fixture",
     "baseBranch": "main",
     "principal": "cli:501",
     "permittedWrites": []
@@ -44,7 +44,7 @@ This preparation entry point does **not** grant publication. Inspect the proposa
 
 ## Selected Validation Target
 
-The operator selected `shaversj/agent-ops-kit-coding-fixture` and the existing `.env` Discord channel. That selection does not supply missing coding credentials, identify an authenticated human principal, or approve a sealed proposal. Do not silently broaden the channel allowlist or enable publication.
+The operator selected `example-org/agent-coding-fixture` and an existing `.env` Discord channel. That selection does not supply missing coding credentials, identify an authenticated human principal, or approve a sealed proposal. Do not silently broaden the channel allowlist or enable publication.
 
 Full live publication/response-loss, human Discord, and prepared TypeScript gates must have their own completed evidence before rollout is considered complete. Deterministic tests and simulated receipts do not substitute for them.
 
