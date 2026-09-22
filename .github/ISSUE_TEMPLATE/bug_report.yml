@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible Agent Ops Kit defect
+description: Report a reproducible Agent Workflow Runtime defect
 title: "[Bug]: "
 labels: ["bug"]
 body:

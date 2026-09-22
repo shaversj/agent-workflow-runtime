@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "MiniMax model identifier is public configuration, not a Discord client secret"
+regexTarget = "secret"
+regexes = ['''^DISCORD_DEFAULT_MODEL=MiniMax-M3$''']

@@ -12,3 +12,4 @@ coverage
 .ruff_cache
 .mypy_cache
 .agent-readiness
+.gitleaks.toml
