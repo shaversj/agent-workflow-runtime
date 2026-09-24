@@ -255,6 +255,7 @@ describe("chat agent workflow", () => {
       expect(response.text).toContain("Readiness sweep completed for /tmp/demo.");
       expect(response.text).toContain("Run: 42");
       expect(response.text).toContain("Tokens: 30");
+      expect(response.text).toContain("Workflow activities: 1");
       expect(mockAgentState.stopDecisions).toEqual([true]);
     } finally {
       restoreEnv("MINIMAX_API_KEY", originalKey);

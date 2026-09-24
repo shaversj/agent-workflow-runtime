@@ -530,7 +530,7 @@ function renderWorkflowSummary(result: WorkflowResult): string {
   const reportSummary = result.reportPath ? readReportSummary(result.reportPath) : undefined;
   if (reportSummary) lines.push("", "Summary:", reportSummary);
   if (result.reportPath) lines.push("", "Full report:", result.reportPath);
-  lines.push("", `Tool calls: ${result.toolCalls.length}`);
+  lines.push("", `Workflow activities: ${result.toolCalls.length}`);
   if (result.error) lines.push(`Error: ${result.error}`);
   return lines.join("\n");
 }
