@@ -1,18 +1,10 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-
 import { beginInteraction } from "../harness/interaction.js";
 import type { InteractionRecorder } from "../harness/interaction.js";
 import { captureHistory } from "../harness/history-capture.js";
-import { createMinimaxHarnessModel } from "../harness/model.js";
 import { emitWorkflowProgress } from "../harness/progress.js";
 import type { ToolCallRecord, WorkflowProgressEvent, WorkflowResult } from "../harness/types.js";
-import {
-  assistantText,
-  emptyUsage,
-  observedModelUsage,
-  usageFromAssistant
-} from "../harness/usage.js";
-import { combineAbortSignals, withWorkflowTimeout } from "../harness/timeout.js";
+import { emptyUsage } from "../harness/usage.js";
+import { combineAbortSignals } from "../harness/timeout.js";
 import { logger } from "../logger.js";
 import {
   collectGitHubEvidence,
@@ -20,6 +12,11 @@ import {
 } from "../plugins/github/client.js";
 import { resolveGitHubIdentityForTarget } from "../plugins/github/evidence.js";
 import { renderGitHubContext } from "../plugins/github/report.js";
+import {
+  RulesBenchmarkClient,
+  type RulesBenchmarkClientOptions
+} from "../plugins/rules-benchmark/client.js";
+import { ensureBenchmarkReportSection } from "../plugins/rules-benchmark/report.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
   buildReadinessInterpretationPrompt,
@@ -34,6 +31,10 @@ import {
   workspaceSummary
 } from "../workspaces/index.js";
 import type { TargetRef, WorkspaceLease } from "../workspaces/index.js";
+import {
+  ReadinessInterpretationError,
+  runReadinessInterpretation
+} from "./readiness-interpretation.js";
 
 const DEFAULT_HARNESS_PROVIDER = "agent-workflow-runtime";
 export const DEFAULT_HARNESS_MODEL = "MiniMax-M3";
@@ -50,6 +51,7 @@ export async function runSweepWorkflow(
     sourceContext?: ToolSourceContext;
     signal?: AbortSignal;
     github?: GitHubEvidenceClientOptions;
+    benchmark?: RulesBenchmarkClientOptions;
     recording?: InteractionRecorder;
   } = {}
 ): Promise<WorkflowResult> {
@@ -112,6 +114,14 @@ export async function runSweepWorkflow(
       lease = await prepareWorkspace(target, options.ref, { signal });
       assertActive();
       const workspace = workspaceSummary(lease);
+      const runMetadata = {
+        workspace,
+        ...(options.sourceContext ? { source: options.sourceContext } : {}),
+        harnessProvider: DEFAULT_HARNESS_PROVIDER,
+        modelProvider: "minimax",
+        modelRuntime: "pi-ai",
+        model: modelName
+      };
       result.workspace = workspace;
       result.repoPath = lease.path;
       result.target = {
@@ -124,14 +134,7 @@ export async function runSweepWorkflow(
         target: lease.displayOrigin,
         ref: lease.ref,
         commitSha: lease.commitSha,
-        metadata: {
-          workspace,
-          ...(options.sourceContext ? { source: options.sourceContext } : {}),
-          harnessProvider: DEFAULT_HARNESS_PROVIDER,
-          modelProvider: "minimax",
-          modelRuntime: "pi-ai",
-          model: modelName
-        }
+        metadata: runMetadata
       });
       progress({ type: "workspace_prepared", target: result.target, workspace });
       progress({
@@ -158,6 +161,48 @@ export async function runSweepWorkflow(
         args: readinessInput,
         isError: false,
         result: evidence
+      });
+      assertActive();
+      const benchmarkClient = new RulesBenchmarkClient({
+        ...options.benchmark,
+        signal: combineAbortSignals(signal, options.benchmark?.signal)
+      });
+      progress({ type: "benchmark_started" });
+      const benchmarkStartedAt = Date.now();
+      const benchmarkInput = { endpoint: "/catalog" };
+      const benchmark = await recording.recordTool(
+        {
+          name: "rules_benchmark_catalog",
+          kind: "workflow",
+          source: "rules-benchmark",
+          input: benchmarkInput
+        },
+        () => benchmarkClient.catalog(),
+        signal
+      );
+      calls.push({
+        name: "rules_benchmark_catalog",
+        args: benchmarkInput,
+        isError: false,
+        result: benchmark
+      });
+      result.benchmark = {
+        status: benchmark.status,
+        apiVersion: benchmark.provenance.api_version,
+        endpoint: benchmark.provenance.endpoint,
+        fetchedAt: benchmark.provenance.fetched_at,
+        ...(benchmark.provenance.cache_age_ms === undefined
+          ? {}
+          : { cacheAgeMs: benchmark.provenance.cache_age_ms }),
+        ...(benchmark.unavailable_reason ? { reason: benchmark.unavailable_reason } : {})
+      };
+      recording.updateRun({ metadata: { ...runMetadata, benchmark: result.benchmark } });
+      progress({
+        type: "benchmark_completed",
+        status: benchmark.status,
+        durationMs: Math.max(0, Date.now() - benchmarkStartedAt),
+        cacheAgeMs: benchmark.provenance.cache_age_ms,
+        failureType: benchmark.unavailable_reason
       });
       assertActive();
       // Avoid counting a non-GitHub target as a second evidence collection.
@@ -211,11 +256,12 @@ export async function runSweepWorkflow(
       if (!process.env.MINIMAX_API_KEY) {
         result.status = "skipped";
         result.error = "missing_minimax_api_key";
-        body =
-          "## Overall Judgment\n\nRepository evidence was collected, but LLM interpretation was skipped because `MINIMAX_API_KEY` is not set.\n\n## Next Step\n\nSet `MINIMAX_API_KEY` and rerun the sweep.";
+        body = ensureBenchmarkReportSection(
+          "## Overall Judgment\n\nRepository evidence was collected, but LLM interpretation was skipped because `MINIMAX_API_KEY` is not set.\n\n## Next Step\n\nSet `MINIMAX_API_KEY` and rerun the sweep.",
+          benchmark
+        );
       } else {
         assertActive();
-        const harnessModel = createMinimaxHarnessModel(modelName);
         progress({
           type: "model_started",
           modelProvider: "minimax",
@@ -223,67 +269,29 @@ export async function runSweepWorkflow(
           model: modelName
         });
         assertActive();
-        const id = recording.modelStart({ provider: "minimax", model: modelName });
-        result.usage = { requests: 1, completeness: "unknown" };
-        const modelController = new AbortController();
-        const modelSignal = combineAbortSignals(signal, modelController.signal)!;
-        let interpretation: AssistantMessage | undefined;
-        try {
-          const completion = harnessModel.models.completeSimple(
-            harnessModel.model,
-            {
-              systemPrompt:
-                readinessSweepSkill +
-                "\n\nEvidence gathering is already complete. Tools are unavailable. Interpret only the provided evidence packet and write the final Markdown report directly.",
-              messages: [
-                {
-                  role: "user",
-                  content: buildReadinessInterpretationPrompt(
-                    lease.path,
-                    github ? { readiness: evidence, github } : evidence
-                  ),
-                  timestamp: Date.now()
-                }
-              ],
-              tools: []
-            },
-            {
-              toolChoice: "none",
-              reasoning: "low",
-              maxTokens: 3000,
-              timeoutMs,
-              signal: modelSignal
-            }
-          );
-          interpretation = await withWorkflowTimeout(
-            withAbort(completion, signal),
-            timeoutMs,
-            () => {
-              // Request provider cancellation; a rejected wrapper does not prove the provider stopped.
-              modelController.abort(new Error("workflow_timeout"));
-              progress({ type: "timeout", timeoutMs });
-            }
-          );
-          assertActive();
-          result.usage = usageFromAssistant(interpretation);
-          if (interpretation.stopReason === "error" || interpretation.stopReason === "aborted")
-            throw new Error(
-              interpretation.errorMessage ?? "model_returned_" + interpretation.stopReason
-            );
-        } catch (error) {
-          recording.modelFinish({
-            id,
-            status: signal.aborted ? "cancelled" : "failed",
-            usage: observedModelUsage(interpretation),
-            error: safeError(error)
-          });
+        const interpretation = await runReadinessInterpretation({
+          modelName,
+          timeoutMs,
+          signal,
+          recording,
+          benchmarkClient,
+          sourceContext: options.sourceContext,
+          onProgress: progress,
+          systemPrompt: readinessSweepSkill,
+          prompt: buildReadinessInterpretationPrompt(lease.path, {
+            readiness: evidence,
+            ...(github ? { github } : {}),
+            rules_benchmark: benchmark
+          })
+        }).catch((error: unknown) => {
+          if (error instanceof ReadinessInterpretationError) {
+            result.usage = error.usage;
+            calls.push(...error.toolCalls);
+          }
           throw error;
-        }
-        recording.modelFinish({
-          id,
-          status: "completed",
-          usage: observedModelUsage(interpretation)
         });
+        result.usage = interpretation.usage;
+        calls.push(...interpretation.toolCalls);
         logger.info(
           {
             ...logContext,
@@ -294,8 +302,7 @@ export async function runSweepWorkflow(
           },
           "readiness_sweep.model_completed"
         );
-        body = assistantText(interpretation);
-        if (!body) throw new Error("interpretation_returned_no_text");
+        body = ensureBenchmarkReportSection(interpretation.body, benchmark);
         result.status = "completed";
       }
       assertActive();
@@ -388,22 +395,4 @@ export async function runSweepWorkflow(
 
 function safeError(error: unknown): string {
   return captureHistory(error instanceof Error ? error.message : String(error)).text;
-}
-
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new Error("workflow_aborted"));
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(error instanceof Error ? error : new Error(safeError(error)));
-      }
-    );
-  });
 }

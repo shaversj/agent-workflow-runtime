@@ -46,6 +46,15 @@ describe("durable history capture", () => {
     expect(redactEvidenceText(raw)).not.toMatch(/synthetic-/);
   });
 
+  it("preserves token usage metrics while redacting credentials", () => {
+    expect(redactEvidenceText("Tokens: 77192\ntoken=secret-value")).toBe(
+      "Tokens: 77192\ntoken=[REDACTED]"
+    );
+    expect(
+      captureHistory({ tokenCount: 77192, totalTokens: 77192, token: "secret-value" }).text
+    ).toBe('{"tokenCount":77192,"totalTokens":77192,"token":"[REDACTED]"}');
+  });
+
   it("preserves safe content and original operational results without invoking accessors", () => {
     const getter = vi.fn(() => {
       throw new Error("must not run");

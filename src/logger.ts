@@ -68,7 +68,7 @@ function pinoPrettyStream(destination?: DestinationStream): DestinationStream {
     colorize: process.stdout.isTTY && process.env.NO_COLOR !== "1",
     errorProps: "stack,message,code",
     ignore:
-      "pid,hostname,workflow_name,interaction_id,run_id,harness_provider,model_runtime,model_provider,model,status,repo_name,target_path,target_url,workspace_source,workspace_path,workspace_ref,workspace_commit_sha,report_path,timeout_ms,file_count,token_count,tool_call_count",
+      "pid,hostname,workflow_name,interaction_id,run_id,harness_provider,model_runtime,model_provider,model,status,repo_name,target_path,target_url,workspace_source,workspace_path,workspace_ref,workspace_commit_sha,report_path,timeout_ms,duration_ms,file_count,token_count,tool_call_count,benchmark_status,cache_age_ms,failure_type",
     levelFirst: true,
     messageFormat: prettyMessageFormat,
     singleLine: false,
@@ -88,11 +88,15 @@ function prettyMessageFormat(log: PrettyLogRecord, messageKey: string): string {
     formatContextValue("source", log.workspace_source),
     formatContextValue("model", log.model),
     formatContextValue("status", log.status),
+    formatContextValue("benchmark", log.benchmark_status),
+    formatContextValue("failure", log.failure_type),
     formatContextValue("sha", shortSha(log.workspace_commit_sha)),
     formatContextValue("files", log.file_count),
     formatContextValue("tokens", log.token_count),
     formatContextValue("tools", log.tool_call_count),
     formatDurationValue("timeout", log.timeout_ms),
+    formatDurationValue("duration", log.duration_ms),
+    formatDurationValue("cache_age", log.cache_age_ms),
     formatPathBasenameValue("report", log.report_path)
   ].filter(Boolean);
   return context.length ? `${message} ${context.join(" ")}` : message;

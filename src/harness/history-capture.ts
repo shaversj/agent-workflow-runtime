@@ -8,6 +8,7 @@ const maxBytes = 64 * 1024;
 const maxNodes = 2000;
 const maxDepth = 12;
 const sensitiveKey = /authorization|cookie|token|secret|password|credential|api.?key|private.?key/i;
+const safeTokenMetricKey = /^(?:tokens|tokenCount|inputTokens|outputTokens|totalTokens)$/i;
 const hiddenKey =
   /thinking|reasoning|system|environment|provider|raw.?response|raw.?request|response.?metadata|request.?options|additional.?kwargs|^(?:env|stack|headers|signature|logprobs|stopReason|api|usage)$/i;
 
@@ -98,7 +99,7 @@ function capture(value: unknown, stringLimit: number): CaptureEnvelope {
       }
       const safeKey = isArray ? key : sanitize(key);
       let safeValue: unknown;
-      if (sensitiveKey.test(key)) {
+      if (sensitiveKey.test(key) && !safeTokenMetricKey.test(key)) {
         redacted = true;
         safeValue = "[REDACTED]";
       } else if (!descriptor || !("value" in descriptor)) safeValue = omit("accessor");

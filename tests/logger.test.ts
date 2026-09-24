@@ -44,6 +44,9 @@ describe("logger", () => {
         run_id: 123,
         interaction_id: "interaction-123",
         status: "completed",
+        benchmark_status: "stale",
+        duration_ms: 42,
+        cache_age_ms: 86_400_000,
         token_count: 456,
         report_path: "/tmp/reports/report.md"
       },
@@ -54,12 +57,14 @@ describe("logger", () => {
 
     expect(output).toContain("INFO");
     expect(output).toContain(
-      "readiness_sweep.started run=123 interaction=interaction-123 status=completed tokens=456 report=report.md"
+      "readiness_sweep.started run=123 interaction=interaction-123 status=completed benchmark=stale tokens=456 duration=42ms cache_age=86400000ms report=report.md"
     );
     expect(output).not.toContain('workflow_name: "readiness_sweep"');
     expect(output).not.toContain("run_id: 123");
     expect(output).not.toContain('interaction_id: "interaction-123"');
     expect(output).not.toContain('status: "completed"');
+    expect(output).not.toContain('benchmark_status: "stale"');
+    expect(output).not.toContain("duration_ms: 42");
     expect(output).not.toContain("token_count: 456");
     expect(output).not.toContain('report_path: "/tmp/reports/report.md"');
   });

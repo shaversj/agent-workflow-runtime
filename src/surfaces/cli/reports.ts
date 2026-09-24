@@ -47,6 +47,7 @@ function formatLatestReport(
     `Report: ${report.report_path}`,
     `Run: ${report.run_ref ?? "unknown"}`,
     `Status: ${report.status ?? "unknown"}`,
+    `Rules benchmark: ${report.benchmark_status ?? "unknown"}`,
     `Ref: ${report.ref ?? "unknown"}`,
     `Commit: ${report.short_commit ?? "unknown"}`,
     `Updated: ${report.updated_at ?? "unknown"}`,

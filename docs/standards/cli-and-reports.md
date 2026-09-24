@@ -41,6 +41,7 @@ Sweeps are read-only by default:
 - write Markdown reports under `AGENT_OPS_HOME/history/artifacts/` and register each artifact
 - record the target origin, ref, and commit SHA in the run/report metadata
 - include optional read-only GitHub context when the target is backed by `github.com`
+- always attempt the fixed-origin public OSS rules benchmark and record its status
 - clean up disposable workspaces after the run
 - do not edit source files, commit, push, or open pull requests unless the user explicitly asks
 
@@ -67,6 +68,14 @@ audits, issue triage, pull request review, release readiness, or productivity an
 
 Optional GitHub enrichment must be bounded. A slow or unavailable GitHub request should degrade to
 unavailable GitHub evidence instead of preventing the sweep report from being written.
+
+The OSS rules benchmark is required but non-authoritative. Revalidate its catalog on every sweep,
+allow the interpreter at most six turns and four corpus detail reads, and send no target-derived
+data to the service. A provider failure uses a validated cache entry no older than seven days as
+`stale` evidence or records `unavailable`; neither state fails an otherwise valid sweep. Reports
+must include an `Agent Rules Benchmark` section with status, local evidence, applicability, and
+pinned source provenance for any comparison. Corpus-only practices are informational unless the
+repository itself declares them required.
 
 ## Plugins, Tools, Skills, Workflows
 

@@ -37,6 +37,19 @@ export function emitWorkflowProgress(
     logger.info(context, `${workflowName}.evidence_started`);
   } else if (event.type === "evidence_completed") {
     logger.info({ ...context, file_count: event.fileCount }, `${workflowName}.evidence_completed`);
+  } else if (event.type === "benchmark_started") {
+    logger.info(context, `${workflowName}.benchmark_started`);
+  } else if (event.type === "benchmark_completed") {
+    logger.info(
+      {
+        ...context,
+        benchmark_status: event.status,
+        duration_ms: event.durationMs,
+        cache_age_ms: event.cacheAgeMs,
+        failure_type: event.failureType
+      },
+      `${workflowName}.benchmark_completed`
+    );
   } else if (event.type === "model_started") {
     logger.info(
       {

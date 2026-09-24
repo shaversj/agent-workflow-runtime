@@ -10,14 +10,39 @@ import { openHistoryReader } from "../src/db/index.js";
 import { parseSweepArgs, runSweepCli } from "../src/surfaces/cli/sweep.js";
 
 const model = vi.hoisted(() => ({ complete: vi.fn() }));
-vi.mock("../src/harness/model.js", () => ({
-  createMinimaxHarnessModel: () => ({
-    modelProvider: "minimax",
-    modelRuntime: "pi-ai",
-    model: {},
-    models: { completeSimple: model.complete }
-  })
-}));
+vi.mock("../src/harness/model.js", async () => {
+  const { createAssistantMessageEventStream } = await import("@earendil-works/pi-ai");
+  return {
+    createMinimaxHarnessModel: () => ({
+      modelProvider: "minimax",
+      modelRuntime: "pi-ai",
+      model: {
+        id: "fake",
+        api: "openai-completions",
+        provider: "minimax",
+        reasoning: false
+      },
+      models: {
+        streamSimple: async (modelInput: unknown, input: unknown, options: unknown) => {
+          const partial: unknown = await model.complete(modelInput, input, options);
+          const message = {
+            role: "assistant" as const,
+            api: "openai-completions" as const,
+            provider: "minimax",
+            model: "fake",
+            content: [{ type: "text" as const, text: "Ready." }],
+            stopReason: "stop" as const,
+            timestamp: Date.now(),
+            ...(partial && typeof partial === "object" ? partial : {})
+          };
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: "done", reason: message.stopReason, message });
+          return stream;
+        }
+      }
+    })
+  };
+});
 
 let home: string;
 let repo: string;
@@ -110,7 +135,7 @@ describe("sweep CLI recording", () => {
     expect(snapshot.deliveries).toMatchObject([
       { status: "acknowledged", surfaceMessageId: "stdout" }
     ]);
-    expect(output).toContain("Workflow evidence activities: 1");
+    expect(output).toContain("Workflow evidence activities: 2");
     expect(output).not.toContain("undefined");
   });
 

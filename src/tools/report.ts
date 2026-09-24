@@ -28,8 +28,7 @@ export function renderReportEnvelope(
       ? [
           `Source: \`${options.workspace.source}\``,
           `Ref: \`${options.workspace.ref}\``,
-          `Commit: \`${options.workspace.commitSha}\``,
-          `Workspace: \`${path.resolve(repoPath)}\``
+          `Commit: \`${options.workspace.commitSha}\``
         ]
       : [])
   ].join("\n");

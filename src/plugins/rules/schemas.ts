@@ -2,7 +2,7 @@ import { Type, type Static } from "typebox";
 
 const closed = { additionalProperties: false } as const;
 
-export const RuleSourceKindSchema = Type.Union([
+const RuleSourceKindSchema = Type.Union([
   Type.Literal("agents"),
   Type.Literal("claude"),
   Type.Literal("cursor"),
@@ -10,12 +10,9 @@ export const RuleSourceKindSchema = Type.Union([
   Type.Literal("standard")
 ]);
 
-export const RuleScopeSchema = Type.Union([
+const RuleScopeSchema = Type.Union([
   Type.Object({ kind: Type.Literal("repository") }, closed),
-  Type.Object(
-    { kind: Type.Literal("subtree"), root: Type.String({ minLength: 1 }) },
-    closed
-  ),
+  Type.Object({ kind: Type.Literal("subtree"), root: Type.String({ minLength: 1 }) }, closed),
   Type.Object(
     {
       kind: Type.Literal("path-glob"),

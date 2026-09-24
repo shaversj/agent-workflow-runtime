@@ -89,6 +89,8 @@ Workflows should log these process events when they apply:
 - report written
 - interaction recording failure or recovery
 - recoverable fallback or degraded-mode behavior
+- rules benchmark started and completed, including `benchmark_status`, `duration_ms`, cache age when
+  stale, and a sanitized `failure_type` when degraded
 
 Plugins should log lifecycle events at the workflow boundary, not every internal branch. Prefer counts and status fields over noisy per-file logs.
 

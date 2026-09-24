@@ -9,6 +9,7 @@ Tests should prove behavior at the boundaries Agent Workflow Runtime exposes:
 - tool contracts and routing
 - database persistence and schema-sensitive flows
 - Markdown report contents and artifact paths
+- external response validation, conditional cache revalidation, stale fallback, and cancellation
 
 Prefer tests that exercise real project objects over tests that only mock local
 helper functions.
@@ -20,6 +21,8 @@ helper functions.
 - Keep fixtures small and explicit.
 - Use temporary directories for inspected repositories and set `AGENT_OPS_HOME`
   to a temporary directory when tests generate sweep state or reports.
+- Intercept the fixed ossrules origin in automated sweep tests. Assert that captured requests contain
+  only public API routes and corpus-owned identifiers, never target-derived markers.
 
 ## Coverage Expectations
 

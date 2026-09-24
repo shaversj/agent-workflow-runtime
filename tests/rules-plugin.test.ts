@@ -36,9 +36,9 @@ describe("rules plugin", () => {
     expect(result.sources.find((source) => source.path === "AGENTS.md")?.scope).toEqual({
       kind: "repository"
     });
-    expect(result.sources.find((source) => source.path === "services/api/AGENTS.md")?.scope).toEqual(
-      { kind: "subtree", root: "services/api" }
-    );
+    expect(
+      result.sources.find((source) => source.path === "services/api/AGENTS.md")?.scope
+    ).toEqual({ kind: "subtree", root: "services/api" });
     expect(
       result.sources.find((source) => source.path === ".cursor/rules/typescript.mdc")?.scope
     ).toEqual({ kind: "path-glob", patterns: ["**/*.ts"] });

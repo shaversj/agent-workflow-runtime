@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Value } from "typebox/value";
+import { request as undiciRequest } from "undici";
 
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 import { historyDatabasePath, historyArtifactsPath } from "../src/workspaces/storage.js";
@@ -21,40 +22,81 @@ const sweepHarnessState = vi.hoisted(() => ({
   complete: vi.fn()
 }));
 
-vi.mock("../src/harness/model.js", () => ({
-  createMinimaxHarnessModel: () => ({
-    modelProvider: "minimax",
-    modelRuntime: "pi-ai",
-    name: "MiniMax-M3",
-    model: {},
-    models: {
-      completeSimple: (
-        _model: unknown,
-        input: { messages: { content: string }[] },
-        options: { signal: AbortSignal }
-      ) => {
-        sweepHarnessState.prompts.push(input.messages[0]?.content ?? "");
-        const override: unknown = sweepHarnessState.complete(input, options);
-        if (override !== undefined) return override;
-        return Promise.resolve({
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: "## Overall Judgment\n\nRepository is ready with GitHub context."
-            }
-          ],
-          usage: {
-            input: 10,
-            output: 20,
-            totalTokens: 30,
-            cost: { total: 0 }
-          }
-        });
+vi.mock("../src/harness/model.js", async () => {
+  const { createAssistantMessageEventStream } = await import("@earendil-works/pi-ai");
+  return {
+    createMinimaxHarnessModel: () => ({
+      modelProvider: "minimax",
+      modelRuntime: "pi-ai",
+      name: "MiniMax-M3",
+      model: {
+        id: "fake",
+        api: "openai-completions",
+        provider: "minimax",
+        reasoning: false
+      },
+      models: {
+        streamSimple: async (
+          _model: unknown,
+          input: { messages: { role: string; content: string }[] },
+          options: { signal: AbortSignal }
+        ) => {
+          const user = [...input.messages].reverse().find((message) => message.role === "user");
+          const content = user?.content as unknown;
+          sweepHarnessState.prompts.push(
+            typeof content === "string"
+              ? content
+              : Array.isArray(content)
+                ? content
+                    .filter(
+                      (item: unknown): item is { type: "text"; text: string } =>
+                        typeof item === "object" &&
+                        item !== null &&
+                        "type" in item &&
+                        item.type === "text" &&
+                        "text" in item &&
+                        typeof item.text === "string"
+                    )
+                    .map((item) => item.text)
+                    .join("\n")
+                : ""
+          );
+          const override: unknown = await sweepHarnessState.complete(input, options);
+          const partial =
+            override && typeof override === "object"
+              ? (override as Record<string, unknown>)
+              : {
+                  content: [
+                    {
+                      type: "text",
+                      text: "## Overall Judgment\n\nRepository is ready with GitHub context."
+                    }
+                  ],
+                  usage: {
+                    input: 10,
+                    output: 20,
+                    totalTokens: 30,
+                    cost: { total: 0 }
+                  }
+                };
+          const message = {
+            role: "assistant" as const,
+            api: "openai-completions" as const,
+            provider: "minimax",
+            model: "fake",
+            content: [],
+            stopReason: "stop" as const,
+            timestamp: Date.now(),
+            ...partial
+          };
+          const stream = createAssistantMessageEventStream();
+          stream.push({ type: "done", reason: message.stopReason, message });
+          return stream;
+        }
       }
-    }
-  })
-}));
+    })
+  };
+});
 
 let isolatedHome: string;
 beforeEach(() => {
@@ -95,7 +137,7 @@ describe("sweep workflow", () => {
       expect(result.workspace?.origin).toBe(fs.realpathSync(repoPath));
       expect(result.workspace?.commitSha).toMatch(/^[a-f0-9]{40}$/);
       expect(result.workspace?.path && fs.existsSync(result.workspace.path)).toBe(false);
-      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls).toHaveLength(2);
       expect(result.toolCalls[0]?.name).toBe("gather_readiness_evidence");
       expect(fs.existsSync(result.reportPath!)).toBe(true);
       expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("MINIMAX_API_KEY");
@@ -183,6 +225,7 @@ describe("sweep workflow", () => {
       expect(result.status).toBe("skipped");
       expect(result.toolCalls.map((call) => call.name)).toEqual([
         "gather_readiness_evidence",
+        "rules_benchmark_catalog",
         "gather_github_evidence"
       ]);
       expect(report).toContain("## GitHub Context");
@@ -225,6 +268,132 @@ describe("sweep workflow", () => {
       restoreEnv("AGENT_OPS_HOME", originalHome);
       restoreEnv("MINIMAX_API_KEY", originalKey);
     }
+  });
+
+  it("aggregates multiple interpretation turns and records benchmark tool activity", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    let turn = 0;
+    sweepHarnessState.complete.mockImplementation(() => {
+      turn += 1;
+      if (turn === 1) {
+        return {
+          content: [
+            {
+              type: "toolCall",
+              id: "benchmark-call-1",
+              name: "rules-benchmark_list_corpus",
+              arguments: { kind: "patterns" }
+            }
+          ],
+          stopReason: "toolUse",
+          usage: {
+            input: 8,
+            output: 2,
+            totalTokens: 10,
+            cost: { total: 0 }
+          }
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: "## Overall Judgment\n\nReady.\n\n## Agent Rules Benchmark\n\nThe hard-prohibition pattern is relevant to explicit boundaries."
+          }
+        ],
+        stopReason: "stop",
+        usage: {
+          input: 14,
+          output: 6,
+          totalTokens: 20,
+          cost: { total: 0 }
+        }
+      };
+    });
+
+    const result = await runSweepWorkflow(gitRepo());
+
+    expect(result.status).toBe("completed");
+    expect(result.usage).toMatchObject({ requests: 2, totalTokens: 30 });
+    expect(result.toolCalls.map((call) => call.name)).toEqual([
+      "gather_readiness_evidence",
+      "rules_benchmark_catalog",
+      "rules-benchmark_list_corpus"
+    ]);
+    expect(historySnapshot().models.map((call) => call.totalTokens)).toEqual([10, 20]);
+    expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("hard-prohibition pattern");
+  });
+
+  it("stops an interpretation that keeps requesting tools after six turns", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    let turn = 0;
+    sweepHarnessState.complete.mockImplementation(() => {
+      turn += 1;
+      return {
+        content: [
+          {
+            type: "toolCall",
+            id: `benchmark-call-${turn}`,
+            name: "rules-benchmark_list_corpus",
+            arguments: { kind: "patterns" }
+          }
+        ],
+        stopReason: "toolUse",
+        usage: {
+          input: 1,
+          output: 1,
+          totalTokens: 2,
+          cost: { total: 0 }
+        }
+      };
+    });
+
+    const result = await runSweepWorkflow(gitRepo());
+
+    expect(turn).toBe(6);
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("readiness_interpretation_turn_limit");
+    expect(result.reportPath).toBeUndefined();
+    expect(result.usage).toMatchObject({ requests: 6, totalTokens: 12 });
+    expect(historySnapshot().models).toHaveLength(6);
+    expect(
+      result.toolCalls.filter((call) => call.name === "rules-benchmark_list_corpus")
+    ).toHaveLength(6);
+  });
+
+  it("completes with stale and unavailable benchmark states during a controlled outage", async () => {
+    vi.stubEnv("MINIMAX_API_KEY", "synthetic-key");
+    const repoPath = gitRepo();
+    const fetchedAt = Date.parse("2026-09-24T12:00:00.000Z");
+    const live = await runSweepWorkflow(repoPath, {
+      benchmark: { now: () => fetchedAt }
+    });
+    const offlineRequest = vi.fn(() =>
+      Promise.reject(new Error("controlled outage"))
+    ) as unknown as typeof undiciRequest;
+
+    const stale = await runSweepWorkflow(repoPath, {
+      benchmark: {
+        now: () => fetchedAt + 3 * 24 * 60 * 60 * 1_000,
+        request: offlineRequest
+      }
+    });
+    fs.rmSync(path.join(isolatedHome, "cache", "ossrules"), { recursive: true, force: true });
+    const unavailable = await runSweepWorkflow(repoPath, {
+      benchmark: { now: () => fetchedAt + 8 * 24 * 60 * 60 * 1_000, request: offlineRequest }
+    });
+
+    expect(live).toMatchObject({ status: "completed", benchmark: { status: "live" } });
+    expect(stale).toMatchObject({
+      status: "completed",
+      benchmark: { status: "stale", cacheAgeMs: 3 * 24 * 60 * 60 * 1_000 }
+    });
+    expect(unavailable).toMatchObject({
+      status: "completed",
+      benchmark: { status: "unavailable" }
+    });
+    expect(fs.readFileSync(stale.reportPath!, "utf8")).toContain("Status: `stale`");
+    expect(fs.readFileSync(unavailable.reportPath!, "utf8")).toContain("Status: `unavailable`");
   });
 
   it("degrades optional GitHub evidence instead of hanging the sweep", async () => {

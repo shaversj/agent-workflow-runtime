@@ -3,7 +3,6 @@ export interface ReadinessEvidenceRecipe {
   maxExcerptBytes: number;
   maxSearchResultsPerQuery: number;
   ignoredPathPatterns: string[];
-  expectedStandards: { category: string; paths: string[] }[];
   preferredExcerptPaths: string[];
   searchQueries: { name: string; query: string }[];
 }
@@ -37,28 +36,6 @@ export const readinessEvidenceRecipe: ReadinessEvidenceRecipe = {
     "**/*credentials*",
     "*secret*",
     "**/*secret*"
-  ],
-  expectedStandards: [
-    { category: "testing", paths: ["docs/standards/testing.md", "standards/testing.md"] },
-    { category: "database", paths: ["docs/standards/database.md", "standards/database.md"] },
-    { category: "logging", paths: ["docs/standards/logging.md", "standards/logging.md"] },
-    { category: "formatting", paths: ["docs/standards/formatting.md", "standards/formatting.md"] },
-    {
-      category: "static-analysis",
-      paths: ["docs/standards/static-analysis.md", "standards/static-analysis.md"]
-    },
-    {
-      category: "dependency-management",
-      paths: ["docs/standards/dependency-management.md", "standards/dependency-management.md"]
-    },
-    {
-      category: "security-and-privacy",
-      paths: ["docs/standards/security-and-privacy.md", "standards/security-and-privacy.md"]
-    },
-    {
-      category: "agent-tool-interfaces",
-      paths: ["docs/standards/agent-tool-interfaces.md", "standards/agent-tool-interfaces.md"]
-    }
   ],
   preferredExcerptPaths: [
     "README.md",

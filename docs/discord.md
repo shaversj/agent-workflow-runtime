@@ -21,7 +21,7 @@ DISCORD_DEFAULT_REPO_PATH=https://github.com/org/repo
 DISCORD_DEFAULT_MODEL=MiniMax-M3
 DISCORD_TIMEOUT_MS=120000
 DISCORD_SHUTDOWN_GRACE_MS=10000
-DISCORD_ENABLED_PLUGIN_SOURCES=readiness,github
+DISCORD_ENABLED_PLUGIN_SOURCES=readiness,github,rules
 DISCORD_ALLOW_DMS=false
 MINIMAX_API_KEY=
 GITHUB_TOKEN=
@@ -46,7 +46,7 @@ path, but only users listed in both `DISCORD_ALLOWED_USER_IDS` and
 path directly.
 
 `DISCORD_ENABLED_PLUGIN_SOURCES` controls which plugin sources Discord can expose to the
-chat-agent workflow. It defaults to `readiness,github`. Source selection stays at the plugin
+chat-agent workflow. It defaults to `readiness,github,rules`. Source selection stays at the plugin
 family level; individual tools carry metadata such as source, exposure, read-only intent,
 approval requirement, and allowed surfaces.
 
@@ -101,6 +101,11 @@ Completed sweeps post a compact Markdown reply with the run ID, token count, rep
 first useful report summary, and full report path. Reports are stored in Agent Workflow Runtime managed
 state on the bot host. When the file is available, the Discord reply also attaches the generated
 `.md` report.
+
+Every Discord sweep also attempts the same fixed-origin public OSS rules benchmark as the CLI.
+The benchmark is internal to the readiness workflow, not a separately exposed Discord plugin
+source. The reply and attached report identify `live`, `revalidated`, `stale`, or `unavailable`
+benchmark evidence; an ossrules outage does not fail the sweep.
 
 Run and report inspection requests are deterministic and read managed state only. They do not
 call MiniMax. Discord inspection uses the explicit repo in the message or

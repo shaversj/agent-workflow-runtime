@@ -48,8 +48,7 @@ export async function runRulesChatRequest(
         "",
         "Standards coverage:",
         ...output.result.coverage.map(
-          (item) =>
-            `- ${item.capability}: ${item.status}${item.expected ? " (declared)" : ""}`
+          (item) => `- ${item.capability}: ${item.status}${item.expected ? " (declared)" : ""}`
         )
       );
     }

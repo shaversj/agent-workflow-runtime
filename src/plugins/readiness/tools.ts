@@ -204,6 +204,7 @@ const readinessPlugin = definePlugin({
               status: report.status,
               token_count: report.token_count,
               tool_call_count: report.tool_call_count,
+              benchmark_status: report.benchmark_status,
               failure_reason: report.failure_reason
             }
           : { repo_path: displayInspectionTarget(repoTarget), bytes: 0 };
@@ -271,7 +272,7 @@ function renderRunListText(runs: InspectionRunListResult["runs"]): string {
   return runs
     .map(
       (run) =>
-        `${run.run_ref} status=${run.status} target=${shortTarget(run.target)} ref=${run.ref ?? "unknown"} commit=${run.short_commit ?? "unknown"} tokens=${run.token_count ?? "unknown"} tools=${run.tool_call_count} report=${run.report_path ? path.basename(run.report_path) : "none"}${run.failure_reason ? ` failure=${run.failure_reason}` : ""}`
+        `${run.run_ref} status=${run.status} target=${shortTarget(run.target)} ref=${run.ref ?? "unknown"} commit=${run.short_commit ?? "unknown"} benchmark=${run.benchmark_status ?? "unknown"} tokens=${run.token_count ?? "unknown"} tools=${run.tool_call_count} report=${run.report_path ? path.basename(run.report_path) : "none"}${run.failure_reason ? ` failure=${run.failure_reason}` : ""}`
     )
     .join("\n");
 }
@@ -285,6 +286,7 @@ function renderRunShowText(result: InspectionRunShowResult): string {
     `Target: ${run.target}`,
     `Ref: ${run.ref ?? "unknown"}`,
     `Commit: ${run.short_commit ?? "unknown"}`,
+    `Rules benchmark: ${run.benchmark_status ?? "unknown"}`,
     `Report: ${run.report_path ?? "none"}`,
     `Tokens: ${run.token_count ?? "unknown"}`,
     `Tool calls: ${run.tool_call_count}`
@@ -307,6 +309,7 @@ function renderSweepToolText(result: Awaited<ReturnType<typeof runSweepWorkflow>
       report_path: result.reportPath ?? null,
       ref: result.target.ref,
       commit_sha: result.target.commitSha,
+      benchmark_status: result.benchmark?.status ?? null,
       token_count: result.usage.totalTokens ?? null,
       usage_completeness: result.usage.completeness ?? "unknown",
       workflow_activity_count: result.toolCalls.length,

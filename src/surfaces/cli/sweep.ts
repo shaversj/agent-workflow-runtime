@@ -62,6 +62,7 @@ export async function runSweepCli(args: string[]) {
         `Interaction: ${recording.interactionId}`,
         `Run: ${result.runId}`,
         `Status: ${result.status}`,
+        `Rules benchmark: ${result.benchmark?.status ?? "not attempted"}`,
         `Workflow evidence activities: ${result.toolCalls.length}`,
         `Tokens: ${result.usage.totalTokens ?? "unknown"} (${result.usage.completeness ?? "unknown"})`,
         `Report: ${result.reportPath ?? "none"}`,
@@ -175,6 +176,12 @@ function formatSweepProgress(event: WorkflowProgressEvent): string | undefined {
   }
   if (event.type === "evidence_completed") {
     return `Collected evidence from ${event.fileCount} files`;
+  }
+  if (event.type === "benchmark_started") {
+    return "Checking public OSS rules benchmark...";
+  }
+  if (event.type === "benchmark_completed") {
+    return `OSS rules benchmark: ${event.status}`;
   }
   if (event.type === "model_started") {
     return `Waiting for ${event.modelProvider}/${event.model}...`;

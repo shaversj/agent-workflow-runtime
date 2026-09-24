@@ -54,7 +54,9 @@ export function parseRulesCliArgs(args: string[]): RulesCliArgs {
       ref
     });
   }
-  throw new Error("Usage: agent-ops rules inventory <repo-target> [--ref ref] | rules read <repo-target> <source-path> [--ref ref]");
+  throw new Error(
+    "Usage: agent-ops rules inventory <repo-target> [--ref ref] | rules read <repo-target> <source-path> [--ref ref]"
+  );
 }
 
 export async function runRulesCli(args: string[]): Promise<void> {

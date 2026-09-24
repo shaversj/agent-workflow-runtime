@@ -523,7 +523,8 @@ function renderWorkflowSummary(result: WorkflowResult): string {
   const lines = [
     `Readiness sweep ${result.status} for ${target}.`,
     `Run: ${result.runId}`,
-    `Tokens: ${result.usage.totalTokens ?? "unknown"}${result.usage.completeness === "unknown" && result.usage.totalTokens !== undefined ? " (incomplete)" : ""}`
+    `Tokens: ${result.usage.totalTokens ?? "unknown"}${result.usage.completeness === "unknown" && result.usage.totalTokens !== undefined ? " (incomplete)" : ""}`,
+    `Rules benchmark: ${result.benchmark?.status ?? "not attempted"}`
   ];
   if (result.reportPath) lines.push(`Report: ${path.basename(result.reportPath)}`);
   const reportSummary = result.reportPath ? readReportSummary(result.reportPath) : undefined;

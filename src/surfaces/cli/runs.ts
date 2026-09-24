@@ -106,6 +106,7 @@ function formatRunList(runs: InspectionRunSummary[]): string {
         `target=${shortTarget(run.target)}`,
         `ref=${run.ref ?? "unknown"}`,
         `commit=${run.short_commit ?? "unknown"}`,
+        `benchmark=${run.benchmark_status ?? "unknown"}`,
         `tokens=${run.token_count ?? "unknown"}`,
         `tools=${run.tool_call_count}`,
         `report=${run.report_path ? path.basename(run.report_path) : "none"}`
@@ -123,6 +124,7 @@ function formatRunDetail(run: InspectionRunDetail): string {
     `Target: ${run.target}`,
     `Ref: ${run.ref ?? "unknown"}`,
     `Commit: ${run.commit_sha ?? "unknown"}`,
+    `Rules benchmark: ${run.benchmark_status ?? "unknown"}`,
     `Report: ${run.report_path ?? "none"}`,
     `Tokens: ${run.token_count ?? "unknown"}`,
     `Tool calls: ${run.tool_call_count}`,

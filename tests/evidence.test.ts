@@ -17,6 +17,10 @@ describe("readiness evidence", () => {
     fs.writeFileSync(path.join(repoPath, ".github", "workflows", "ci.yml"), "name: CI\n");
     fs.mkdirSync(path.join(repoPath, "docs", "standards"), { recursive: true });
     fs.writeFileSync(
+      path.join(repoPath, "docs", "standards", "README.md"),
+      "# Standards\n\n- [Logging](logging.md)\n- [Testing](testing.md)\n"
+    );
+    fs.writeFileSync(
       path.join(repoPath, "docs", "standards", "logging.md"),
       "# Logging\nUse Pino.\n"
     );
@@ -30,12 +34,13 @@ describe("readiness evidence", () => {
     expect(evidence.rules.plugin).toBe("rules");
     expect(evidence.rules.sources.map((source) => source.path)).toContain("AGENTS.md");
     expect(evidence.key_files).toEqual(expect.arrayContaining(["README.md", "AGENTS.md"]));
-    expect(evidence.standard_expectations.map((standard) => standard.category)).toContain(
-      "logging"
+    expect(evidence.rules.coverage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ capability: "logging", status: "observed", expected: true }),
+        expect.objectContaining({ capability: "testing", status: "missing", expected: true })
+      ])
     );
-    expect(evidence.standard_expectations.map((standard) => standard.category)).not.toContain(
-      "redis"
-    );
+    expect(evidence).not.toHaveProperty("standard_expectations");
     expect(evidence.standards).toContain("docs/standards/logging.md");
     expect(evidence.ci).toContain(".github/workflows/ci.yml");
     expect(evidence.tests).toContain("tests/demo.test.ts");

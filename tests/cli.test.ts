@@ -187,9 +187,7 @@ describe("rules CLI", () => {
     expect(inventory).toContain("AGENTS.md");
     expect(inventory).toContain("committed snapshot");
 
-    const source = await captureStdoutAsync(() =>
-      runRulesCli(["read", repoPath, "AGENTS.md"])
-    );
+    const source = await captureStdoutAsync(() => runRulesCli(["read", repoPath, "AGENTS.md"]));
     expect(source).toContain("# Agent rules");
     expect(source).toContain("Source: AGENTS.md");
   });

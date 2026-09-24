@@ -284,6 +284,7 @@ describe("readiness plugin tools", () => {
         runs: [
           {
             run_id: sweep.runId,
+            benchmark_status: "live",
             usage_completeness: "unknown",
             failure_reason: "missing_minimax_api_key"
           }
@@ -294,7 +295,7 @@ describe("readiness plugin tools", () => {
         run: {
           run_ref: runRef,
           tool_call_count: 0,
-          workflow_activity_count: 1
+          workflow_activity_count: 2
         }
       });
     } finally {

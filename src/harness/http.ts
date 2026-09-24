@@ -100,7 +100,12 @@ export async function requestBoundedJson(
 }
 
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError(signal));
+  if (signal.aborted) {
+    // The transport may have rejected in the same tick that it aborted the signal.
+    // Observe it so cancellation does not leave an unhandled provider rejection.
+    void promise.catch(() => undefined);
+    return Promise.reject(abortError(signal));
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(abortError(signal));
     signal.addEventListener("abort", onAbort, { once: true });
@@ -178,10 +183,7 @@ async function readJsonBody(
   }
 
   const chunks: Buffer[] = [];
-  const encodedLimiter = byteLimitTransform(
-    limits.encodedBytes,
-    "http_response_encoded_too_large"
-  );
+  const encodedLimiter = byteLimitTransform(limits.encodedBytes, "http_response_encoded_too_large");
   const decodedCollector = byteLimitTransform(
     limits.decodedBytes,
     "http_response_decoded_too_large",

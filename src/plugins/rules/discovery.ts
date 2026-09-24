@@ -2,12 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { redactEvidenceText, type EvidenceRedactionStats } from "../../harness/redaction.js";
-import type {
-  RuleSource,
-  RuleSourceReadResult,
-  RulesCoverage,
-  RulesInventory
-} from "./schemas.js";
+import type { RuleSource, RuleSourceReadResult, RulesCoverage, RulesInventory } from "./schemas.js";
 
 const MAX_SOURCES = 80;
 const MAX_EXCERPT_BYTES = 4 * 1024;
@@ -206,14 +201,12 @@ function buildCoverage(sources: RuleSource[]): RulesCoverage[] {
     }
   }
 
-  return [...new Set([...observed.keys(), ...expected])]
-    .sort()
-    .map((capability) => ({
-      capability,
-      status: observed.has(capability) ? "observed" : "missing",
-      expected: expected.has(capability),
-      paths: observed.get(capability) ?? []
-    }));
+  return [...new Set([...observed.keys(), ...expected])].sort().map((capability) => ({
+    capability,
+    status: observed.has(capability) ? "observed" : "missing",
+    expected: expected.has(capability),
+    paths: observed.get(capability) ?? []
+  }));
 }
 
 function standardCapability(relativePath: string): string | undefined {
@@ -232,7 +225,8 @@ function realDirectory(input: string): string {
 }
 
 function normalizeRelativePath(input: string): string {
-  if (!input || path.isAbsolute(input) || input.includes("\0")) throw new Error("rules_source_invalid");
+  if (!input || path.isAbsolute(input) || input.includes("\0"))
+    throw new Error("rules_source_invalid");
   const normalized = input.split(path.sep).join("/");
   if (normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
     throw new Error("rules_source_invalid");

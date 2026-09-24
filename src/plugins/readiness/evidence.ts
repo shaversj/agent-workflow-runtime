@@ -36,7 +36,6 @@ interface ReadinessEvidence {
   evidence_recipe: string;
   redaction: ReadinessEvidenceRedaction;
   rules: RulesInventory;
-  standard_expectations: ReadinessEvidenceRecipe["expectedStandards"];
   key_files: string[];
   docs: string[];
   standards: string[];
@@ -71,7 +70,6 @@ export function gatherReadinessEvidence(
     evidence_recipe: recipe.name,
     redaction,
     rules: discoverRules(repoPath),
-    standard_expectations: recipe.expectedStandards,
     key_files: files.filter(isKeyFile).slice(0, 80),
     docs: files.filter(isDocFile).slice(0, 80),
     standards: files.filter(isStandardsFile).slice(0, 80),

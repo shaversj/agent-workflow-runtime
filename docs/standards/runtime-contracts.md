@@ -42,6 +42,11 @@ shapes without a local schema.
 Do not use manual object-shape checks when an equivalent TypeBox schema already
 exists.
 
+External JSON integrations must validate both live and cached payloads with the same owning schema.
+Reject unsupported API versions, credentialed URLs, cross-origin redirects, oversized payloads,
+and unsafe response links before the data reaches tools or model context. Cache envelopes do not
+make their payload trusted.
+
 ## Execution Authorization
 
 Approval metadata filters discovery; it is not a grant. Registry execution enforces allowed

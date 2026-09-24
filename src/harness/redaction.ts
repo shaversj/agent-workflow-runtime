@@ -27,6 +27,7 @@ export function redactApplicationText(
 
 const sensitiveName =
   /authorization|cookie|api[_-]?key|token|secret|password|pass|credential|private[_-]?key|database_url|db_url|^key$|signature/i;
+const safeTokenMetricName = /^(?:tokens|token_count|input_?tokens|output_?tokens|total_?tokens)$/i;
 const evidenceRedactionPatterns: { pattern: RegExp; replacement: string }[] = [
   {
     pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
@@ -61,7 +62,7 @@ export function redactEvidenceText(content: string, stats?: EvidenceRedactionSta
       } catch {
         /* Match the literal key if malformed. */
       }
-      if (!sensitiveName.test(decoded)) return match;
+      if (!isSensitiveName(decoded)) return match;
       if (stats) ++stats.redacted_occurrences;
       return prefix + key + "=[REDACTED]";
     }
@@ -71,7 +72,7 @@ export function redactEvidenceText(content: string, stats?: EvidenceRedactionSta
   redacted = redacted.replace(
     /^([ \t]*(?:export[ \t]+)?)([\w]+)([ \t]*=[ \t]*)(.+)$/gm,
     (match: string, prefix: string, key: string, separator: string, value: string) => {
-      if (!sensitiveName.test(key) || value === "[REDACTED]") return match;
+      if (!isSensitiveName(key) || value === "[REDACTED]") return match;
       if (stats) ++stats.redacted_occurrences;
       return prefix + key + separator + "[REDACTED]";
     }
@@ -92,12 +93,16 @@ export function redactEvidenceText(content: string, stats?: EvidenceRedactionSta
       } catch {
         /* Match the literal key if malformed. */
       }
-      if (!sensitiveName.test(decoded) || /^\[REDACTED(?:_[A-Z]+)?\]$/.test(value)) return match;
+      if (!isSensitiveName(decoded) || /^\[REDACTED(?:_[A-Z]+)?\]$/.test(value)) return match;
       if (stats) ++stats.redacted_occurrences;
       const valueQuote = value.startsWith('"') || value.startsWith("'") ? value[0]! : "";
       return prefix + quote + key + quote + separator + valueQuote + "[REDACTED]" + valueQuote;
     }
   );
+}
+
+function isSensitiveName(name: string): boolean {
+  return sensitiveName.test(name) && !safeTokenMetricName.test(name);
 }
 
 function countMatches(content: string, pattern: RegExp): number {

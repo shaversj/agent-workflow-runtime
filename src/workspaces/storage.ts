@@ -14,6 +14,10 @@ export function workspaceCachePath(): string {
   return path.join(agentOpsHome(), "cache", "git");
 }
 
+export function rulesBenchmarkCachePath(home: string = agentOpsHome()): string {
+  return path.join(path.resolve(home), "cache", "ossrules");
+}
+
 export function workspaceScratchPath(): string {
   return path.join(agentOpsHome(), "workspaces");
 }

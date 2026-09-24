@@ -182,6 +182,9 @@ function Activity({
               <dt>Finished</dt>
               <dd>{time(item.record.finishedAt)}</dd>
             </dl>
+            <h4>Run metadata</h4>
+            <Capture value={item.record.metadata} missing="No run metadata captured" />
+            <h4>Failure</h4>
             <Capture value={item.record.error} missing="No failure recorded" />
           </>
         )}

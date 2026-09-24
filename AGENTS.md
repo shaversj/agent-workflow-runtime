@@ -4,7 +4,7 @@
 
 Agent Workflow Runtime is a TypeScript harness for running agent-facing repository operations through plugins, a small tool registry, deterministic evidence gathering, explicit interpretation skills, and auditable reports.
 
-The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, enriches GitHub-backed targets with optional read-only GitHub context, loads the plugin's interpretation skill, asks MiniMax to interpret the packet, records the run locally, writes a Markdown report, and cleans up the checkout.
+The default workflow runs a readiness sweep. It resolves a local git path or Git URL into a managed workspace lease, deterministically gathers a compact and redacted evidence packet from that checkout, normalizes repository-authored rules, enriches GitHub-backed targets with optional read-only GitHub context, revalidates a bounded public ossrules catalog, and asks MiniMax to interpret the packet through a limited Pi tool loop. It records the run locally, writes a Markdown report, and cleans up the checkout.
 
 The project should stay organized around these concepts:
 
@@ -20,12 +20,15 @@ Plugins define capabilities. A plugin manifest owns source identity, authority, 
 
 Do not reintroduce a deterministic readiness checker as the main sweep path. Evidence gathering can be deterministic, including optional GitHub repository intelligence, but findings and recommendations belong to the interpretation step. Interpret GitHub context only through the lens of agent readiness; do not turn readiness sweeps into general repository health audits.
 
+Every readiness sweep must attempt the OSS rules benchmark. Keep the `rules` plugin authoritative for local repository instructions and the `rules-benchmark` plugin limited to untrusted comparative evidence. Never send target names, URLs, paths, excerpts, or free-form target-derived queries to ossrules. Revalidate the public cache on every sweep, bound model retrieval to corpus-owned identifiers and four detail reads, and degrade external failure to `stale` or `unavailable` without failing the sweep.
+
 ## Technology Choices
 
 - Use TypeScript on Node.js 24.
 - Use `pnpm` for dependency management.
 - Use pi-ai's MiniMax provider for the default model path.
 - Use GitHub API access only for read-only repository intelligence.
+- Use the fixed public ossrules API only through the bounded rules-benchmark client; do not add general web access to readiness.
 - Coding uses an opt-in Pi coding-agent SDK session with Docker-backed tools; no repository code or resource discovery runs on the host.
 - Keep GitHub publication separate from intelligence. It is disabled by default and requires a principal/content-bound consumed human approval and separately scoped credentials.
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.

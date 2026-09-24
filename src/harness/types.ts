@@ -14,6 +14,14 @@ export type WorkflowProgressEvent =
   | { type: "started"; runId: number; repoPath: string; model: string; timeoutMs: number }
   | { type: "evidence_started" }
   | { type: "evidence_completed"; fileCount: number }
+  | { type: "benchmark_started" }
+  | {
+      type: "benchmark_completed";
+      status: "live" | "revalidated" | "stale" | "unavailable";
+      durationMs: number;
+      cacheAgeMs?: number;
+      failureType?: string;
+    }
   | { type: "model_started"; modelProvider: string; modelRuntime: string; model: string }
   | { type: "turn_started"; turn: number }
   | { type: "tool_started"; name: string }

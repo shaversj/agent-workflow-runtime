@@ -42,6 +42,14 @@ export const InspectionRunSummarySchema = Type.Object({
   failure_reason: Type.Optional(Type.String()),
   harness_provider: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
+  benchmark_status: Type.Optional(
+    Type.Union([
+      Type.Literal("live"),
+      Type.Literal("revalidated"),
+      Type.Literal("stale"),
+      Type.Literal("unavailable")
+    ])
+  ),
   started_at: Type.String(),
   finished_at: Type.Optional(Type.String())
 });
@@ -66,6 +74,7 @@ export const InspectionReportSummarySchema = Type.Object({
   updated_at: Type.Optional(Type.String()),
   token_count: Type.Optional(Type.Number()),
   tool_call_count: Type.Optional(Type.Number()),
+  benchmark_status: InspectionRunSummarySchema.properties.benchmark_status,
   failure_reason: Type.Optional(Type.String())
 });
 
@@ -95,6 +104,7 @@ export const InspectionLatestReportResultSchema = Type.Object({
   status: Type.Optional(RunStatusSchema),
   token_count: Type.Optional(Type.Number()),
   tool_call_count: Type.Optional(Type.Number()),
+  benchmark_status: InspectionRunSummarySchema.properties.benchmark_status,
   failure_reason: Type.Optional(Type.String())
 });
 
@@ -126,6 +136,21 @@ export const WorkflowResultSchema = Type.Object({
   usage: HarnessUsageSchema,
   toolCalls: Type.Array(ToolCallRecordSchema),
   workspace: Type.Optional(WorkspaceSummarySchema),
+  benchmark: Type.Optional(
+    Type.Object({
+      status: Type.Union([
+        Type.Literal("live"),
+        Type.Literal("revalidated"),
+        Type.Literal("stale"),
+        Type.Literal("unavailable")
+      ]),
+      apiVersion: Type.Literal(1),
+      endpoint: Type.String(),
+      fetchedAt: Type.String(),
+      cacheAgeMs: Type.Optional(Type.Number({ minimum: 0 })),
+      reason: Type.Optional(Type.String())
+    })
+  ),
   error: Type.Optional(Type.String()),
   cleanupError: Type.Optional(Type.String())
 });

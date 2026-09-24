@@ -191,7 +191,8 @@ test("separates delivery failures and renders registered reports without active 
       kind: "readiness_sweep",
       target: "https://github.com/example/repository",
       ref: "main",
-      commitSha: "a".repeat(40)
+      commitSha: "a".repeat(40),
+      metadata: { benchmark: { status: "revalidated" } }
     });
     const reply = store.appendMessage({
       interactionId: request.interactionId,
@@ -242,6 +243,7 @@ test("separates delivery failures and renders registered reports without active 
     await expect(page.getByText("0 acknowledged / 1 failed")).toBeVisible();
     await page.locator("summary").filter({ hasText: "readiness_sweep" }).click();
     await expect(page.getByText("a".repeat(40), { exact: true })).toBeVisible();
+    await expect(page.getByText(/benchmark.*revalidated/)).toBeVisible();
     await page.getByRole("button", { name: "Read report", exact: true }).first().click();
     await expect(page.getByRole("heading", { name: "Repository readiness" })).toBeVisible();
     await expect(page.locator(".markdown img, .markdown a, .markdown script")).toHaveCount(0);

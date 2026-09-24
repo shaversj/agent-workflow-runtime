@@ -32,7 +32,11 @@ function fixture(target = "/repo/a", kind = "readiness_sweep") {
     id: accepted.runId,
     ref: "main",
     commitSha: "abc123",
-    metadata: { model: "test", harnessProvider: "agent-ops-kit" }
+    metadata: {
+      model: "test",
+      harnessProvider: "agent-ops-kit",
+      benchmark: { status: "revalidated" }
+    }
   });
   return { store, ...accepted };
 }
@@ -72,6 +76,7 @@ it("uses global run IDs and exposes metadata, not transcript payloads", () => {
     run: {
       interaction_id: a.interactionId,
       run_ref: String(a.runId),
+      benchmark_status: "revalidated",
       workflow_activity_count: 1,
       tool_call_count: 0
     }

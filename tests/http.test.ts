@@ -33,9 +33,7 @@ describe("bounded JSON transport", () => {
       requestBoundedJson("https://example.test/data", {
         headers: {},
         timeoutMs: 1_000,
-        request: mockRequest(() =>
-          response("", 302, { location: "https://other.test/data" })
-        )
+        request: mockRequest(() => response("", 302, { location: "https://other.test/data" }))
       })
     ).rejects.toThrow("http_redirect_origin");
   });
@@ -44,11 +42,12 @@ describe("bounded JSON transport", () => {
 function mockRequest(
   handler: (url: URL, options?: Dispatcher.RequestOptions) => Dispatcher.ResponseData
 ): typeof undiciRequest {
-  return (async (url, options) => {
+  const request: typeof undiciRequest = (url, options) => {
     const requestUrl =
       typeof url === "string" ? url : url instanceof URL ? url.href : formatUrl(url);
-    return handler(new URL(requestUrl), options as Dispatcher.RequestOptions);
-  }) as typeof undiciRequest;
+    return Promise.resolve(handler(new URL(requestUrl), options));
+  };
+  return request;
 }
 
 function response(

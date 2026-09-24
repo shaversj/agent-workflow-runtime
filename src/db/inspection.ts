@@ -39,7 +39,17 @@ type InspectOptions = Static<typeof OptionsSchema>;
 type ReadDb = ReturnType<typeof drizzle>;
 const ModelMetadata = Type.Object({
   model: Type.Optional(Type.String()),
-  harnessProvider: Type.Optional(Type.String())
+  harnessProvider: Type.Optional(Type.String()),
+  benchmark: Type.Optional(
+    Type.Object({
+      status: Type.Union([
+        Type.Literal("live"),
+        Type.Literal("revalidated"),
+        Type.Literal("stale"),
+        Type.Literal("unavailable")
+      ])
+    })
+  )
 });
 
 function targetPredicate(target?: string) {
@@ -100,6 +110,7 @@ function summary(db: ReadDb, raw: unknown): InspectionRunSummary {
     failure_reason: run.error?.text,
     model: metadata.model,
     harness_provider: metadata.harnessProvider,
+    benchmark_status: metadata.benchmark?.status,
     started_at: run.startedAt,
     finished_at: run.finishedAt ?? undefined
   });
@@ -304,6 +315,7 @@ export function getLatestInspectionReport(
       updated_at: selected.artifact.createdAt,
       token_count: run.token_count,
       tool_call_count: run.tool_call_count,
+      benchmark_status: run.benchmark_status,
       failure_reason: run.failure_reason
     });
   } finally {

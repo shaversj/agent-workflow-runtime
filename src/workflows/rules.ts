@@ -19,7 +19,7 @@ interface RulesWorkflowOptions {
   surface?: ToolSurface;
 }
 
-export interface RulesWorkflowResult<TResult> {
+interface RulesWorkflowResult<TResult> {
   target: TargetRef;
   workspace: WorkspaceSummary;
   result: TResult;
