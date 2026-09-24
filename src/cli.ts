@@ -29,6 +29,11 @@ async function main() {
     runReportsCli(args);
     return;
   }
+  if (command === "rules" || command === "standards") {
+    const { runRulesCli } = await import("./surfaces/cli/rules.js");
+    await runRulesCli(args);
+    return;
+  }
 
   printUsage();
   process.exitCode = 2;
@@ -40,6 +45,9 @@ function printUsage() {
   agent-ops runs list [repo-target] [--limit 20]
   agent-ops runs show <run-ref> [repo-target]
   agent-ops reports latest [repo-target]
+  agent-ops rules inventory <repo-target> [--ref main]
+  agent-ops rules read <repo-target> <source-path> [--ref main]
+  agent-ops standards inventory <repo-target> [--ref main]
   agent-ops code prepare <owner/repo> <base-branch> <task>
   agent-ops code show <job-id> [--json]
   agent-ops code approve <job-id> --digest <digest>

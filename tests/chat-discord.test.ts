@@ -163,6 +163,34 @@ describe("Discord chat surface", () => {
     }
   });
 
+  it("inspects repository rules without model credentials", async () => {
+    const originalKey = process.env.MINIMAX_API_KEY;
+    delete process.env.MINIMAX_API_KEY;
+    const repoPath = gitRepo();
+    fs.writeFileSync(path.join(repoPath, "AGENTS.md"), "# Agent rules\nUse pnpm.\n");
+    git(["add", "AGENTS.md"], repoPath);
+    git(["commit", "-m", "Add agent rules"], repoPath);
+
+    try {
+      const message = normalizeDiscordMessage({
+        channelId: "channel-1",
+        messageId: "message-rules",
+        authorId: "user-1",
+        content: "rules inventory",
+        applicationId: "application-1"
+      });
+
+      const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
+
+      expect(response.kind).toBe("message");
+      expect(response.text).toContain("Repository rules");
+      expect(response.text).toContain("AGENTS.md");
+      expect(response.text).toContain("committed snapshot");
+    } finally {
+      restoreEnv("MINIMAX_API_KEY", originalKey);
+    }
+  });
+
   it("returns the latest report without MiniMax credentials", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
@@ -582,14 +610,14 @@ describe("Discord chat surface", () => {
     expect(config.allowDms).toBe(false);
   });
 
-  it("enables readiness and GitHub plugin sources by default", () => {
+  it("enables readiness, GitHub, and rules plugin sources by default", () => {
     const config = loadDiscordBotConfig({
       DISCORD_BOT_TOKEN: "token-value",
       DISCORD_ALLOWED_USER_IDS: "10000000000000001",
       DISCORD_ALLOWED_CHANNEL_IDS: "30000000000000001"
     });
 
-    expect([...config.enabledPluginSources]).toEqual(["readiness", "github"]);
+    expect([...config.enabledPluginSources]).toEqual(["readiness", "github", "rules"]);
   });
 
   it.each([

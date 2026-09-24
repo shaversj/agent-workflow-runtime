@@ -27,6 +27,8 @@ describe("readiness evidence", () => {
 
     expect(evidence.evidence_recipe).toBe(readinessEvidenceRecipe.name);
     expect(evidence.plugin).toBe("readiness");
+    expect(evidence.rules.plugin).toBe("rules");
+    expect(evidence.rules.sources.map((source) => source.path)).toContain("AGENTS.md");
     expect(evidence.key_files).toEqual(expect.arrayContaining(["README.md", "AGENTS.md"]));
     expect(evidence.standard_expectations.map((standard) => standard.category)).toContain(
       "logging"
