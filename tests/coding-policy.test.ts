@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 
-import { authorizeExecution } from "../src/harness/execution-policy.js";
+import { assertExecutionRepository, authorizeExecution } from "../src/harness/execution-policy.js";
 import { definePlugin } from "../src/plugins/manifest.js";
 import { defineRegisteredTool } from "../src/tools/registry.js";
 
@@ -106,5 +106,21 @@ describe("execution authority", () => {
       /credential/
     );
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("binds an opaque grant to its authorized repository", () => {
+    const authority = authorizeExecution({
+      principal: "cli:1000",
+      allowedPrincipals: ["cli:1000"],
+      allowedRepositories: ["owner/repo", "owner/other"],
+      repository: "owner/repo",
+      surface: "cli",
+      toolName: "coding.prepare",
+      parameters: params,
+      credentialCapabilities: ["github-publication-write"]
+    });
+
+    expect(() => assertExecutionRepository(authority, "OWNER/REPO")).not.toThrow();
+    expect(() => assertExecutionRepository(authority, "owner/other")).toThrow(/repository/);
   });
 });

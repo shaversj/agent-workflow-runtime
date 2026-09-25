@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline/promises";
 
 import type { Message } from "discord.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 
 import { openHistoryStore } from "../src/db/index.js";
-import { parseCodingCli } from "../src/surfaces/cli/code.js";
+import { parseCodingCli, runCodingCli } from "../src/surfaces/cli/code.js";
 import { parseDiscordCoding, handleDiscordCoding } from "../src/surfaces/chat/discord/coding.js";
 import { loadCodingPolicy, codingProfile } from "../src/plugins/coding/config.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
@@ -90,6 +91,63 @@ function seedDiscordJob(home: string, id: string, active = false) {
   } finally {
     store.close();
   }
+}
+
+function seedCliJob(home: string, id: string, principal: string) {
+  const store = openHistoryStore({ home });
+  try {
+    const accepted = store.acceptInteraction({
+      source: "cli",
+      kind: "coding_prepare",
+      userMessage: "seed"
+    });
+    store.coding(accepted.runId).create({
+      id,
+      principal,
+      repository: "owner/repo",
+      baseBranch: "main",
+      baseCommit: "b".repeat(40),
+      runId: accepted.runId,
+      status: "preparing",
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString()
+    });
+    store.finishInteraction({ id: accepted.interactionId, status: "failed" });
+  } finally {
+    store.close();
+  }
+}
+
+function stubPublicationTool(
+  jobId: string,
+  operation: "publish" | "reconcile",
+  surface: "cli" | "discord"
+) {
+  const execute = vi.fn(() => ({
+    result: {
+      id: "publication",
+      jobId,
+      proposalId: "proposal",
+      digest: "a".repeat(64),
+      runId: 1,
+      status: "published" as const,
+      prUrl: "https://github.com/owner/repo/pull/1"
+    },
+    text: "published"
+  }));
+  const tool = defineRegisteredTool({
+    pluginName: "github",
+    name: operation === "reconcile" ? "reconcile_publication" : "publish_proposal",
+    label: operation === "reconcile" ? "Reconcile" : "Publish",
+    description: `${operation} approved proposal`,
+    parameters: Type.Object({ jobId: Type.String(), digest: Type.String() }),
+    resultSchema: PublicationSchema,
+    requiresApproval: true,
+    requiredCredentials: ["github-publication-write"],
+    allowedSurfaces: [surface],
+    execute
+  });
+  return { execute, tool };
 }
 
 describe("coding surface contracts", () => {
@@ -177,42 +235,24 @@ describe("coding surface contracts", () => {
       content: "coding_recovery_unavailable"
     });
   });
-  it("routes Discord publication through an exact authorized GitHub tool", async () => {
+  it.each([
+    ["approve", "publish"],
+    ["reconcile", "reconcile"]
+  ] as const)("routes Discord %s through the exact GitHub tool", async (command, operation) => {
     const f = discordFixture();
     vi.stubEnv("CODING_PUBLICATION_ENABLED", "true");
     vi.stubEnv("CODING_GITHUB_WRITE_TOKEN", "write-token");
-    seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-publish");
-    const execute = vi.fn(() => ({
-      result: {
-        id: "publication",
-        jobId: "job-publish",
-        proposalId: "proposal",
-        digest: "a".repeat(64),
-        runId: 1,
-        status: "published" as const,
-        prUrl: "https://github.com/owner/repo/pull/1"
-      },
-      text: "published"
-    }));
-    const tool = defineRegisteredTool({
-      pluginName: "github",
-      name: "publish_proposal",
-      label: "Publish",
-      description: "Publish approved proposal",
-      parameters: Type.Object({ jobId: Type.String(), digest: Type.String() }),
-      resultSchema: PublicationSchema,
-      requiresApproval: true,
-      requiredCredentials: ["github-publication-write"],
-      allowedSurfaces: ["discord"],
-      execute
-    });
-    vi.spyOn(github, "githubPublicationTool").mockReturnValue(tool);
+    const jobId = `job-${operation}`;
+    seedDiscordJob(process.env.AGENT_OPS_HOME!, jobId);
+    const { execute, tool } = stubPublicationTool(jobId, operation, "discord");
+    const selectTool = vi.spyOn(github, "githubPublicationTool").mockReturnValue(tool);
 
-    await handleDiscordCoding(f.message("publish"), `code approve job-publish ${"a".repeat(64)}`);
+    await handleDiscordCoding(f.message(operation), `code ${command} ${jobId} ${"a".repeat(64)}`);
 
+    expect(selectTool).toHaveBeenCalledWith(operation);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0]?.[0]).toEqual({
-      jobId: "job-publish",
+      jobId,
       digest: "a".repeat(64)
     });
     expect(execute.mock.calls[0]?.[1]).toMatchObject({
@@ -221,7 +261,67 @@ describe("coding surface contracts", () => {
       sourceContext: { guildId: "guild", channelId: "channel", userId: "1" }
     });
     expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
-      content: "Job job-publish: published\nDraft PR: https://github.com/owner/repo/pull/1"
+      content: `Job ${jobId}: published\nDraft PR: https://github.com/owner/repo/pull/1`
+    });
+  });
+  it.each([
+    ["approve", "publish"],
+    ["reconcile", "reconcile"]
+  ] as const)("routes CLI %s through the exact GitHub tool", async (command, operation) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "coding-cli-"));
+    homes.push(home);
+    vi.stubEnv("AGENT_OPS_HOME", home);
+    vi.stubEnv("CODING_ENABLED", "true");
+    vi.stubEnv("CODING_PUBLICATION_ENABLED", "true");
+    vi.stubEnv("CODING_GITHUB_WRITE_TOKEN", "write-token");
+    const principal = `cli:${process.getuid?.() ?? "unsupported"}`;
+    vi.stubEnv("CODING_ALLOWED_PRINCIPALS", JSON.stringify([principal]));
+    vi.stubEnv(
+      "CODING_PROFILES",
+      JSON.stringify({
+        "owner/repo": {
+          image: `node@sha256:${"a".repeat(64)}`,
+          requiredChecks: ["node --test"],
+          ignore: [],
+          principal
+        }
+      })
+    );
+    const jobId = `job-cli-${operation}`;
+    seedCliJob(home, jobId, principal);
+    const { execute, tool } = stubPublicationTool(jobId, operation, "cli");
+    const selectTool = vi.spyOn(github, "githubPublicationTool").mockReturnValue(tool);
+    const digest = "a".repeat(64);
+    const inputTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const outputTty = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    vi.spyOn(readline, "createInterface").mockReturnValue({
+      question: vi.fn().mockResolvedValue(digest),
+      close: vi.fn()
+    } as never);
+    vi.spyOn(process.stdout, "write").mockImplementation((_chunk, ...args) => {
+      const callback = args.find((arg) => typeof arg === "function") as
+        ((error?: Error) => void) | undefined;
+      callback?.();
+      return true;
+    });
+
+    try {
+      await runCodingCli([command, jobId, "--digest", digest]);
+    } finally {
+      if (inputTty) Object.defineProperty(process.stdin, "isTTY", inputTty);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+      if (outputTty) Object.defineProperty(process.stdout, "isTTY", outputTty);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+
+    expect(selectTool).toHaveBeenCalledWith(operation);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toEqual({ jobId, digest });
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({
+      surface: "cli",
+      executionAuthority: { principal }
     });
   });
   it("keeps the stable disabled error before GitHub publication tool execution", async () => {

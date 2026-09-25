@@ -1,6 +1,11 @@
 import { definePluginManifest } from "../manifest.js";
 
 export const GITHUB_PUBLICATION_WRITE_CREDENTIAL = "github-publication-write";
+export const GITHUB_PUBLICATION_AUTHORITY = {
+  target: "read-write",
+  managedState: "read-write",
+  network: "open"
+} as const;
 
 export const githubPluginManifest = definePluginManifest({
   name: "github",
@@ -74,11 +79,7 @@ export const githubPluginManifest = definePluginManifest({
       readOnly: false,
       requiresApproval: true,
       allowedSurfaces: ["cli", "discord"],
-      authority: {
-        target: "read-write",
-        managedState: "read-write",
-        network: "open"
-      },
+      authority: GITHUB_PUBLICATION_AUTHORITY,
       requiredCredentials: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
     },
     {
@@ -90,11 +91,7 @@ export const githubPluginManifest = definePluginManifest({
       readOnly: false,
       requiresApproval: true,
       allowedSurfaces: ["cli", "discord"],
-      authority: {
-        target: "read-write",
-        managedState: "read-write",
-        network: "open"
-      },
+      authority: GITHUB_PUBLICATION_AUTHORITY,
       requiredCredentials: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
     }
   ]

@@ -1,12 +1,12 @@
 import { Type, type Static } from "typebox";
 
-export const AccessLevelSchema = Type.Union([
+const AccessLevelSchema = Type.Union([
   Type.Literal("none"),
   Type.Literal("read-only"),
   Type.Literal("read-write")
 ]);
 
-export const NetworkAccessSchema = Type.Union([
+const NetworkAccessSchema = Type.Union([
   Type.Literal("none"),
   Type.Literal("model-provider"),
   Type.Literal("open")

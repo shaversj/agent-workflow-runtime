@@ -4,6 +4,7 @@ import { defineRegisteredTool, type RegisteredTool } from "../../../tools/regist
 import { publishProposal } from "../../../workflows/publish-proposal.js";
 import { loadCodingPolicy } from "../../coding/config.js";
 import { PublicationSchema } from "../../coding/schemas.js";
+import { GITHUB_PUBLICATION_AUTHORITY, GITHUB_PUBLICATION_WRITE_CREDENTIAL } from "../manifest.js";
 
 const PublicationParameters = Type.Object(
   {
@@ -43,6 +44,12 @@ function publicationTool(
     description,
     parameters: PublicationParameters,
     resultSchema: PublicationSchema,
+    exposure: "hidden",
+    readOnly: false,
+    requiresApproval: true,
+    allowedSurfaces: ["cli", "discord"],
+    authority: GITHUB_PUBLICATION_AUTHORITY,
+    requiredCredentials: [GITHUB_PUBLICATION_WRITE_CREDENTIAL],
     async execute(params, context) {
       if (!context.executionAuthority || !context.recording)
         throw new Error("coding_human_authority_required");
@@ -56,7 +63,8 @@ function publicationTool(
         undefined,
         context.sourceContext?.channelId
           ? `${context.sourceContext.guildId ?? "dm"}:${context.sourceContext.channelId}`
-          : undefined
+          : undefined,
+        context.executionAuthority
       );
       return { result, text: `Draft PR: ${result.prUrl ?? "none"}` };
     }

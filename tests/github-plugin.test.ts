@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { collectGitHubEvidence, collectGitHubIssues } from "../src/plugins/github/client.js";
 import { resolveGitHubIdentity } from "../src/plugins/github/evidence.js";
+import { createGitHubPublicationTools } from "../src/plugins/github/publication/tools.js";
 import { createGitHubTools, githubTools } from "../src/plugins/github/tools.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { createChatRequestContext } from "../src/surfaces/chat/request-context.js";
@@ -222,6 +223,17 @@ describe("github repository intelligence", () => {
         .list({ surface: "discord", includeHidden: true, includeApprovalRequired: true })
         .map((tool) => tool.name)
     ).toEqual(expect.arrayContaining(["publish_proposal", "reconcile_publication"]));
+  });
+
+  it("enforces publication policy before raw GitHub tools reach workflow code", () => {
+    const [publish] = createGitHubPublicationTools();
+
+    expect(() =>
+      publish!.execute(
+        { jobId: "job", digest: "a".repeat(64) },
+        { surface: "cli", executionAuthority: { principal: "cli:1" } }
+      )
+    ).toThrow(/authorization/);
   });
 
   it("does not spend ambient GitHub credentials on explicit Discord targets", async () => {

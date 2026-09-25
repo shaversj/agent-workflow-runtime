@@ -1,4 +1,6 @@
 import type { InteractionRecorder } from "../harness/interaction.js";
+import { assertExecutionRepository } from "../harness/execution-policy.js";
+import type { ExecutionAuthority } from "../harness/execution-policy.js";
 import { codingProfile } from "../plugins/coding/config.js";
 import type { CodingPolicy } from "../plugins/coding/config.js";
 import { validateProposal } from "../plugins/coding/proposal.js";
@@ -14,7 +16,8 @@ export async function publishProposal(
   parent: InteractionRecorder,
   reconcile = false,
   client?: GitHubPublicationClient,
-  conversationKey?: string
+  conversationKey?: string,
+  executionAuthority?: ExecutionAuthority
 ): Promise<Publication> {
   if (!policy.publicationEnabled || !policy.writeToken)
     throw new Error("coding_publication_disabled");
@@ -27,6 +30,7 @@ export async function publishProposal(
   try {
     const job = recording.coding((store) => store.get(jobId, principal));
     if (!job) throw new Error("coding_job_not_found");
+    if (executionAuthority) assertExecutionRepository(executionAuthority, job.repository);
     if (job.conversationKey && job.conversationKey !== conversationKey)
       throw new Error("coding_conversation_denied");
     const profile = codingProfile(policy, principal, job.repository);

@@ -87,3 +87,9 @@ export function assertToolExecution(
   )
     throw new Error("tool_credential_capability_denied");
 }
+
+export function assertExecutionRepository(authority: ExecutionAuthority, repository: string): void {
+  const grant = authorities.get(authority);
+  if (!grant || grant.repository.toLowerCase() !== repository.toLowerCase())
+    throw new Error("execution_repository_denied");
+}
