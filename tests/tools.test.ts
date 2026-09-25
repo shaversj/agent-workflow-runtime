@@ -186,17 +186,13 @@ describe("tool registry", () => {
 });
 
 describe("tool catalog", () => {
-  it("exposes GitHub, readiness, and rules plugin sources by default", () => {
+  it("exposes GitHub and readiness plugin sources by default", () => {
     const catalog = createToolCatalog({
       tools: defaultPluginTools,
       surface: "discord"
     });
 
-    expect(catalog.sourceSummaries.map((source) => source.id)).toEqual([
-      "github",
-      "readiness",
-      "rules"
-    ]);
+    expect(catalog.sourceSummaries.map((source) => source.id)).toEqual(["github", "readiness"]);
     expect(catalog.catalogTools.map((tool) => registeredToolName(tool))).toContain(
       "github_get_repository_context"
     );

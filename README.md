@@ -13,15 +13,12 @@ This project builds that runtime layer: typed plugin contracts, disposable works
 
 ## What It Does
 
-- Runs Pi coding-agent sessions inside constrained, offline Docker workers.
-- Pins repository source and verifies proposed changes in a separate fresh worker.
-- Seals the exact proposal and requires a principal-bound human approval before publication.
-- Publishes only a new branch and draft pull request; it cannot force-push, merge, or deploy.
-- Discovers tools through validated plugin manifests instead of hard-coded surface commands.
 - Accepts natural-language requests through CLI and Discord surfaces.
-- Records interactions, tool calls, model usage, delivery state, and reports in SQLite.
+- Discovers tools through validated plugin manifests instead of hard-coded surface commands.
+- Runs Pi coding-agent sessions inside constrained, offline Docker workers.
+- Runs read-only repository readiness sweeps from a local Git checkout or Git URL, including the required public OSSRules reference comparison.
 - Provides a local TanStack Start history inspector for prior runs and artifacts.
-- Runs read-only repository readiness sweeps from a local Git checkout or Git URL, including a required public OSS rules benchmark.
+- Records interactions, tool calls, model usage, delivery state, and reports in SQLite.
 
 ## Architecture
 
@@ -35,15 +32,13 @@ Plugins own domain tools, skills, and policy metadata. Surfaces expose an allowe
 
 Plugins are TypeBox-validated capability bundles. Each manifest declares what the plugin can do, what authority it needs, where its tools may appear, and whether human approval is required. CLI and Discord surfaces enable plugin sources; the runtime presents a small searchable catalog to the model and resolves the selected tool behind that boundary.
 
-| Plugin            | Responsibility                                                                                    | Authority                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `coding`          | Prepare an isolated, verified change proposal with the Pi coding agent                            | Repository write access inside a disposable worker; never publishes        |
-| `github`          | Read repository intelligence and, through hidden tools, publish or reconcile an approved proposal | Read-only by default; separate write credential plus exact-digest approval |
-| `readiness`       | Gather repository evidence, interpret readiness, and inspect reports                              | Read-only target access; writes managed reports and history                |
-| `rules`           | Normalize repository-authored agent instructions and standards                                    | Read-only target access; no network                                        |
-| `rules-benchmark` | Compare local rules with bounded evidence from the public ossrules corpus                         | No target access; fixed read-only network plus managed public cache        |
+| Plugin      | Responsibility                                                                                    | Authority                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `coding`    | Prepare an isolated, verified change proposal with the Pi coding agent                            | Repository write access inside a disposable worker; never publishes        |
+| `github`    | Read repository intelligence and, through hidden tools, publish or reconcile an approved proposal | Read-only by default; separate write credential plus exact-digest approval |
+| `readiness` | Gather repository evidence, interpret readiness, and inspect reports                              | Read-only target access; writes managed reports and history                |
 
-This split keeps capability discovery separate from execution authority. Enabling GitHub as a plugin source exposes only its deferred read tools to the model. Its publication and reconciliation tools stay hidden and can run only through trusted CLI or Discord command paths carrying exact, harness-minted authority and the separately scoped write credential. Preparing code still does not grant permission to publish it.
+Repository-authored guidance is shared runtime infrastructure consumed by coding and readiness; it is not a selectable plugin source. OSSRules is a readiness-owned, hidden comparative reference and is never authoritative repository context. This split keeps capability discovery separate from execution authority. Enabling GitHub as a plugin source exposes only its deferred read tools to the model. Its publication and reconciliation tools stay hidden and can run only through trusted CLI or Discord command paths carrying exact, harness-minted authority and the separately scoped write credential. Preparing code still does not grant permission to publish it.
 
 ## Coding Agent Workflow
 
@@ -79,7 +74,7 @@ Open `http://127.0.0.1:3000` after starting the inspector.
 
 ![Agent Workflow Runtime history inspector](docs/images/history-inspector.png)
 
-A sweep produces a Markdown report and a durable history record. The target is cloned into a managed, disposable workspace; repository scripts are not executed during evidence collection. Every sweep revalidates a bounded public [ossrules](https://ossrules.md/) catalog snapshot. The model may inspect at most four corpus details, while repository-authored rules remain authoritative. Provider failure is reported as stale or unavailable benchmark evidence and does not fail the sweep.
+A sweep produces a Markdown report and a durable history record. The target is cloned into a managed, disposable workspace; repository scripts are not executed during evidence collection. Every sweep revalidates a bounded public [ossrules](https://ossrules.md/) catalog snapshot. The model may inspect at most four corpus details, while repository-authored guidance remains authoritative within runtime safety boundaries. Provider failure is reported as stale or unavailable benchmark evidence and does not fail the sweep.
 
 ## What This Project Demonstrates
 

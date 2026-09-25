@@ -1,11 +1,5 @@
 import { githubTools } from "./github/tools.js";
 import { readinessTools } from "./readiness/tools.js";
 import { codingPlugin } from "./coding/tools.js";
-import { rulesTools } from "./rules/tools.js";
 
-export const defaultPluginTools = [
-  ...readinessTools,
-  ...githubTools,
-  ...rulesTools,
-  ...codingPlugin.tools
-];
+export const defaultPluginTools = [...readinessTools, ...githubTools, ...codingPlugin.tools];

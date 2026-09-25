@@ -60,7 +60,7 @@ export function loadDiscordBotConfig(env: NodeJS.ProcessEnv = process.env): Disc
     shutdownGraceMs:
       positiveIntegerEnv(env.DISCORD_SHUTDOWN_GRACE_MS, "DISCORD_SHUTDOWN_GRACE_MS", 120_000) ??
       10_000,
-    enabledPluginSources: csvSet(env.DISCORD_ENABLED_PLUGIN_SOURCES ?? "readiness,github,rules"),
+    enabledPluginSources: csvSet(env.DISCORD_ENABLED_PLUGIN_SOURCES ?? "readiness,github"),
     allowDms: false
   };
 }
