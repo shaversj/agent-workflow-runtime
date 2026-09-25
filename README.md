@@ -20,6 +20,22 @@ This project builds that runtime layer: typed plugin contracts, disposable works
 - Provides a local TanStack Start history inspector for prior runs and artifacts.
 - Records interactions, tool calls, model usage, delivery state, and reports in SQLite.
 
+## Quickstart
+
+Requirements: Node.js 24+, pnpm, Git, and a MiniMax API key.
+
+```bash
+make install
+
+# Add MINIMAX_API_KEY to ~/.agent-ops-kit/.env, then run a read-only sweep:
+make sweep REPO=https://github.com/example/example-repository REF=main
+
+# Inspect the saved run and report:
+make web
+```
+
+Open `http://127.0.0.1:3000` after starting the inspector. For natural-language requests in Discord, follow the [Discord setup](docs/discord.md). The coding agent requires additional containment and repository policy configuration; follow the [coding workflow setup](docs/coding.md) before preparing a change.
+
 ## Architecture
 
 ![Agent Workflow Runtime coding-agent architecture](docs/images/coding-agent-architecture.svg)
@@ -28,7 +44,7 @@ The supported path is intentionally narrow: authenticated requests pass policy a
 
 Plugins own domain tools, skills, and policy metadata. Surfaces expose an allowed subset of plugin sources. Workflows coordinate validated inputs, disposable workspaces, model calls, persistence, and delivery.
 
-## Plugin Model
+## Plugins
 
 Plugins are TypeBox-validated capability bundles. Each manifest declares what the plugin can do, what authority it needs, where its tools may appear, and whether human approval is required. CLI and Discord surfaces enable plugin sources; the runtime presents a small searchable catalog to the model and resolves the selected tool behind that boundary.
 
@@ -48,7 +64,7 @@ Repository-authored guidance is shared runtime infrastructure consumed by coding
 4. **Review:** the runtime stores an exact private proposal, records model and tool activity, and exposes a sealed digest for inspection.
 5. **Approve and publish:** the initiating human approves that exact digest; the runtime may then create a new branch and draft pull request.
 
-Coding is disabled by default. Enabling it requires a trusted digest-pinned image, an operator-owned repository profile, allowlisted principals, scoped GitHub credentials, and Docker. See [Coding workflow and containment](docs/coding.md) for the complete setup and threat boundaries.
+Coding is disabled by default. See [Coding workflow and containment](docs/coding.md) for setup and threat boundaries.
 
 ```bash
 pnpm exec tsx src/cli.ts code prepare example/example-repository main "Fix the cart calculation"
@@ -56,21 +72,7 @@ pnpm exec tsx src/cli.ts code show <job-id>
 pnpm exec tsx src/cli.ts code approve <job-id> --digest <64-hex-digest>
 ```
 
-## Read-Only Sweep Demo
-
-Requirements: Node.js 24+, pnpm, Git, and a MiniMax API key for model-backed interpretation.
-
-```bash
-make install
-
-# Add MINIMAX_API_KEY to ~/.agent-ops-kit/.env, then run:
-make sweep REPO=https://github.com/example/example-repository REF=main
-
-# Inspect saved interactions and reports:
-make web
-```
-
-Open `http://127.0.0.1:3000` after starting the inspector.
+## Readiness Sweep
 
 ![Agent Workflow Runtime history inspector](docs/images/history-inspector.png)
 
@@ -85,24 +87,6 @@ A sweep produces a Markdown report and a durable history record. The target is c
 - **Repository isolation:** managed Git mirrors, short-lived workspace leases, and read-only collection.
 - **Approval-bound coding:** offline Docker execution, proposal sealing, principal-bound confirmation, and draft-PR-only publication.
 - **Multiple surfaces, one runtime:** CLI, Discord, and a local browser inspector share contracts and history.
-
-## Common Commands
-
-```bash
-make sweep REPO=https://github.com/example/example-repository REF=main
-make discord
-make web
-
-agent-ops runs list
-agent-ops runs show <run-id>
-agent-ops reports latest
-agent-ops history list --limit 20
-
-make check
-pnpm test:web
-```
-
-The `agent-ops` CLI name, `AGENT_OPS_*` environment variables, and `~/.agent-ops-kit` state directory are stable compatibility identifiers retained from the project's former name.
 
 ## Safety Model
 
@@ -121,32 +105,6 @@ This is a local, single-operator proof of concept, not a hardened multi-tenant s
 - [Engineering standards](docs/standards/README.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
-
-## Project Shape
-
-```text
-src/
-  db/          Drizzle schema and local SQLite persistence
-  harness/     model runtime, execution contracts, progress, and usage
-  plugins/     domain manifests, tools, evidence recipes, and skills
-  surfaces/    CLI, Discord, and local TanStack Start inspection
-  tools/       TypeBox tool contracts, registry, and catalog bridge
-  workspaces/  target normalization, Git mirrors, and workspace leases
-  workflows/   orchestration for sweeps, chat routing, and coding
-```
-
-## Development
-
-```bash
-make format
-make lint
-make test
-make typecheck
-make deadcode
-make check
-pnpm exec playwright install chromium
-pnpm test:web
-```
 
 ## License
 
