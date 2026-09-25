@@ -281,7 +281,7 @@ describe("sweep workflow", () => {
             {
               type: "toolCall",
               id: "benchmark-call-1",
-              name: "rules-benchmark_list_corpus",
+              name: "readiness_list_corpus",
               arguments: { kind: "patterns" }
             }
           ],
@@ -318,7 +318,7 @@ describe("sweep workflow", () => {
     expect(result.toolCalls.map((call) => call.name)).toEqual([
       "gather_readiness_evidence",
       "rules_benchmark_catalog",
-      "rules-benchmark_list_corpus"
+      "readiness_list_corpus"
     ]);
     expect(historySnapshot().models.map((call) => call.totalTokens)).toEqual([10, 20]);
     expect(fs.readFileSync(result.reportPath!, "utf8")).toContain("hard-prohibition pattern");
@@ -334,7 +334,7 @@ describe("sweep workflow", () => {
           {
             type: "toolCall",
             id: `benchmark-call-${turn}`,
-            name: "rules-benchmark_list_corpus",
+            name: "readiness_list_corpus",
             arguments: { kind: "patterns" }
           }
         ],
@@ -356,9 +356,9 @@ describe("sweep workflow", () => {
     expect(result.reportPath).toBeUndefined();
     expect(result.usage).toMatchObject({ requests: 6, totalTokens: 12 });
     expect(historySnapshot().models).toHaveLength(6);
-    expect(
-      result.toolCalls.filter((call) => call.name === "rules-benchmark_list_corpus")
-    ).toHaveLength(6);
+    expect(result.toolCalls.filter((call) => call.name === "readiness_list_corpus")).toHaveLength(
+      6
+    );
   });
 
   it("completes with stale and unavailable benchmark states during a controlled outage", async () => {

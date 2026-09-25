@@ -22,6 +22,7 @@ import { DEFAULT_HARNESS_MODEL, runSweepWorkflow } from "../../workflows/sweep.j
 import { resolveAuthenticatedRequestTarget } from "../../surfaces/chat/request-context.js";
 import { definePlugin } from "../manifest.js";
 import { readinessPluginManifest } from "./manifest.js";
+import { createReadinessReferenceTools } from "./reference/tools.js";
 import {
   defineRegisteredTool,
   type RegisteredTool,
@@ -238,11 +239,18 @@ const readinessPlugin = definePlugin({
           terminate: false
         };
       }
-    })
+    }),
+    ...createReadinessReferenceTools()
   ]
 });
 
-export const readinessTools: RegisteredTool[] = readinessPlugin.tools;
+export const readinessTools: RegisteredTool[] = readinessPlugin.tools.filter(
+  (tool) => tool.exposure !== "hidden"
+);
+
+export const readinessReferenceTools: RegisteredTool[] = readinessPlugin.tools.filter(
+  (tool) => tool.exposure === "hidden"
+);
 
 function resolveRepoTarget(repoTarget: string | undefined, context: RegisteredToolContext): string {
   if (context.surface === "discord" || context.surface === "slack") {
