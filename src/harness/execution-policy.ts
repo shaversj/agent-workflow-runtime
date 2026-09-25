@@ -14,7 +14,10 @@ const ExecutionRequestSchema = Type.Object(
     repository: Type.String({ pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" }),
     surface: Type.Union([Type.Literal("cli"), Type.Literal("discord"), Type.Literal("slack")]),
     toolName: Type.String({ minLength: 1 }),
-    parameters: Type.Unknown()
+    parameters: Type.Unknown(),
+    credentialCapabilities: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true })
+    )
   },
   { additionalProperties: false }
 );
@@ -28,6 +31,8 @@ const authorities = new WeakMap<
     toolName: string;
     surface: ToolSurface;
     parameters: unknown;
+    repository: string;
+    credentialCapabilities: string[];
     expiresAt: number;
   }
 >();
@@ -47,20 +52,25 @@ export function authorizeExecution(
     toolName: input.toolName,
     surface: input.surface,
     parameters: structuredClone(input.parameters),
+    repository: input.repository,
+    credentialCapabilities: [...(input.credentialCapabilities ?? [])],
     expiresAt: Date.now() + 120_000
   });
   return authority;
 }
 
 export function assertToolExecution(
-  tool: Pick<RegisteredTool, "pluginName" | "name" | "requiresApproval" | "allowedSurfaces">,
+  tool: Pick<
+    RegisteredTool,
+    "pluginName" | "name" | "requiresApproval" | "allowedSurfaces" | "requiredCredentials"
+  >,
   surface: ToolSurface,
   parameters: unknown,
   authority?: ExecutionAuthority
 ): void {
   if (tool.allowedSurfaces && !tool.allowedSurfaces.includes(surface))
     throw new Error("tool_surface_denied");
-  if (!tool.requiresApproval) return;
+  if (!tool.requiresApproval && !tool.requiredCredentials?.length) return;
   const grant = authority && authorities.get(authority);
   if (
     !grant ||
@@ -70,4 +80,10 @@ export function assertToolExecution(
     !isDeepStrictEqual(grant.parameters, parameters)
   )
     throw new Error("execution_authorization_denied");
+  if (
+    tool.requiredCredentials?.some(
+      (requirement) => !grant.credentialCapabilities.includes(requirement)
+    )
+  )
+    throw new Error("tool_credential_capability_denied");
 }

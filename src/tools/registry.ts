@@ -7,6 +7,7 @@ import { assertToolExecution } from "../harness/execution-policy.js";
 import type { ExecutionAuthority } from "../harness/execution-policy.js";
 import type { WorkflowProgressEvent } from "../harness/types.js";
 import type { TargetRef } from "../workspaces/types.js";
+import type { ToolAuthority } from "../plugins/manifest.js";
 
 const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
 
@@ -76,6 +77,8 @@ export interface RegisteredTool<
   readOnly?: boolean;
   requiresApproval?: boolean;
   allowedSurfaces?: ToolSurface[];
+  authority?: ToolAuthority;
+  requiredCredentials?: string[];
   execute: (
     params: unknown,
     context: RegisteredToolContext,
@@ -97,6 +100,8 @@ interface TypedRegisteredTool<TParameters extends TSchema, TResultSchema extends
   readOnly?: boolean;
   requiresApproval?: boolean;
   allowedSurfaces?: ToolSurface[];
+  authority?: ToolAuthority;
+  requiredCredentials?: string[];
   execute: (
     params: Static<TParameters>,
     context: RegisteredToolContext,
@@ -118,8 +123,20 @@ export function defineRegisteredTool<TParameters extends TSchema, TResultSchema 
     ...tool,
     [registeredToolBrand]: true,
     execute(params, context, signal) {
-      const { pluginName, name, requiresApproval, allowedSurfaces } = this;
-      const effectiveTool = { pluginName, name, requiresApproval, allowedSurfaces };
+      const {
+        pluginName,
+        name,
+        requiresApproval,
+        allowedSurfaces,
+        requiredCredentials
+      } = this;
+      const effectiveTool = {
+        pluginName,
+        name,
+        requiresApproval,
+        allowedSurfaces,
+        requiredCredentials
+      };
       const execute = (toolContext: RegisteredToolContext, toolSignal?: AbortSignal) => {
         const parsed = validateToolParameters(tool, params);
         assertToolExecution(

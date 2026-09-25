@@ -15,6 +15,8 @@ function fixture() {
     description: "Prepare changes",
     parameters: Type.Object({ repo: Type.String(), task: Type.String() }),
     resultSchema: Type.Object({}),
+    authority: { target: "read-write", managedState: "read-write", network: "open" },
+    requiredCredentials: ["github-publication-write"],
     execute
   });
   const tool = definePlugin({
@@ -23,9 +25,17 @@ function fixture() {
       displayName: "Coding",
       description: "Isolated coding",
       capabilities: ["coding"],
-      authority: { target: "read-write", managedState: "read-write", network: "model-provider" },
+      authority: { target: "read-write", managedState: "read-write", network: "open" },
       toolDefaults: { requiresApproval: true, allowedSurfaces: ["cli"] },
-      tools: [{ name: "prepare", label: "Prepare", description: "Prepare changes" }]
+      tools: [
+        {
+          name: "prepare",
+          label: "Prepare",
+          description: "Prepare changes",
+          authority: { target: "read-write", managedState: "read-write", network: "open" },
+          requiredCredentials: ["github-publication-write"]
+        }
+      ]
     },
     tools: [raw]
   }).tools[0]!;
@@ -46,7 +56,8 @@ describe("execution authority", () => {
       repository: "owner/repo",
       surface: "cli",
       toolName: "coding.prepare",
-      parameters: params
+      parameters: params,
+      credentialCapabilities: ["github-publication-write"]
     });
     expect(tool.execute(params, { surface: "cli", executionAuthority })).toMatchObject({
       text: "done"
@@ -68,12 +79,32 @@ describe("execution authority", () => {
       repository: "owner/repo",
       surface: "cli" as const,
       toolName: "coding.prepare",
-      parameters: params
+      parameters: params,
+      credentialCapabilities: ["github-publication-write"]
     };
     expect(() => authorizeExecution(input)).toThrow(/authorization/);
     const authority = authorizeExecution({ ...input, allowedPrincipals: ["discord:123"] });
     expect(() =>
       tool.execute(params, { surface: "cli", executionAuthority: { ...authority } })
     ).toThrow(/authorization/);
+  });
+
+  it("rejects an exact grant that lacks the tool's credential capability", () => {
+    const { tool, execute } = fixture();
+    const executionAuthority = authorizeExecution({
+      principal: "cli:1000",
+      allowedPrincipals: ["cli:1000"],
+      allowedRepositories: ["owner/repo"],
+      repository: "owner/repo",
+      surface: "cli",
+      toolName: "coding.prepare",
+      parameters: params,
+      credentialCapabilities: []
+    });
+
+    expect(() => tool.execute(params, { surface: "cli", executionAuthority })).toThrow(
+      /credential/
+    );
+    expect(execute).not.toHaveBeenCalled();
   });
 });

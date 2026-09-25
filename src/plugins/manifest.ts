@@ -15,19 +15,19 @@ const ToolExposureSchema = Type.Union([
   Type.Literal("hidden")
 ]);
 
-const AccessLevelSchema = Type.Union([
+export const AccessLevelSchema = Type.Union([
   Type.Literal("none"),
   Type.Literal("read-only"),
   Type.Literal("read-write")
 ]);
 
-const NetworkAccessSchema = Type.Union([
+export const NetworkAccessSchema = Type.Union([
   Type.Literal("none"),
   Type.Literal("model-provider"),
   Type.Literal("open")
 ]);
 
-const PluginAuthoritySchema = Type.Object(
+export const ToolAuthoritySchema = Type.Object(
   {
     target: AccessLevelSchema,
     managedState: AccessLevelSchema,
@@ -36,12 +36,20 @@ const PluginAuthoritySchema = Type.Object(
   { additionalProperties: false }
 );
 
+const CredentialRequirementsSchema = Type.Array(Type.String({ minLength: 1 }), {
+  uniqueItems: true
+});
+
+export type ToolAuthority = Static<typeof ToolAuthoritySchema>;
+
 const PluginToolDefaultsSchema = Type.Object(
   {
     exposure: Type.Optional(ToolExposureSchema),
     readOnly: Type.Optional(Type.Boolean()),
     requiresApproval: Type.Optional(Type.Boolean()),
-    allowedSurfaces: Type.Optional(Type.Array(ToolSurfaceSchema, { minItems: 1 }))
+    allowedSurfaces: Type.Optional(Type.Array(ToolSurfaceSchema, { minItems: 1 })),
+    authority: Type.Optional(ToolAuthoritySchema),
+    requiredCredentials: Type.Optional(CredentialRequirementsSchema)
   },
   { additionalProperties: false }
 );
@@ -54,7 +62,9 @@ const PluginToolSummarySchema = Type.Object(
     exposure: Type.Optional(ToolExposureSchema),
     readOnly: Type.Optional(Type.Boolean()),
     requiresApproval: Type.Optional(Type.Boolean()),
-    allowedSurfaces: Type.Optional(Type.Array(ToolSurfaceSchema, { minItems: 1 }))
+    allowedSurfaces: Type.Optional(Type.Array(ToolSurfaceSchema, { minItems: 1 })),
+    authority: Type.Optional(ToolAuthoritySchema),
+    requiredCredentials: Type.Optional(CredentialRequirementsSchema)
   },
   { additionalProperties: false }
 );
@@ -74,7 +84,7 @@ export const AgentOpsPluginManifestSchema = Type.Object(
     displayName: Type.String({ minLength: 1 }),
     description: Type.String({ minLength: 1 }),
     capabilities: Type.Array(Type.String({ minLength: 1 })),
-    authority: PluginAuthoritySchema,
+    authority: ToolAuthoritySchema,
     source: Type.Optional(PluginSourceSchema),
     toolDefaults: Type.Optional(PluginToolDefaultsSchema),
     tools: Type.Array(PluginToolSummarySchema)
@@ -114,10 +124,11 @@ export function definePlugin(options: {
   tools: RegisteredTool[];
 }): AgentOpsPlugin {
   const manifest = definePluginManifest(options.manifest);
-  validateToolManifestAlignment(manifest, options.tools);
+  const tools = options.tools.map((tool) => applyManifestDefaults(manifest, tool));
+  validateToolManifestAlignment(manifest, tools);
   return {
     manifest,
-    tools: options.tools.map((tool) => applyManifestDefaults(manifest, tool))
+    tools
   };
 }
 
@@ -193,6 +204,27 @@ function validateToolManifestAlignment(
         `tool ${tool.name} source does not match manifest source`
       );
     }
+    const summaryAuthority = summary.authority ?? manifest.toolDefaults?.authority;
+    if (!sameAuthority(tool.authority, summaryAuthority)) {
+      throw new PluginToolManifestError(
+        manifest.name,
+        `tool ${tool.name} authority does not match manifest summary`
+      );
+    }
+    if (tool.authority && !authorityWithin(tool.authority, manifest.authority)) {
+      throw new PluginToolManifestError(
+        manifest.name,
+        `tool ${tool.name} authority exceeds plugin ceiling`
+      );
+    }
+    const summaryCredentials =
+      summary.requiredCredentials ?? manifest.toolDefaults?.requiredCredentials;
+    if (!sameRequirements(tool.requiredCredentials, summaryCredentials)) {
+      throw new PluginToolManifestError(
+        manifest.name,
+        `tool ${tool.name} credential requirements do not match manifest summary`
+      );
+    }
   }
 }
 
@@ -204,14 +236,46 @@ function applyManifestDefaults(
   const source = manifest.source ?? manifestSource(manifest);
   return {
     ...tool,
-    source,
+    source: tool.source ?? source,
     exposure: tool.exposure ?? summary?.exposure ?? manifest.toolDefaults?.exposure,
     readOnly: tool.readOnly ?? summary?.readOnly ?? manifest.toolDefaults?.readOnly,
     requiresApproval:
       tool.requiresApproval ?? summary?.requiresApproval ?? manifest.toolDefaults?.requiresApproval,
     allowedSurfaces:
-      tool.allowedSurfaces ?? summary?.allowedSurfaces ?? manifest.toolDefaults?.allowedSurfaces
+      tool.allowedSurfaces ?? summary?.allowedSurfaces ?? manifest.toolDefaults?.allowedSurfaces,
+    authority: tool.authority ?? summary?.authority ?? manifest.toolDefaults?.authority,
+    requiredCredentials:
+      tool.requiredCredentials ??
+      summary?.requiredCredentials ??
+      manifest.toolDefaults?.requiredCredentials
   };
+}
+
+function sameAuthority(left: ToolAuthority | undefined, right: ToolAuthority | undefined): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.target === right.target &&
+    left.managedState === right.managedState &&
+    left.network === right.network
+  );
+}
+
+function authorityWithin(authority: ToolAuthority, ceiling: ToolAuthority): boolean {
+  const accessRank = { none: 0, "read-only": 1, "read-write": 2 } as const;
+  const networkRank = { none: 0, "model-provider": 1, open: 2 } as const;
+  return (
+    accessRank[authority.target] <= accessRank[ceiling.target] &&
+    accessRank[authority.managedState] <= accessRank[ceiling.managedState] &&
+    networkRank[authority.network] <= networkRank[ceiling.network]
+  );
+}
+
+function sameRequirements(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.length === right.length &&
+    [...left].sort().every((value, index) => value === [...right].sort()[index])
+  );
 }
 
 function sameSource(left: ToolSource, right: ToolSource): boolean {

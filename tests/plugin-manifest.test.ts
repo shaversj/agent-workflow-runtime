@@ -103,6 +103,73 @@ describe("plugin manifests", () => {
     );
   });
 
+  it("applies exact tool authority and credential requirements beneath the plugin ceiling", () => {
+    const authority = {
+      target: "read-only" as const,
+      managedState: "none" as const,
+      network: "model-provider" as const
+    };
+    const manifest = pluginManifest({
+      toolDefaults: {
+        authority,
+        requiredCredentials: ["demo-read"]
+      }
+    });
+
+    const [tool] = definePlugin({ manifest, tools: [demoTool("echo")] }).tools;
+
+    expect(tool?.authority).toEqual(authority);
+    expect(tool?.requiredCredentials).toEqual(["demo-read"]);
+  });
+
+  it("rejects tool authority that exceeds the plugin ceiling", () => {
+    const manifest = pluginManifest({
+      tools: [
+        {
+          ...toolSummary("echo"),
+          authority: {
+            target: "read-write",
+            managedState: "none",
+            network: "model-provider"
+          }
+        }
+      ]
+    });
+
+    expect(() => definePlugin({ manifest, tools: [demoTool("echo")] })).toThrow(
+      /tool echo authority exceeds plugin ceiling/
+    );
+  });
+
+  it("rejects authority and credential drift between summaries and registered tools", () => {
+    const manifest = pluginManifest({
+      tools: [
+        {
+          ...toolSummary("echo"),
+          authority: {
+            target: "read-only",
+            managedState: "none",
+            network: "model-provider"
+          },
+          requiredCredentials: ["demo-read"]
+        }
+      ]
+    });
+    const authorityDrift = demoTool("echo", "demo", undefined, {
+      target: "none",
+      managedState: "none",
+      network: "model-provider"
+    });
+    const credentialDrift = demoTool("echo", "demo", undefined, undefined, ["other"]);
+
+    expect(() => definePlugin({ manifest, tools: [authorityDrift] })).toThrow(
+      /tool echo authority does not match manifest summary/
+    );
+    expect(() => definePlugin({ manifest, tools: [credentialDrift] })).toThrow(
+      /tool echo credential requirements do not match manifest summary/
+    );
+  });
+
   it("applies manifest source and policy defaults to readiness tools", () => {
     const toolsByName = new Map(readinessTools.map((tool) => [tool.name, tool]));
 
@@ -191,7 +258,9 @@ function toolSummary(name: string): AgentOpsPluginManifest["tools"][number] {
 function demoTool(
   name: string,
   pluginName = "demo",
-  source?: Parameters<typeof defineRegisteredTool>[0]["source"]
+  source?: Parameters<typeof defineRegisteredTool>[0]["source"],
+  authority?: Parameters<typeof defineRegisteredTool>[0]["authority"],
+  requiredCredentials?: Parameters<typeof defineRegisteredTool>[0]["requiredCredentials"]
 ) {
   return defineRegisteredTool({
     pluginName,
@@ -201,6 +270,8 @@ function demoTool(
     parameters: Type.Object({ value: Type.Optional(Type.String()) }),
     resultSchema: Type.Object({ value: Type.Optional(Type.String()) }),
     source,
+    authority,
+    requiredCredentials,
     execute(params) {
       return {
         result: params,

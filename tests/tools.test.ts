@@ -245,6 +245,8 @@ describe("tool catalog", () => {
     const searchResult = await searchTools!.execute({ query: "sweep" }, { surface: "discord" });
     expect(searchResult.text).toContain("readiness_run_sweep");
     expect(searchResult.text).toContain("parameters");
+    expect(searchResult.text).toContain("authority");
+    expect(searchResult.text).toContain("required_credentials");
     expect(JSON.stringify(searchResult.result)).toContain("value");
 
     const executeResult = await executeTool!.execute(
@@ -546,6 +548,8 @@ function demoTool(
     readOnly: true,
     requiresApproval: false,
     allowedSurfaces: ["discord"],
+    authority: { target: "read-only", managedState: "none", network: "none" },
+    requiredCredentials: [],
     execute
   });
 }

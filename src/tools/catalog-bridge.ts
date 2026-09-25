@@ -35,7 +35,27 @@ const ToolDescriptionSchema = Type.Object({
   exposure: Type.Union([Type.Literal("direct"), Type.Literal("deferred"), Type.Literal("hidden")]),
   read_only: Type.Boolean(),
   requires_approval: Type.Boolean(),
-  allowed_surfaces: Type.Array(Type.String())
+  allowed_surfaces: Type.Array(Type.String()),
+  authority: Type.Optional(
+    Type.Object({
+      target: Type.Union([
+        Type.Literal("none"),
+        Type.Literal("read-only"),
+        Type.Literal("read-write")
+      ]),
+      managedState: Type.Union([
+        Type.Literal("none"),
+        Type.Literal("read-only"),
+        Type.Literal("read-write")
+      ]),
+      network: Type.Union([
+        Type.Literal("none"),
+        Type.Literal("model-provider"),
+        Type.Literal("open")
+      ])
+    })
+  ),
+  required_credentials: Type.Array(Type.String())
 });
 
 const SearchToolsResult = Type.Object({

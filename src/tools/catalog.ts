@@ -98,6 +98,8 @@ export function describeTool(tool: RegisteredTool) {
     exposure: toolExposure(tool),
     read_only: tool.readOnly ?? false,
     requires_approval: tool.requiresApproval ?? false,
-    allowed_surfaces: tool.allowedSurfaces ?? []
+    allowed_surfaces: tool.allowedSurfaces ?? [],
+    authority: tool.authority,
+    required_credentials: tool.requiredCredentials ?? []
   };
 }
