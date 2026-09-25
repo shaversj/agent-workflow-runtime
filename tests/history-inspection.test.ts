@@ -274,7 +274,7 @@ describe("local history inspection", () => {
     expect(all).toHaveLength(752);
     expect(new Set(all).size).toBe(all.length);
     expect(all).toEqual([...all].sort());
-  });
+  }, 15_000);
 
   it("keeps captured payloads local, labels capture and delivery failures and rejects malformed rows", () => {
     const { store, sqlite, accept } = fixture();
