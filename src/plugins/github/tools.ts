@@ -23,6 +23,7 @@ import {
   GitHubRepositoryContextResultSchema,
   GitHubWorkflowRunsResultSchema
 } from "./schemas.js";
+import { createGitHubPublicationTools } from "./publication/tools.js";
 
 const GitHubTargetParams = Type.Object({
   repo_target: Type.Optional(
@@ -83,7 +84,8 @@ export function createGitHubTools(
         resultSchema: GitHubReleasesResultSchema,
         collect: gatherGitHubReleasesForTarget,
         clientOptions
-      })
+      }),
+      ...createGitHubPublicationTools()
     ]
   }).tools;
 }

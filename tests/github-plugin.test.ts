@@ -190,9 +190,38 @@ describe("github repository intelligence", () => {
     const registry = new ToolRegistry();
     registry.registerMany(githubTools);
     expect(registry.get("github_get_repository_context")).toBeDefined();
-    expect(githubTools.every((tool) => tool.readOnly === true)).toBe(true);
-    expect(githubTools.every((tool) => tool.requiresApproval === false)).toBe(true);
+    expect(githubTools.slice(0, 5).every((tool) => tool.readOnly === true)).toBe(true);
+    expect(githubTools.slice(0, 5).every((tool) => tool.requiresApproval === false)).toBe(true);
     expect(githubTools.every((tool) => tool.allowedSurfaces?.includes("discord"))).toBe(true);
+  });
+
+  it("keeps publication and reconciliation hidden behind separate write authority", () => {
+    const registry = new ToolRegistry();
+    registry.registerMany(githubTools);
+
+    expect(registry.get("github_publish_proposal")).toMatchObject({
+      exposure: "hidden",
+      readOnly: false,
+      requiresApproval: true,
+      requiredCredentials: ["github-publication-write"]
+    });
+    expect(registry.get("github_reconcile_publication")).toMatchObject({
+      exposure: "hidden",
+      readOnly: false,
+      requiresApproval: true,
+      requiredCredentials: ["github-publication-write"]
+    });
+    expect(registry.list({ surface: "discord" }).map((tool) => tool.name)).not.toContain(
+      "publish_proposal"
+    );
+    expect(
+      registry.list({ surface: "discord", includeHidden: true }).map((tool) => tool.name)
+    ).not.toContain("publish_proposal");
+    expect(
+      registry
+        .list({ surface: "discord", includeHidden: true, includeApprovalRequired: true })
+        .map((tool) => tool.name)
+    ).toEqual(expect.arrayContaining(["publish_proposal", "reconcile_publication"]));
   });
 
   it("does not spend ambient GitHub credentials on explicit Discord targets", async () => {

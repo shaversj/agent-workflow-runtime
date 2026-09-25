@@ -203,6 +203,9 @@ describe("tool catalog", () => {
     expect(catalog.catalogTools.map((tool) => registeredToolName(tool))).toContain(
       "readiness_run_sweep"
     );
+    expect(catalog.tools.map((tool) => registeredToolName(tool))).not.toContain(
+      "github_publish_proposal"
+    );
   });
 
   it("filters enabled plugin sources and exposes deferred tools through the catalog", () => {

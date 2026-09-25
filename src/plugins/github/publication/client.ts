@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 
-import { parseCoding } from "../coding/schemas.js";
-import type { CodingProposal } from "../coding/schemas.js";
-import type { InteractionRecorder } from "../../harness/interaction.js";
+import type { InteractionRecorder } from "../../../harness/interaction.js";
+import { parseCoding } from "../../coding/schemas.js";
+import type { CodingProposal } from "../../coding/schemas.js";
 
 const sha = Type.String({ pattern: "^[a-f0-9]{40}$" });
 const objectSchema = Type.Object({ sha });
@@ -64,8 +64,8 @@ export class GitHubPublicationClient {
     return this.recording
       ? this.recording.recordTool(
           {
-            name: "github-publication.api",
-            source: "github-publication",
+            name: "github.publication_api",
+            source: "github",
             kind: "capability",
             input: { repository, endpoint, method: body === undefined ? "GET" : "POST" }
           },

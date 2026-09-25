@@ -4,29 +4,36 @@ export const githubPluginManifest = definePluginManifest({
   name: "github",
   displayName: "GitHub",
   description:
-    "Collect read-only GitHub repository, pull request, issue, release, and workflow context.",
+    "Collect GitHub repository intelligence and publish explicitly approved coding proposals.",
   capabilities: [
     "repository-intelligence",
     "ci-context",
     "pull-request-context",
     "issue-context",
-    "release-context"
+    "release-context",
+    "approved-draft-pr"
   ],
   authority: {
-    target: "read-only",
-    managedState: "none",
+    target: "read-write",
+    managedState: "read-write",
     network: "open"
   },
   source: {
     id: "github",
     label: "GitHub",
-    description: "Read-only GitHub repository intelligence tools."
+    description: "GitHub repository intelligence and approval-gated publication tools."
   },
   toolDefaults: {
     exposure: "deferred",
     readOnly: true,
     requiresApproval: false,
-    allowedSurfaces: ["discord"]
+    allowedSurfaces: ["discord"],
+    authority: {
+      target: "read-only",
+      managedState: "none",
+      network: "open"
+    },
+    requiredCredentials: []
   },
   tools: [
     {
@@ -55,6 +62,38 @@ export const githubPluginManifest = definePluginManifest({
       name: "get_releases",
       label: "Get GitHub Releases",
       description: "Return recent releases for a GitHub-backed repository target."
+    },
+    {
+      name: "publish_proposal",
+      label: "Publish Approved Draft PR",
+      description:
+        "Publish the exact human-confirmed coding proposal to a new branch and draft PR. Disabled by default.",
+      exposure: "hidden",
+      readOnly: false,
+      requiresApproval: true,
+      allowedSurfaces: ["cli", "discord"],
+      authority: {
+        target: "read-write",
+        managedState: "read-write",
+        network: "open"
+      },
+      requiredCredentials: ["github-publication-write"]
+    },
+    {
+      name: "reconcile_publication",
+      label: "Reconcile Draft PR Publication",
+      description:
+        "Observe and safely resume an uncertain GitHub publication for the exact approved proposal.",
+      exposure: "hidden",
+      readOnly: false,
+      requiresApproval: true,
+      allowedSurfaces: ["cli", "discord"],
+      authority: {
+        target: "read-write",
+        managedState: "read-write",
+        network: "open"
+      },
+      requiredCredentials: ["github-publication-write"]
     }
   ]
 });

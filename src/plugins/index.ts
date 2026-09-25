@@ -1,7 +1,6 @@
 import { githubTools } from "./github/tools.js";
 import { readinessTools } from "./readiness/tools.js";
 import { codingPlugin } from "./coding/tools.js";
-import { githubPublicationPlugin } from "./github-publication/tools.js";
 import { rulesTools } from "./rules/tools.js";
 import { rulesBenchmarkTools } from "./rules-benchmark/tools.js";
 
@@ -10,6 +9,5 @@ export const defaultPluginTools = [
   ...githubTools,
   ...rulesTools,
   ...rulesBenchmarkTools,
-  ...codingPlugin.tools,
-  ...githubPublicationPlugin.tools
+  ...codingPlugin.tools
 ];

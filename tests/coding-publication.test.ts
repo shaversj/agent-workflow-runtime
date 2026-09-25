@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { beginInteraction, flushPendingInteractionFailures } from "../src/harness/interaction.js";
 import { freezeProposal } from "../src/plugins/coding/proposal.js";
 import type { CodingPolicy } from "../src/plugins/coding/config.js";
-import { GitHubPublicationClient } from "../src/plugins/github-publication/client.js";
+import { GitHubPublicationClient } from "../src/plugins/github/publication/client.js";
 import { publishProposal } from "../src/workflows/publish-proposal.js";
 import { historyDatabasePath } from "../src/workspaces/storage.js";
 

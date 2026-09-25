@@ -12,7 +12,7 @@ import { beginInteraction } from "../src/harness/interaction.js";
 import { isolatedCodingTools } from "../src/harness/coding-runtime.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
 import type { CodingPolicy } from "../src/plugins/coding/config.js";
-import { GitHubPublicationClient } from "../src/plugins/github-publication/client.js";
+import { GitHubPublicationClient } from "../src/plugins/github/publication/client.js";
 import { prepareCoding } from "../src/workflows/code.js";
 import { inspectCoding } from "../src/workflows/coding-approval.js";
 import { publishProposal } from "../src/workflows/publish-proposal.js";

@@ -200,27 +200,43 @@ describe("plugin manifests", () => {
   });
 
   it("applies manifest source and policy defaults to GitHub tools", () => {
-    expect(githubTools.map((tool) => tool.source?.id)).toEqual([
-      "github",
-      "github",
-      "github",
-      "github",
-      "github"
-    ]);
+    expect(githubTools.map((tool) => tool.source?.id)).toEqual(Array(7).fill("github"));
     expect(githubTools.map((tool) => tool.exposure)).toEqual([
       "deferred",
       "deferred",
       "deferred",
       "deferred",
-      "deferred"
+      "deferred",
+      "hidden",
+      "hidden"
     ]);
-    expect(githubTools.map((tool) => tool.readOnly)).toEqual([true, true, true, true, true]);
+    expect(githubTools.map((tool) => tool.readOnly)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]);
     expect(githubTools.map((tool) => tool.allowedSurfaces)).toEqual([
       ["discord"],
       ["discord"],
       ["discord"],
       ["discord"],
-      ["discord"]
+      ["discord"],
+      ["cli", "discord"],
+      ["cli", "discord"]
+    ]);
+    expect(githubTools.slice(0, 5).every((tool) => tool.authority?.target === "read-only")).toBe(
+      true
+    );
+    expect(githubTools.slice(5).every((tool) => tool.authority?.target === "read-write")).toBe(
+      true
+    );
+    expect(githubTools.slice(5).map((tool) => tool.requiredCredentials)).toEqual([
+      ["github-publication-write"],
+      ["github-publication-write"]
     ]);
   });
 });

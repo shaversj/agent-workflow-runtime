@@ -3,7 +3,7 @@ import { codingProfile } from "../plugins/coding/config.js";
 import type { CodingPolicy } from "../plugins/coding/config.js";
 import { validateProposal } from "../plugins/coding/proposal.js";
 import type { Publication } from "../plugins/coding/schemas.js";
-import { GitHubPublicationClient } from "../plugins/github-publication/client.js";
+import { GitHubPublicationClient } from "../plugins/github/publication/client.js";
 import { logger } from "../logger.js";
 
 export async function publishProposal(
@@ -55,8 +55,8 @@ export async function publishProposal(
     const observe = <T>(name: string, action: () => Promise<T>) =>
       recording.recordTool(
         {
-          name: `github-publication.${name}`,
-          source: "github-publication",
+          name: `github.publication_${name}`,
+          source: "github",
           kind: "capability",
           input: { jobId, digest }
         },
