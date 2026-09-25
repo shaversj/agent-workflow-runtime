@@ -177,10 +177,7 @@ function buildGuidanceSource(
   };
 }
 
-function guidanceScope(
-  candidate: Candidate,
-  content: string
-): RepositoryGuidanceSource["scope"] {
+function guidanceScope(candidate: Candidate, content: string): RepositoryGuidanceSource["scope"] {
   if (candidate.kind === "cursor") {
     const patterns = cursorGlobs(content);
     if (patterns.length > 0) return { kind: "path-glob", patterns };
@@ -203,10 +200,7 @@ function cursorGlobs(content: string): string[] {
     .slice(0, 20);
 }
 
-function inferLanguages(
-  relativePath: string,
-  scope: RepositoryGuidanceSource["scope"]
-): string[] {
+function inferLanguages(relativePath: string, scope: RepositoryGuidanceSource["scope"]): string[] {
   const corpus = [relativePath, ...(scope.kind === "path-glob" ? scope.patterns : [])].join(" ");
   const languages = new Set<string>();
   if (/typescript|javascript|\.tsx?\b|\.jsx?\b/i.test(corpus)) languages.add("typescript");
@@ -244,14 +238,12 @@ function buildCoverage(sources: RepositoryGuidanceSource[]): RepositoryGuidanceC
     }
   }
 
-  return [...new Set([...observed.keys(), ...expected])]
-    .sort()
-    .map((capability) => ({
-      capability,
-      status: observed.has(capability) ? "observed" : "missing",
-      expected: expected.has(capability),
-      paths: observed.get(capability) ?? []
-    }));
+  return [...new Set([...observed.keys(), ...expected])].sort().map((capability) => ({
+    capability,
+    status: observed.has(capability) ? "observed" : "missing",
+    expected: expected.has(capability),
+    paths: observed.get(capability) ?? []
+  }));
 }
 
 function standardCapability(relativePath: string): string | undefined {
@@ -265,7 +257,8 @@ function standardCapability(relativePath: string): string | undefined {
 
 function realDirectory(input: string): string {
   const resolved = fs.realpathSync(path.resolve(input));
-  if (!fs.statSync(resolved).isDirectory()) throw new Error("repository_guidance_workspace_not_directory");
+  if (!fs.statSync(resolved).isDirectory())
+    throw new Error("repository_guidance_workspace_not_directory");
   return resolved;
 }
 

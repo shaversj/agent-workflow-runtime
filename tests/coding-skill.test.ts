@@ -28,7 +28,10 @@ describe("coding repository guidance", () => {
 
   it("retains a compact source index when excerpts exceed the coding budget", () => {
     const files = Array.from({ length: 12 }, (_, index) =>
-      file(`docs/standards/standard-${index}.md`, `# Standard ${index}\n${"Guidance. ".repeat(5000)}`)
+      file(
+        `docs/standards/standard-${index}.md`,
+        `# Standard ${index}\n${"Guidance. ".repeat(5000)}`
+      )
     );
 
     const instructions = codingInstructions(files);

@@ -102,7 +102,9 @@ describe("repository guidance", () => {
   });
 });
 
-function source(input: Pick<RepositoryGuidanceSource, "kind" | "path" | "scope">): RepositoryGuidanceSource {
+function source(
+  input: Pick<RepositoryGuidanceSource, "kind" | "path" | "scope">
+): RepositoryGuidanceSource {
   return {
     ...input,
     languages: [],
