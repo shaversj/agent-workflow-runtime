@@ -35,16 +35,15 @@ Plugins own domain tools, skills, and policy metadata. Surfaces expose an allowe
 
 Plugins are TypeBox-validated capability bundles. Each manifest declares what the plugin can do, what authority it needs, where its tools may appear, and whether human approval is required. CLI and Discord surfaces enable plugin sources; the runtime presents a small searchable catalog to the model and resolves the selected tool behind that boundary.
 
-| Plugin               | Responsibility                                                            | Authority                                                                  |
-| -------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `coding`             | Prepare an isolated, verified change proposal with the Pi coding agent    | Repository write access inside a disposable worker; never publishes        |
-| `github-publication` | Publish an approved proposal to a new branch and draft pull request       | Separate write credential plus approval bound to the exact proposal digest |
-| `readiness`          | Gather repository evidence, interpret readiness, and inspect reports      | Read-only target access; writes managed reports and history                |
-| `github`             | Read repository, pull request, issue, release, and Actions context        | Read-only GitHub access                                                    |
-| `rules`              | Normalize repository-authored agent instructions and standards            | Read-only target access; no network                                        |
-| `rules-benchmark`    | Compare local rules with bounded evidence from the public ossrules corpus | No target access; fixed read-only network plus managed public cache        |
+| Plugin            | Responsibility                                                                                    | Authority                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `coding`          | Prepare an isolated, verified change proposal with the Pi coding agent                            | Repository write access inside a disposable worker; never publishes        |
+| `github`          | Read repository intelligence and, through hidden tools, publish or reconcile an approved proposal | Read-only by default; separate write credential plus exact-digest approval |
+| `readiness`       | Gather repository evidence, interpret readiness, and inspect reports                              | Read-only target access; writes managed reports and history                |
+| `rules`           | Normalize repository-authored agent instructions and standards                                    | Read-only target access; no network                                        |
+| `rules-benchmark` | Compare local rules with bounded evidence from the public ossrules corpus                         | No target access; fixed read-only network plus managed public cache        |
 
-This split keeps capability discovery separate from execution authority. Adding a plugin does not automatically expose its tools to every surface, and preparing code does not grant permission to publish it.
+This split keeps capability discovery separate from execution authority. Enabling GitHub as a plugin source exposes only its deferred read tools to the model. Its publication and reconciliation tools stay hidden and can run only through trusted CLI or Discord command paths carrying exact, harness-minted authority and the separately scoped write credential. Preparing code still does not grant permission to publish it.
 
 ## Coding Agent Workflow
 

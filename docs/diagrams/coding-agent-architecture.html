@@ -48,7 +48,7 @@
       <desc id="coding-agent-architecture-desc">
         Architecture diagram showing CLI or Discord requests passing through policy admission, a
         validated plugin catalog, an offline coding agent, fresh verification, human approval, and
-        separate draft pull request publication while activity is recorded to SQLite.
+        approval-gated draft pull request publication while activity is recorded to SQLite.
       </desc>
       <defs>
         <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
@@ -513,7 +513,7 @@
         font-family="'Geist Mono', monospace"
         text-anchor="middle"
       >
-        GitHub · publication
+        GitHub · rules
       </text>
 
       <rect x="240" y="252" width="120" height="48" rx="6" fill="#f5f5f5" />
@@ -634,7 +634,7 @@
         text-anchor="middle"
         letter-spacing="0.08em"
       >
-        PLUGIN
+        HIDDEN
       </text>
       <text
         x="856"
@@ -645,7 +645,7 @@
         font-family="'Geist', sans-serif"
         text-anchor="middle"
       >
-        GitHub publication
+        GitHub publish tool
       </text>
       <text
         x="856"
@@ -655,7 +655,7 @@
         font-family="'Geist Mono', monospace"
         text-anchor="middle"
       >
-        new branch · draft PR
+        approval · write token
       </text>
 
       <rect x="328" y="384" width="128" height="72" rx="6" fill="#f5f5f5" />

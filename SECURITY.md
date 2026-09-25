@@ -17,6 +17,8 @@ or support older release lines.
 
 ## Security Boundary
 
-Read-only repository inspection is the default. Coding and publication are separate, disabled by
-default, and require explicit operator policy and human approval. Containers reduce accidental
-host access but are not a hostile multi-tenant security boundary.
+Read-only repository inspection is the default. Coding and publication are separate capabilities,
+disabled by default, and require explicit operator policy and human approval. GitHub publication
+is implemented as hidden GitHub-plugin tools that require exact harness-minted authority and a
+separately scoped write credential. Containers reduce accidental host access but are not a hostile
+multi-tenant security boundary.

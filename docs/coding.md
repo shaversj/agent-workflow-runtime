@@ -52,6 +52,12 @@ Exact private proposals remain in SQLite. A bounded, redacted Markdown artifact 
 
 ## Publication Boundary
 
+The GitHub plugin owns publication and reconciliation, but those operations are hidden from model
+discovery. Trusted CLI and Discord command paths may invoke them only with exact harness-minted
+authority bound to the principal, surface, repository, and tool arguments. The coding capability
+continues to own proposal creation, verification, lifecycle state, and human approval; preparing a
+proposal does not authorize publication.
+
 Publication requires all of the following:
 
 - `CODING_PUBLICATION_ENABLED=true`

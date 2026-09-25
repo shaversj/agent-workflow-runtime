@@ -34,10 +34,13 @@ without credentials unless a documented trusted-target policy says otherwise.
 
 ## Isolated Coding And Publication
 
-Coding and GitHub publication are separate, default-disabled capabilities. Require explicit
-operator-allowed GitHub targets/profiles and authenticated initiating principals. The coding
-runtime stays on the host with model credentials; read/edit/search/commands execute only in
-non-root offline workers, without host mounts, home, history, credentials or Docker socket.
+Coding and GitHub publication are separate, default-disabled capabilities even though the GitHub
+plugin owns both read intelligence and publication tools. Read tools may be discovered by the
+model; publication and reconciliation tools must remain hidden and require exact harness-minted
+authority plus a separately scoped write credential. Require explicit operator-allowed GitHub
+targets/profiles and authenticated initiating principals. The coding runtime stays on the host
+with model credentials; read/edit/search/commands execute only in non-root offline workers,
+without host mounts, home, history, credentials or Docker socket.
 Disable repository/global Pi resource discovery, extensions, settings and hooks. Guidance is
 bounded redacted text, not authority. Use digest-pinned trusted images, built-in seccomp, dropped
 capabilities, no-new-privileges, read-only root filesystem and bounded resources/temporary storage.

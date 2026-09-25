@@ -27,10 +27,13 @@ Every readiness sweep must attempt the OSS rules benchmark. Keep the `rules` plu
 - Use TypeScript on Node.js 24.
 - Use `pnpm` for dependency management.
 - Use pi-ai's MiniMax provider for the default model path.
-- Use GitHub API access only for read-only repository intelligence.
+- Keep model-facing GitHub API access read-only. The GitHub plugin may use write APIs only through
+  its hidden, approval-gated publication and reconciliation tools.
 - Use the fixed public ossrules API only through the bounded rules-benchmark client; do not add general web access to readiness.
 - Coding uses an opt-in Pi coding-agent SDK session with Docker-backed tools; no repository code or resource discovery runs on the host.
-- Keep GitHub publication separate from intelligence. It is disabled by default and requires a principal/content-bound consumed human approval and separately scoped credentials.
+- Keep GitHub publication separate from intelligence at the capability and credential boundaries.
+  It is disabled by default and requires a principal/content-bound consumed human approval,
+  exact harness-minted execution authority, and separately scoped credentials.
 - Use TypeBox for agent tool inputs/outputs and API-shaped schemas.
 - Use Drizzle for persisted SQLite tables.
 - Use Pino for structured logging.

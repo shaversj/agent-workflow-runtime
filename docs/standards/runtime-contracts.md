@@ -51,11 +51,14 @@ make their payload trusted.
 
 Approval metadata filters discovery; it is not a grant. Registry execution enforces allowed
 surfaces and approval-required tools with a harness-minted principal/surface/exact-argument
-authority. Model/tool parameters cannot mint it. Coding services also recheck operator principal
-and target policy. Publication claims a durable, single-use exact-digest approval; no model-facing
-approval mutation is permitted. Coding lifecycle, proposals, approvals, worker protocols and GitHub
-projections use their owning TypeBox schemas. Private operational snapshots are not capture
-envelopes: approval hashes exact code, while displays/history are bounded and redacted separately.
+authority, including any required symbolic credential capability. A plugin authority declaration
+is a ceiling, while each tool declares the exact authority it needs. Model/tool parameters cannot
+mint authority. Coding services also recheck operator principal and target policy. GitHub
+publication tools remain hidden from model discovery and claim a durable, single-use exact-digest
+approval; no model-facing approval mutation is permitted. Coding lifecycle, proposals, approvals,
+worker protocols and GitHub projections use their owning TypeBox schemas. Private operational
+snapshots are not capture envelopes: approval hashes exact code, while displays/history are
+bounded and redacted separately.
 
 ## Database Boundary
 
