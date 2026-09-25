@@ -12,8 +12,8 @@ import {
   observedModelUsage
 } from "../harness/usage.js";
 import type { HarnessUsage } from "../harness/types.js";
-import { createRulesBenchmarkTools } from "../plugins/rules-benchmark/tools.js";
-import type { RulesBenchmarkClient } from "../plugins/rules-benchmark/client.js";
+import { createReadinessReferenceTools } from "../plugins/readiness/reference/tools.js";
+import type { OssRulesClient } from "../plugins/readiness/reference/client.js";
 import type { ToolSourceContext } from "../tools/registry.js";
 
 const MAX_TURNS = 6;
@@ -48,14 +48,14 @@ export async function runReadinessInterpretation(options: {
   timeoutMs: number;
   signal: AbortSignal;
   recording: InteractionRecorder;
-  benchmarkClient: RulesBenchmarkClient;
+  ossRulesClient: OssRulesClient;
   sourceContext?: ToolSourceContext;
   systemPrompt: string;
   prompt: string;
   onProgress?: (event: WorkflowProgressEvent) => void;
 }): Promise<ReadinessInterpretationResult> {
   const harnessModel = createMinimaxHarnessModel(options.modelName);
-  const benchmarkTools = createRulesBenchmarkTools(options.benchmarkClient);
+  const referenceTools = createReadinessReferenceTools(options.ossRulesClient);
   const calls: ToolCallRecord[] = [];
   const pendingArgs = new Map<string, unknown>();
   let messages: AgentMessage[] = [];
@@ -69,7 +69,7 @@ export async function runReadinessInterpretation(options: {
       systemPrompt: options.systemPrompt,
       model: harnessModel.model,
       thinkingLevel: "low",
-      tools: toPiAgentTools(benchmarkTools, {
+      tools: toPiAgentTools(referenceTools, {
         surface: options.sourceContext?.source ?? "cli",
         recording: options.recording,
         sourceContext: options.sourceContext,

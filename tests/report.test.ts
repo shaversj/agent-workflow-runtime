@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { openHistoryStore } from "../src/db/index.js";
 import { renderReportEnvelope, writeSweepReport } from "../src/tools/report.js";
-import { ensureBenchmarkReportSection } from "../src/plugins/rules-benchmark/report.js";
+import { ensureBenchmarkReportSection } from "../src/plugins/readiness/reference/report.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -62,7 +62,7 @@ it("guarantees benchmark status and authority without duplicating the section", 
 
   expect(result.match(/^## Agent Rules Benchmark$/gm)).toHaveLength(1);
   expect(result).toContain("Status: `stale`");
-  expect(result).toContain("repository-authored rules are authoritative");
+  expect(result).toContain("repository-authored guidance is authoritative");
   expect(result).toContain("### Relevant Pattern");
 });
 

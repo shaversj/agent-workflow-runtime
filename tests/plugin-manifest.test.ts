@@ -9,7 +9,7 @@ import {
   type AgentOpsPluginManifest
 } from "../src/plugins/manifest.js";
 import { githubTools } from "../src/plugins/github/tools.js";
-import { readinessTools } from "../src/plugins/readiness/tools.js";
+import { readinessReferenceTools, readinessTools } from "../src/plugins/readiness/tools.js";
 import { defineRegisteredTool } from "../src/tools/registry.js";
 
 describe("plugin manifests", () => {
@@ -197,6 +197,22 @@ describe("plugin manifests", () => {
     expect(toolsByName.get("run_sweep")?.readOnly).toBe(false);
     expect(toolsByName.get("list_runs")?.readOnly).toBe(true);
     expect(toolsByName.get("read_report")?.requiresApproval).toBe(false);
+  });
+
+  it("keeps OSSRules tools hidden from the ordinary readiness catalog", () => {
+    expect(readinessTools.some((tool) => tool.name.includes("corpus"))).toBe(false);
+    expect(readinessReferenceTools.map((tool) => tool.name)).toEqual([
+      "list_corpus",
+      "read_corpus_entry"
+    ]);
+    expect(readinessReferenceTools.every((tool) => tool.exposure === "hidden")).toBe(true);
+    expect(
+      readinessReferenceTools.every(
+        (tool) =>
+          JSON.stringify(tool.authority) ===
+          JSON.stringify({ target: "none", managedState: "read-write", network: "open" })
+      )
+    ).toBe(true);
   });
 
   it("applies manifest source and policy defaults to GitHub tools", () => {

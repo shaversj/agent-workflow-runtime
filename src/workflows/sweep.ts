@@ -13,10 +13,10 @@ import {
 import { resolveGitHubIdentityForTarget } from "../plugins/github/evidence.js";
 import { renderGitHubContext } from "../plugins/github/report.js";
 import {
-  RulesBenchmarkClient,
-  type RulesBenchmarkClientOptions
-} from "../plugins/rules-benchmark/client.js";
-import { ensureBenchmarkReportSection } from "../plugins/rules-benchmark/report.js";
+  OssRulesClient,
+  type OssRulesClientOptions
+} from "../plugins/readiness/reference/client.js";
+import { ensureBenchmarkReportSection } from "../plugins/readiness/reference/report.js";
 import { gatherReadinessEvidence } from "../plugins/readiness/evidence.js";
 import {
   buildReadinessInterpretationPrompt,
@@ -51,7 +51,7 @@ export async function runSweepWorkflow(
     sourceContext?: ToolSourceContext;
     signal?: AbortSignal;
     github?: GitHubEvidenceClientOptions;
-    benchmark?: RulesBenchmarkClientOptions;
+    benchmark?: OssRulesClientOptions;
     recording?: InteractionRecorder;
   } = {}
 ): Promise<WorkflowResult> {
@@ -163,7 +163,7 @@ export async function runSweepWorkflow(
         result: evidence
       });
       assertActive();
-      const benchmarkClient = new RulesBenchmarkClient({
+      const ossRulesClient = new OssRulesClient({
         ...options.benchmark,
         signal: combineAbortSignals(signal, options.benchmark?.signal)
       });
@@ -174,10 +174,10 @@ export async function runSweepWorkflow(
         {
           name: "rules_benchmark_catalog",
           kind: "workflow",
-          source: "rules-benchmark",
+          source: "readiness",
           input: benchmarkInput
         },
-        () => benchmarkClient.catalog(),
+        () => ossRulesClient.catalog(),
         signal
       );
       calls.push({
@@ -274,7 +274,7 @@ export async function runSweepWorkflow(
           timeoutMs,
           signal,
           recording,
-          benchmarkClient,
+          ossRulesClient,
           sourceContext: options.sourceContext,
           onProgress: progress,
           systemPrompt: readinessSweepSkill,

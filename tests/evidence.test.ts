@@ -31,10 +31,11 @@ describe("readiness evidence", () => {
 
     expect(evidence.evidence_recipe).toBe(readinessEvidenceRecipe.name);
     expect(evidence.plugin).toBe("readiness");
-    expect(evidence.rules.plugin).toBe("rules");
-    expect(evidence.rules.sources.map((source) => source.path)).toContain("AGENTS.md");
+    expect(evidence.guidance.version).toBe(1);
+    expect(evidence.guidance).not.toHaveProperty("plugin");
+    expect(evidence.guidance.sources.map((source) => source.path)).toContain("AGENTS.md");
     expect(evidence.key_files).toEqual(expect.arrayContaining(["README.md", "AGENTS.md"]));
-    expect(evidence.rules.coverage).toEqual(
+    expect(evidence.guidance.coverage).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ capability: "logging", status: "observed", expected: true }),
         expect.objectContaining({ capability: "testing", status: "missing", expected: true })

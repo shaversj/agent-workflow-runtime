@@ -5,7 +5,7 @@ import path from "node:path";
 import { type TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-import { rulesBenchmarkCachePath } from "../../workspaces/storage.js";
+import { ossRulesCachePath } from "../../../workspaces/storage.js";
 import { BenchmarkCacheEnvelopeSchema, type BenchmarkCacheEnvelope } from "./schemas.js";
 
 const MAX_CACHE_FILE_BYTES = 2 * 1024 * 1024;
@@ -14,10 +14,10 @@ interface BenchmarkCacheEntry<T> extends Omit<BenchmarkCacheEnvelope, "payload">
   payload: T;
 }
 
-export function readBenchmarkCache<T>(
+export function readOssRulesCache<T>(
   endpoint: string,
   payloadSchema: TSchema,
-  cacheRoot: string = rulesBenchmarkCachePath()
+  cacheRoot: string = ossRulesCachePath()
 ): BenchmarkCacheEntry<T> | undefined {
   try {
     const root = secureCacheRoot(cacheRoot, false);
@@ -35,10 +35,10 @@ export function readBenchmarkCache<T>(
   }
 }
 
-export function writeBenchmarkCache<T>(
+export function writeOssRulesCache<T>(
   entry: BenchmarkCacheEntry<T>,
   payloadSchema: TSchema,
-  cacheRoot: string = rulesBenchmarkCachePath()
+  cacheRoot: string = ossRulesCachePath()
 ): void {
   if (
     !Value.Check(BenchmarkCacheEnvelopeSchema, entry) ||

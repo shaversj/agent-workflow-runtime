@@ -2,9 +2,9 @@ import { type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { request as undiciRequest } from "undici";
 
-import { requestBoundedJson } from "../../harness/http.js";
-import { rulesBenchmarkCachePath } from "../../workspaces/storage.js";
-import { readBenchmarkCache, writeBenchmarkCache } from "./cache.js";
+import { requestBoundedJson } from "../../../harness/http.js";
+import { ossRulesCachePath } from "../../../workspaces/storage.js";
+import { readOssRulesCache, writeOssRulesCache } from "./cache.js";
 import {
   OssRulesCatalogSchema,
   OssRulesPatternDetailSchema,
@@ -38,7 +38,7 @@ export interface BenchmarkResponse<T> {
   unavailable_reason?: string;
 }
 
-export interface RulesBenchmarkClientOptions {
+export interface OssRulesClientOptions {
   cacheRoot?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -46,7 +46,7 @@ export interface RulesBenchmarkClientOptions {
   now?: () => number;
 }
 
-export class RulesBenchmarkClient {
+export class OssRulesClient {
   private readonly cacheRoot: string;
   private readonly timeoutMs: number;
   private readonly signal?: AbortSignal;
@@ -59,8 +59,8 @@ export class RulesBenchmarkClient {
   private readonly skills = new Set<string>();
   private readonly detailKeys = new Set<string>();
 
-  constructor(options: RulesBenchmarkClientOptions = {}) {
-    this.cacheRoot = options.cacheRoot ?? rulesBenchmarkCachePath();
+  constructor(options: OssRulesClientOptions = {}) {
+    this.cacheRoot = options.cacheRoot ?? ossRulesCachePath();
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.signal = options.signal;
     this.request = options.request;
@@ -178,7 +178,7 @@ export class RulesBenchmarkClient {
     endpoint: string,
     schema: TSchemaType
   ): Promise<BenchmarkResponse<Static<TSchemaType>>> {
-    const cached = readBenchmarkCache<Static<TSchemaType>>(endpoint, schema, this.cacheRoot);
+    const cached = readOssRulesCache<Static<TSchemaType>>(endpoint, schema, this.cacheRoot);
     const headers: Record<string, string> = {
       Accept: "application/json",
       "User-Agent": "agent-workflow-runtime"
@@ -203,7 +203,7 @@ export class RulesBenchmarkClient {
         if (!cached) throw new Error("ossrules_cache_missing_for_304");
         const revalidatedAt = new Date(this.now()).toISOString();
         const etag = response.headers.get("etag") ?? cached.etag;
-        writeBenchmarkCache(
+        writeOssRulesCache(
           {
             ...cached,
             fetched_at: revalidatedAt,
@@ -222,7 +222,7 @@ export class RulesBenchmarkClient {
       if (!Value.Check(schema, response.data)) throw new Error("ossrules_schema_invalid");
       const fetchedAt = new Date(this.now()).toISOString();
       const etag = response.headers.get("etag") ?? undefined;
-      writeBenchmarkCache(
+      writeOssRulesCache(
         {
           version: 1,
           endpoint,

@@ -163,18 +163,15 @@ describe("Discord chat surface", () => {
     }
   });
 
-  it("inspects repository rules without model credentials", async () => {
+  it("does not intercept retired rules requests or expose a rules tool", async () => {
     const originalKey = process.env.MINIMAX_API_KEY;
     delete process.env.MINIMAX_API_KEY;
     const repoPath = gitRepo();
-    fs.writeFileSync(path.join(repoPath, "AGENTS.md"), "# Agent rules\nUse pnpm.\n");
-    git(["add", "AGENTS.md"], repoPath);
-    git(["commit", "-m", "Add agent rules"], repoPath);
 
     try {
       const message = normalizeDiscordMessage({
         channelId: "channel-1",
-        messageId: "message-rules",
+        messageId: "message-retired-rules",
         authorId: "user-1",
         content: "rules inventory",
         applicationId: "application-1"
@@ -183,9 +180,9 @@ describe("Discord chat surface", () => {
       const response = await handleChatMessage(message!, { defaultRepoPath: repoPath });
 
       expect(response.kind).toBe("message");
-      expect(response.text).toContain("Repository rules");
-      expect(response.text).toContain("AGENTS.md");
-      expect(response.text).toContain("committed snapshot");
+      expect(response.text).toContain("readiness sweep");
+      expect(response.text).not.toContain("Repository rules");
+      expect(response.text).not.toContain("AGENTS.md");
     } finally {
       restoreEnv("MINIMAX_API_KEY", originalKey);
     }
@@ -610,14 +607,14 @@ describe("Discord chat surface", () => {
     expect(config.allowDms).toBe(false);
   });
 
-  it("enables readiness, GitHub, and rules plugin sources by default", () => {
+  it("enables readiness and GitHub plugin sources by default", () => {
     const config = loadDiscordBotConfig({
       DISCORD_BOT_TOKEN: "token-value",
       DISCORD_ALLOWED_USER_IDS: "10000000000000001",
       DISCORD_ALLOWED_CHANNEL_IDS: "30000000000000001"
     });
 
-    expect([...config.enabledPluginSources]).toEqual(["readiness", "github", "rules"]);
+    expect([...config.enabledPluginSources]).toEqual(["readiness", "github"]);
   });
 
   it.each([

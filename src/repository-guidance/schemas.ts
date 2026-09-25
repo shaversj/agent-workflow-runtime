@@ -1,8 +1,9 @@
 import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 const closed = { additionalProperties: false } as const;
 
-const RuleSourceKindSchema = Type.Union([
+const RepositoryGuidanceSourceKindSchema = Type.Union([
   Type.Literal("agents"),
   Type.Literal("claude"),
   Type.Literal("cursor"),
@@ -10,7 +11,7 @@ const RuleSourceKindSchema = Type.Union([
   Type.Literal("standard")
 ]);
 
-const RuleScopeSchema = Type.Union([
+const RepositoryGuidanceScopeSchema = Type.Union([
   Type.Object({ kind: Type.Literal("repository") }, closed),
   Type.Object({ kind: Type.Literal("subtree"), root: Type.String({ minLength: 1 }) }, closed),
   Type.Object(
@@ -23,12 +24,12 @@ const RuleScopeSchema = Type.Union([
   Type.Object({ kind: Type.Literal("unknown") }, closed)
 ]);
 
-export const RuleSourceSchema = Type.Object(
+export const RepositoryGuidanceSourceSchema = Type.Object(
   {
-    kind: RuleSourceKindSchema,
+    kind: RepositoryGuidanceSourceKindSchema,
     path: Type.String({ minLength: 1 }),
     title: Type.Optional(Type.String({ minLength: 1 })),
-    scope: RuleScopeSchema,
+    scope: RepositoryGuidanceScopeSchema,
     languages: Type.Array(Type.String()),
     tools: Type.Array(Type.String()),
     excerpt: Type.String(),
@@ -39,7 +40,7 @@ export const RuleSourceSchema = Type.Object(
   closed
 );
 
-export const RulesCoverageSchema = Type.Object(
+export const RepositoryGuidanceCoverageSchema = Type.Object(
   {
     capability: Type.String({ minLength: 1 }),
     status: Type.Union([Type.Literal("observed"), Type.Literal("missing")]),
@@ -49,12 +50,12 @@ export const RulesCoverageSchema = Type.Object(
   closed
 );
 
-export const RulesInventorySchema = Type.Object(
+export const RepositoryGuidanceInventorySchema = Type.Object(
   {
-    plugin: Type.Literal("rules"),
+    version: Type.Literal(1),
     source_count: Type.Integer({ minimum: 0 }),
-    sources: Type.Array(RuleSourceSchema),
-    coverage: Type.Array(RulesCoverageSchema),
+    sources: Type.Array(RepositoryGuidanceSourceSchema),
+    coverage: Type.Array(RepositoryGuidanceCoverageSchema),
     warnings: Type.Array(Type.String()),
     truncated: Type.Boolean(),
     redacted_occurrences: Type.Integer({ minimum: 0 })
@@ -62,18 +63,13 @@ export const RulesInventorySchema = Type.Object(
   closed
 );
 
-export const RuleSourceReadResultSchema = Type.Object(
-  {
-    path: Type.String({ minLength: 1 }),
-    content: Type.String(),
-    truncated: Type.Boolean(),
-    untrusted: Type.Literal(true),
-    redacted_occurrences: Type.Integer({ minimum: 0 })
-  },
-  closed
-);
+export type RepositoryGuidanceSource = Static<typeof RepositoryGuidanceSourceSchema>;
+export type RepositoryGuidanceCoverage = Static<typeof RepositoryGuidanceCoverageSchema>;
+export type RepositoryGuidanceInventory = Static<typeof RepositoryGuidanceInventorySchema>;
 
-export type RuleSource = Static<typeof RuleSourceSchema>;
-export type RulesCoverage = Static<typeof RulesCoverageSchema>;
-export type RulesInventory = Static<typeof RulesInventorySchema>;
-export type RuleSourceReadResult = Static<typeof RuleSourceReadResultSchema>;
+export function parseRepositoryGuidanceInventory(value: unknown): RepositoryGuidanceInventory {
+  if (!Value.Check(RepositoryGuidanceInventorySchema, value)) {
+    throw new Error("invalid_repository_guidance");
+  }
+  return value;
+}

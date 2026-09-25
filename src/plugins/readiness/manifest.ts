@@ -15,7 +15,7 @@ export const readinessPluginManifest = definePluginManifest({
   authority: {
     target: "read-only",
     managedState: "read-write",
-    network: "model-provider"
+    network: "open"
   },
   source: {
     id: "readiness",
@@ -33,13 +33,15 @@ export const readinessPluginManifest = definePluginManifest({
       name: "list_runs",
       label: "List Readiness Runs",
       description:
-        "List recent readiness sweep runs from managed Agent Workflow Runtime state without reading repository files."
+        "List recent readiness sweep runs from managed Agent Workflow Runtime state without reading repository files.",
+      authority: { target: "none", managedState: "read-only", network: "none" }
     },
     {
       name: "show_run",
       label: "Show Readiness Run",
       description:
-        "Show one readiness sweep run from managed Agent Workflow Runtime state without reading repository files."
+        "Show one readiness sweep run from managed Agent Workflow Runtime state without reading repository files.",
+      authority: { target: "none", managedState: "read-only", network: "none" }
     },
     {
       name: "run_sweep",
@@ -47,19 +49,42 @@ export const readinessPluginManifest = definePluginManifest({
       description:
         "Run the readiness sweep for a repository, gather evidence, ask the model to interpret it, and write the Markdown report.",
       readOnly: false,
-      allowedSurfaces: ["cli", "discord"]
+      allowedSurfaces: ["cli", "discord"],
+      authority: { target: "read-only", managedState: "read-write", network: "model-provider" }
     },
     {
       name: "get_latest_report",
       label: "Get Latest Readiness Report",
       description:
-        "Return metadata for the newest readiness report in the repository without reading the full report body."
+        "Return metadata for the newest readiness report in the repository without reading the full report body.",
+      authority: { target: "none", managedState: "read-only", network: "none" }
     },
     {
       name: "read_report",
       label: "Read Readiness Report",
       description:
-        "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report."
+        "Read a readiness report body. Use this when the user asks to show, summarize, or inspect an existing report.",
+      authority: { target: "none", managedState: "read-only", network: "none" }
+    },
+    {
+      name: "list_corpus",
+      label: "List OSS Rules Corpus",
+      description: "List bounded metadata from the validated public ossrules corpus.",
+      exposure: "hidden",
+      readOnly: true,
+      requiresApproval: false,
+      allowedSurfaces: ["cli", "discord"],
+      authority: { target: "none", managedState: "read-write", network: "open" }
+    },
+    {
+      name: "read_corpus_entry",
+      label: "Read OSS Rules Corpus Entry",
+      description: "Read one bounded corpus entry previously returned during this sweep.",
+      exposure: "hidden",
+      readOnly: true,
+      requiresApproval: false,
+      allowedSurfaces: ["cli", "discord"],
+      authority: { target: "none", managedState: "read-write", network: "open" }
     }
   ]
 });

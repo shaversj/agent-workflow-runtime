@@ -1,12 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { redactEvidenceText, type EvidenceRedactionStats } from "../../harness/redaction.js";
-import type { RuleSource, RuleSourceReadResult, RulesCoverage, RulesInventory } from "./schemas.js";
+import { redactEvidenceText, type EvidenceRedactionStats } from "../harness/redaction.js";
+import { isRepositoryGuidanceApplicable } from "./applicability.js";
+import {
+  parseRepositoryGuidanceInventory,
+  type RepositoryGuidanceCoverage,
+  type RepositoryGuidanceInventory,
+  type RepositoryGuidanceSource
+} from "./schemas.js";
 
 const MAX_SOURCES = 80;
 const MAX_EXCERPT_BYTES = 4 * 1024;
-const MAX_SOURCE_BYTES = 16 * 1024;
 const ignoredDirectories = new Set([
   ".agent-readiness",
   ".git",
@@ -21,49 +26,68 @@ const ignoredDirectories = new Set([
 
 interface Candidate {
   path: string;
-  kind: RuleSource["kind"];
+  kind: RepositoryGuidanceSource["kind"];
 }
 
-export function discoverRules(repoPath: string): RulesInventory {
+interface RepositoryGuidanceFile {
+  path: string;
+  content: string;
+}
+
+export { isRepositoryGuidanceApplicable };
+
+export function discoverRepositoryGuidance(repoPath: string): RepositoryGuidanceInventory {
   const root = realDirectory(repoPath);
   const candidates = discoverCandidates(root);
   const stats: EvidenceRedactionStats = { redacted_occurrences: 0 };
   const warnings: string[] = [];
   const selected = candidates.slice(0, MAX_SOURCES);
   const sources = selected.flatMap((candidate) => {
-    const source = readRuleSource(root, candidate, stats, warnings);
+    const source = readGuidanceSource(root, candidate, stats, warnings);
     return source ? [source] : [];
   });
-  return {
-    plugin: "rules",
+  return parseRepositoryGuidanceInventory({
+    version: 1,
     source_count: candidates.length,
     sources,
     coverage: buildCoverage(sources),
     warnings,
     truncated: candidates.length > MAX_SOURCES,
     redacted_occurrences: stats.redacted_occurrences
-  };
+  });
 }
 
-export function readDiscoveredRuleSource(
-  repoPath: string,
-  sourcePath: string
-): RuleSourceReadResult {
-  const root = realDirectory(repoPath);
-  const normalized = normalizeRelativePath(sourcePath);
-  const candidate = discoverCandidates(root).find((item) => item.path === normalized);
-  if (!candidate) throw new Error("rules_source_not_discovered");
-  const absolute = safeSourcePath(root, normalized);
-  const raw = fs.readFileSync(absolute);
-  if (raw.includes(0)) throw new Error("rules_source_binary");
+export function discoverRepositoryGuidanceFromFiles(
+  files: readonly RepositoryGuidanceFile[]
+): RepositoryGuidanceInventory {
+  const candidates = files.flatMap((file): Candidate[] => {
+    const relative = file.path.replaceAll("\\", "/");
+    const kind = sourceKind(relative);
+    return kind ? [{ path: relative, kind }] : [];
+  });
+  candidates.sort((left, right) => left.path.localeCompare(right.path));
+  const contents = new Map(files.map((file) => [file.path.replaceAll("\\", "/"), file.content]));
   const stats: EvidenceRedactionStats = { redacted_occurrences: 0 };
-  return {
-    path: normalized,
-    content: redactEvidenceText(raw.subarray(0, MAX_SOURCE_BYTES).toString("utf8"), stats),
-    truncated: raw.byteLength > MAX_SOURCE_BYTES,
-    untrusted: true,
+  const warnings: string[] = [];
+  const selected = candidates.slice(0, MAX_SOURCES);
+  const sources = selected.flatMap((candidate) => {
+    const content = contents.get(candidate.path);
+    if (content === undefined) {
+      warnings.push(`unreadable:${candidate.path}`);
+      return [];
+    }
+    const source = buildGuidanceSource(candidate, Buffer.from(content), stats, warnings);
+    return source ? [source] : [];
+  });
+  return parseRepositoryGuidanceInventory({
+    version: 1,
+    source_count: candidates.length,
+    sources,
+    coverage: buildCoverage(sources),
+    warnings,
+    truncated: candidates.length > MAX_SOURCES,
     redacted_occurrences: stats.redacted_occurrences
-  };
+  });
 }
 
 function discoverCandidates(root: string): Candidate[] {
@@ -89,7 +113,7 @@ function discoverCandidates(root: string): Candidate[] {
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function sourceKind(relativePath: string): RuleSource["kind"] | undefined {
+function sourceKind(relativePath: string): RepositoryGuidanceSource["kind"] | undefined {
   const lower = relativePath.toLowerCase();
   const base = path.posix.basename(lower);
   if (base === "agents.md") return "agents";
@@ -102,13 +126,12 @@ function sourceKind(relativePath: string): RuleSource["kind"] | undefined {
   return undefined;
 }
 
-function readRuleSource(
+function readGuidanceSource(
   root: string,
   candidate: Candidate,
   stats: EvidenceRedactionStats,
   inventoryWarnings: string[]
-): RuleSource | undefined {
-  const warnings: string[] = [];
+): RepositoryGuidanceSource | undefined {
   let raw: Buffer;
   try {
     raw = fs.readFileSync(safeSourcePath(root, candidate.path));
@@ -120,12 +143,26 @@ function readRuleSource(
     inventoryWarnings.push(`binary:${candidate.path}`);
     return undefined;
   }
+  return buildGuidanceSource(candidate, raw, stats, inventoryWarnings);
+}
+
+function buildGuidanceSource(
+  candidate: Candidate,
+  raw: Buffer,
+  stats: EvidenceRedactionStats,
+  inventoryWarnings: string[]
+): RepositoryGuidanceSource | undefined {
+  if (raw.includes(0)) {
+    inventoryWarnings.push(`binary:${candidate.path}`);
+    return undefined;
+  }
+  const warnings: string[] = [];
   const truncated = raw.byteLength > MAX_EXCERPT_BYTES;
   if (truncated) warnings.push("excerpt_truncated");
   const text = raw.subarray(0, MAX_EXCERPT_BYTES).toString("utf8");
   const excerpt = redactEvidenceText(text, stats);
   const title = /^#\s+(.+)$/m.exec(text)?.[1]?.trim();
-  const scope = ruleScope(candidate, text);
+  const scope = guidanceScope(candidate, text);
   return {
     kind: candidate.kind,
     path: candidate.path,
@@ -140,7 +177,7 @@ function readRuleSource(
   };
 }
 
-function ruleScope(candidate: Candidate, content: string): RuleSource["scope"] {
+function guidanceScope(candidate: Candidate, content: string): RepositoryGuidanceSource["scope"] {
   if (candidate.kind === "cursor") {
     const patterns = cursorGlobs(content);
     if (patterns.length > 0) return { kind: "path-glob", patterns };
@@ -163,7 +200,7 @@ function cursorGlobs(content: string): string[] {
     .slice(0, 20);
 }
 
-function inferLanguages(relativePath: string, scope: RuleSource["scope"]): string[] {
+function inferLanguages(relativePath: string, scope: RepositoryGuidanceSource["scope"]): string[] {
   const corpus = [relativePath, ...(scope.kind === "path-glob" ? scope.patterns : [])].join(" ");
   const languages = new Set<string>();
   if (/typescript|javascript|\.tsx?\b|\.jsx?\b/i.test(corpus)) languages.add("typescript");
@@ -173,14 +210,14 @@ function inferLanguages(relativePath: string, scope: RuleSource["scope"]): strin
   return [...languages];
 }
 
-function inferTools(kind: RuleSource["kind"]): string[] {
+function inferTools(kind: RepositoryGuidanceSource["kind"]): string[] {
   if (kind === "claude") return ["claude"];
   if (kind === "cursor") return ["cursor"];
   if (kind === "copilot") return ["copilot"];
   return [];
 }
 
-function buildCoverage(sources: RuleSource[]): RulesCoverage[] {
+function buildCoverage(sources: RepositoryGuidanceSource[]): RepositoryGuidanceCoverage[] {
   const standards = sources.filter((source) => source.kind === "standard");
   const observed = new Map<string, string[]>();
   for (const source of standards) {
@@ -220,27 +257,19 @@ function standardCapability(relativePath: string): string | undefined {
 
 function realDirectory(input: string): string {
   const resolved = fs.realpathSync(path.resolve(input));
-  if (!fs.statSync(resolved).isDirectory()) throw new Error("rules_workspace_not_directory");
+  if (!fs.statSync(resolved).isDirectory())
+    throw new Error("repository_guidance_workspace_not_directory");
   return resolved;
 }
 
-function normalizeRelativePath(input: string): string {
-  if (!input || path.isAbsolute(input) || input.includes("\0"))
-    throw new Error("rules_source_invalid");
-  const normalized = input.split(path.sep).join("/");
-  if (normalized === ".." || normalized.startsWith("../") || normalized.includes("/../")) {
-    throw new Error("rules_source_invalid");
-  }
-  return path.posix.normalize(normalized);
-}
-
 function safeSourcePath(root: string, relativePath: string): string {
-  const normalized = normalizeRelativePath(relativePath);
-  const absolute = path.resolve(root, normalized);
+  const absolute = path.resolve(root, relativePath);
   if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-    throw new Error("rules_source_invalid");
+    throw new Error("repository_guidance_source_invalid");
   }
   const real = fs.realpathSync(absolute);
-  if (real !== root && !real.startsWith(root + path.sep)) throw new Error("rules_source_invalid");
+  if (real !== root && !real.startsWith(root + path.sep)) {
+    throw new Error("repository_guidance_source_invalid");
+  }
   return real;
 }

@@ -21,7 +21,6 @@ import { logger } from "../logger.js";
 import { defaultPluginTools } from "../plugins/index.js";
 import { createChatRequestContext } from "../surfaces/chat/request-context.js";
 import { routeChatMessage } from "../surfaces/chat/router.js";
-import { runRulesChatRequest } from "../surfaces/chat/rules.js";
 import type {
   ChatHandlerOptions,
   ChatMessage,
@@ -165,9 +164,6 @@ async function executeChatAgent(
   if (availableTools.length === 0) {
     return { kind: "ignored", text: "No chat tools are available for this surface." };
   }
-
-  const rulesResponse = await runRulesChatRequest(requestContext, options.enabledPluginSources);
-  if (rulesResponse) return rulesResponse;
 
   const deterministicInspectionRequest = parseInspectionRequest(requestContext);
   if (

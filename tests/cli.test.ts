@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runReportsCli } from "../src/surfaces/cli/reports.js";
 import { parseReportsCliArgs } from "../src/surfaces/cli/reports.js";
-import { parseRulesCliArgs, runRulesCli } from "../src/surfaces/cli/rules.js";
 import { parseRunsCliArgs, runRunsCli } from "../src/surfaces/cli/runs.js";
 import { runSweepWorkflow } from "../src/workflows/sweep.js";
 
@@ -23,6 +22,34 @@ describe("package contract", () => {
     expect(packageJson.scripts).toMatchObject({
       sweep: "tsx src/cli.ts sweep"
     });
+  });
+
+  it("rejects retired rules and standards commands without preparing state", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-ops-kit-cli-home-"));
+    const environment = { ...process.env, AGENT_OPS_HOME: home };
+    delete environment.AGENT_OPS_ENV_FILE;
+    let failure: { status?: number; stdout?: string; stderr?: string } | undefined;
+    try {
+      execFileSync(
+        "pnpm",
+        [
+          "exec",
+          "tsx",
+          path.join(import.meta.dirname, "..", "src", "cli.ts"),
+          "rules",
+          "inventory",
+          home
+        ],
+        { cwd: path.join(import.meta.dirname, ".."), env: environment, encoding: "utf8" }
+      );
+    } catch (error: unknown) {
+      failure = error as { status?: number; stdout?: string; stderr?: string };
+    }
+    expect(failure?.status).toBe(2);
+    const output = `${failure?.stdout ?? ""}\n${failure?.stderr ?? ""}`;
+    expect(output).toContain("Usage:");
+    expect(output).not.toContain("Repository rules");
+    expect(fs.readdirSync(home)).toEqual([]);
   });
 });
 
@@ -160,54 +187,12 @@ describe("inspection CLI", () => {
   });
 });
 
-describe("rules CLI", () => {
-  it("parses inventory and source reads with one target and optional ref", () => {
-    expect(parseRulesCliArgs(["inventory", "/tmp/repo", "--ref", "main"])).toEqual({
-      command: "inventory",
-      repoTarget: "/tmp/repo",
-      ref: "main"
-    });
-    expect(parseRulesCliArgs(["read", "/tmp/repo", "AGENTS.md"])).toEqual({
-      command: "read",
-      repoTarget: "/tmp/repo",
-      sourcePath: "AGENTS.md"
-    });
-    expect(() => parseRulesCliArgs(["inventory", "repo-a", "repo-b"])).toThrow();
-    expect(() => parseRulesCliArgs(["read", "repo-a"])).toThrow();
-  });
-
-  it("inspects committed rule sources through a disposable workspace", async () => {
-    const repoPath = gitRepo();
-    fs.writeFileSync(path.join(repoPath, "AGENTS.md"), "# Agent rules\nUse pnpm.\n");
-    git(["add", "AGENTS.md"], repoPath);
-    git(["commit", "-m", "Add rules"], repoPath);
-
-    const inventory = await captureStdoutAsync(() => runRulesCli(["inventory", repoPath]));
-    expect(inventory).toContain("Repository rules");
-    expect(inventory).toContain("AGENTS.md");
-    expect(inventory).toContain("committed snapshot");
-
-    const source = await captureStdoutAsync(() => runRulesCli(["read", repoPath, "AGENTS.md"]));
-    expect(source).toContain("# Agent rules");
-    expect(source).toContain("Source: AGENTS.md");
-  });
-});
-
 function captureStdout(run: () => void): string {
   const lines: string[] = [];
   vi.spyOn(console, "log").mockImplementation((line = "") => {
     lines.push(String(line));
   });
   run();
-  return lines.join("\n");
-}
-
-async function captureStdoutAsync(run: () => Promise<void>): Promise<string> {
-  const lines: string[] = [];
-  vi.spyOn(console, "log").mockImplementation((line = "") => {
-    lines.push(String(line));
-  });
-  await run();
   return lines.join("\n");
 }
 
