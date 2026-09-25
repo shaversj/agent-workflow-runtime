@@ -1,5 +1,7 @@
 import { definePluginManifest } from "../manifest.js";
 
+export const GITHUB_PUBLICATION_WRITE_CREDENTIAL = "github-publication-write";
+
 export const githubPluginManifest = definePluginManifest({
   name: "github",
   displayName: "GitHub",
@@ -77,7 +79,7 @@ export const githubPluginManifest = definePluginManifest({
         managedState: "read-write",
         network: "open"
       },
-      requiredCredentials: ["github-publication-write"]
+      requiredCredentials: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
     },
     {
       name: "reconcile_publication",
@@ -93,7 +95,7 @@ export const githubPluginManifest = definePluginManifest({
         managedState: "read-write",
         network: "open"
       },
-      requiredCredentials: ["github-publication-write"]
+      requiredCredentials: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
     }
   ]
 });

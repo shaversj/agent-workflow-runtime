@@ -208,10 +208,7 @@ describe("coding surface contracts", () => {
     });
     vi.spyOn(github, "githubPublicationTool").mockReturnValue(tool);
 
-    await handleDiscordCoding(
-      f.message("publish"),
-      `code approve job-publish ${"a".repeat(64)}`
-    );
+    await handleDiscordCoding(f.message("publish"), `code approve job-publish ${"a".repeat(64)}`);
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0]?.[0]).toEqual({
@@ -224,7 +221,7 @@ describe("coding surface contracts", () => {
       sourceContext: { guildId: "guild", channelId: "channel", userId: "1" }
     });
     expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
-      content: expect.stringContaining("https://github.com/owner/repo/pull/1")
+      content: "Job job-publish: published\nDraft PR: https://github.com/owner/repo/pull/1"
     });
   });
   it("keeps the stable disabled error before GitHub publication tool execution", async () => {
@@ -232,10 +229,7 @@ describe("coding surface contracts", () => {
     seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-disabled");
     const tool = vi.spyOn(github, "githubPublicationTool");
 
-    await handleDiscordCoding(
-      f.message("disabled"),
-      `code approve job-disabled ${"a".repeat(64)}`
-    );
+    await handleDiscordCoding(f.message("disabled"), `code approve job-disabled ${"a".repeat(64)}`);
 
     expect(tool).not.toHaveBeenCalled();
     expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({

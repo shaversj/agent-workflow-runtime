@@ -178,9 +178,9 @@ export async function handleDiscordCoding(
       } else if (request.action === "approve" || request.action === "reconcile") {
         if (!policy.publicationEnabled || !policy.writeToken)
           throw new Error("coding_publication_disabled");
-        const reconcile = request.action === "reconcile";
+        const publicationAction = request.action === "reconcile" ? "reconcile" : "publish";
         const parameters = { jobId: request.id, digest: request.digest! };
-        const tool = githubPublicationTool(reconcile);
+        const tool = githubPublicationTool(publicationAction);
         const authority = authorizeExecution({
           principal,
           allowedPrincipals: policy.principals,

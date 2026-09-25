@@ -7,7 +7,7 @@ import { assertToolExecution } from "../harness/execution-policy.js";
 import type { ExecutionAuthority } from "../harness/execution-policy.js";
 import type { WorkflowProgressEvent } from "../harness/types.js";
 import type { TargetRef } from "../workspaces/types.js";
-import type { ToolAuthority } from "../plugins/manifest.js";
+import type { ToolAuthority } from "./authority.js";
 
 const registeredToolBrand: unique symbol = Symbol("agentOpsRegisteredTool");
 
@@ -123,13 +123,7 @@ export function defineRegisteredTool<TParameters extends TSchema, TResultSchema 
     ...tool,
     [registeredToolBrand]: true,
     execute(params, context, signal) {
-      const {
-        pluginName,
-        name,
-        requiresApproval,
-        allowedSurfaces,
-        requiredCredentials
-      } = this;
+      const { pluginName, name, requiresApproval, allowedSurfaces, requiredCredentials } = this;
       const effectiveTool = {
         pluginName,
         name,

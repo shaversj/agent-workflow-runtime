@@ -1,5 +1,6 @@
 import { Type, type Static } from "typebox";
 
+import { ToolAuthoritySchema } from "./authority.js";
 import { describeTool, summarizeToolSources, type ToolSourceSummary } from "./catalog.js";
 import {
   defineRegisteredTool,
@@ -36,25 +37,7 @@ const ToolDescriptionSchema = Type.Object({
   read_only: Type.Boolean(),
   requires_approval: Type.Boolean(),
   allowed_surfaces: Type.Array(Type.String()),
-  authority: Type.Optional(
-    Type.Object({
-      target: Type.Union([
-        Type.Literal("none"),
-        Type.Literal("read-only"),
-        Type.Literal("read-write")
-      ]),
-      managedState: Type.Union([
-        Type.Literal("none"),
-        Type.Literal("read-only"),
-        Type.Literal("read-write")
-      ]),
-      network: Type.Union([
-        Type.Literal("none"),
-        Type.Literal("model-provider"),
-        Type.Literal("open")
-      ])
-    })
-  ),
+  authority: Type.Optional(ToolAuthoritySchema),
   required_credentials: Type.Array(Type.String())
 });
 

@@ -7,11 +7,7 @@ import { authorizeExecution } from "../../harness/execution-policy.js";
 import { redactApplicationText } from "../../harness/redaction.js";
 import { loadCodingPolicy, codingProfile } from "../../plugins/coding/config.js";
 import { codingPlugin } from "../../plugins/coding/tools.js";
-import {
-  CodingTaskSchema,
-  parseCoding,
-  PublicationSchema
-} from "../../plugins/coding/schemas.js";
+import { CodingTaskSchema, parseCoding, PublicationSchema } from "../../plugins/coding/schemas.js";
 import {
   GITHUB_PUBLICATION_WRITE_CREDENTIAL,
   githubPublicationTool
@@ -128,9 +124,9 @@ export async function runCodingCli(args: string[]): Promise<void> {
       if (answer !== request.digest) throw new Error("coding_confirmation_denied");
       if (!policy.publicationEnabled || !policy.writeToken)
         throw new Error("coding_publication_disabled");
-      const reconcile = request.action === "reconcile";
+      const publicationAction = request.action === "reconcile" ? "reconcile" : "publish";
       const parameters = { jobId: request.jobId, digest: request.digest };
-      const tool = githubPublicationTool(reconcile);
+      const tool = githubPublicationTool(publicationAction);
       const authority = authorizeExecution({
         principal,
         allowedPrincipals: policy.principals,

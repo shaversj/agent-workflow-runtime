@@ -1,6 +1,11 @@
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
+import {
+  CredentialRequirementsSchema,
+  ToolAuthoritySchema,
+  type ToolAuthority
+} from "../tools/authority.js";
 import type { RegisteredTool, ToolSource } from "../tools/registry.js";
 
 const ToolSurfaceSchema = Type.Union([
@@ -14,33 +19,6 @@ const ToolExposureSchema = Type.Union([
   Type.Literal("deferred"),
   Type.Literal("hidden")
 ]);
-
-export const AccessLevelSchema = Type.Union([
-  Type.Literal("none"),
-  Type.Literal("read-only"),
-  Type.Literal("read-write")
-]);
-
-export const NetworkAccessSchema = Type.Union([
-  Type.Literal("none"),
-  Type.Literal("model-provider"),
-  Type.Literal("open")
-]);
-
-export const ToolAuthoritySchema = Type.Object(
-  {
-    target: AccessLevelSchema,
-    managedState: AccessLevelSchema,
-    network: NetworkAccessSchema
-  },
-  { additionalProperties: false }
-);
-
-const CredentialRequirementsSchema = Type.Array(Type.String({ minLength: 1 }), {
-  uniqueItems: true
-});
-
-export type ToolAuthority = Static<typeof ToolAuthoritySchema>;
 
 const PluginToolDefaultsSchema = Type.Object(
   {
@@ -272,10 +250,9 @@ function authorityWithin(authority: ToolAuthority, ceiling: ToolAuthority): bool
 
 function sameRequirements(left: string[] | undefined, right: string[] | undefined): boolean {
   if (!left || !right) return left === right;
-  return (
-    left.length === right.length &&
-    [...left].sort().every((value, index) => value === [...right].sort()[index])
-  );
+  if (left.length !== right.length) return false;
+  const sortedRight = [...right].sort();
+  return [...left].sort().every((value, index) => value === sortedRight[index]);
 }
 
 function sameSource(left: ToolSource, right: ToolSource): boolean {

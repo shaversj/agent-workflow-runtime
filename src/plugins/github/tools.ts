@@ -15,7 +15,7 @@ import {
   gatherGitHubRepositoryContextForTarget,
   gatherGitHubWorkflowRunsForTarget
 } from "./evidence.js";
-import { githubPluginManifest } from "./manifest.js";
+import { GITHUB_PUBLICATION_WRITE_CREDENTIAL, githubPluginManifest } from "./manifest.js";
 import {
   GitHubIssuesResultSchema,
   GitHubPullRequestsResultSchema,
@@ -92,10 +92,10 @@ export function createGitHubTools(
 
 export const githubTools: RegisteredTool[] = createGitHubTools();
 
-export const GITHUB_PUBLICATION_WRITE_CREDENTIAL = "github-publication-write";
+export { GITHUB_PUBLICATION_WRITE_CREDENTIAL };
 
-export function githubPublicationTool(reconcile: boolean): RegisteredTool {
-  const name = reconcile ? "reconcile_publication" : "publish_proposal";
+export function githubPublicationTool(operation: "publish" | "reconcile"): RegisteredTool {
+  const name = operation === "reconcile" ? "reconcile_publication" : "publish_proposal";
   const tool = githubTools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error("github_publication_tool_unavailable");
   return tool;
