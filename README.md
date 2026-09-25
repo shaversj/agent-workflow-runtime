@@ -3,7 +3,7 @@
 [![CI](https://github.com/shaversj/agent-workflow-runtime/actions/workflows/ci.yml/badge.svg)](https://github.com/shaversj/agent-workflow-runtime/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Agent Workflow Runtime is a TypeScript runtime for auditable coding agents and repository workflows. It turns a human task into an isolated code change, verifies the result, preserves a reviewable proposal, and requires explicit approval before publishing a draft pull request.
+Agent Workflow Runtime is a plugin-based TypeScript harness for agent-driven repository work across CLI and Discord. Its current workflows assess repository readiness, inspect GitHub context, and prepare isolated code changes; approval gates control publication, while SQLite and a local browser UI make each interaction inspectable.
 
 ## The Problem
 
