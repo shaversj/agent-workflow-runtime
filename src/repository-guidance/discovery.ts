@@ -29,7 +29,7 @@ interface Candidate {
   kind: RepositoryGuidanceSource["kind"];
 }
 
-export interface RepositoryGuidanceFile {
+interface RepositoryGuidanceFile {
   path: string;
   content: string;
 }

@@ -71,5 +71,5 @@ export function parseRepositoryGuidanceInventory(value: unknown): RepositoryGuid
   if (!Value.Check(RepositoryGuidanceInventorySchema, value)) {
     throw new Error("invalid_repository_guidance");
   }
-  return value as RepositoryGuidanceInventory;
+  return value;
 }
