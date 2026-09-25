@@ -11,7 +11,36 @@ pnpm test:web
 ```
 
 Docker is required only for the real coding-worker containment suite. The required image and command
-are documented in the README.
+are documented in [Coding workflow and containment](docs/coding.md).
+
+## Project Layout
+
+```text
+src/
+  db/          Drizzle schema and local SQLite persistence
+  harness/     model runtime, execution contracts, progress, and usage
+  plugins/     domain manifests, tools, evidence recipes, and skills
+  surfaces/    CLI, Discord, and local TanStack Start inspection
+  tools/       TypeBox tool contracts, registry, and catalog bridge
+  workspaces/  target normalization, Git mirrors, and workspace leases
+  workflows/   orchestration for sweeps, chat routing, and coding
+```
+
+## Development Commands
+
+```bash
+make format
+make lint
+make test
+make typecheck
+make deadcode
+make check
+
+pnpm exec playwright install chromium
+pnpm test:web
+```
+
+Use `make test-coding-worker CODING_TEST_IMAGE=<pinned-image-digest>` for the Docker-backed coding-worker containment suite.
 
 ## Make A Change
 
@@ -27,3 +56,5 @@ request for security-sensitive findings.
 
 This repository is source-distributed. Do not add npm publication or global installation claims
 without an explicit package-distribution design.
+
+The `agent-ops` CLI name, `AGENT_OPS_*` environment variables, and `~/.agent-ops-kit` state directory are stable compatibility identifiers retained from the project's former name.
