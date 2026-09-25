@@ -29,6 +29,11 @@ interface Candidate {
   kind: RepositoryGuidanceSource["kind"];
 }
 
+export interface RepositoryGuidanceFile {
+  path: string;
+  content: string;
+}
+
 export { isRepositoryGuidanceApplicable };
 
 export function discoverRepositoryGuidance(repoPath: string): RepositoryGuidanceInventory {
@@ -39,6 +44,39 @@ export function discoverRepositoryGuidance(repoPath: string): RepositoryGuidance
   const selected = candidates.slice(0, MAX_SOURCES);
   const sources = selected.flatMap((candidate) => {
     const source = readGuidanceSource(root, candidate, stats, warnings);
+    return source ? [source] : [];
+  });
+  return parseRepositoryGuidanceInventory({
+    version: 1,
+    source_count: candidates.length,
+    sources,
+    coverage: buildCoverage(sources),
+    warnings,
+    truncated: candidates.length > MAX_SOURCES,
+    redacted_occurrences: stats.redacted_occurrences
+  });
+}
+
+export function discoverRepositoryGuidanceFromFiles(
+  files: readonly RepositoryGuidanceFile[]
+): RepositoryGuidanceInventory {
+  const candidates = files.flatMap((file): Candidate[] => {
+    const relative = file.path.replaceAll("\\", "/");
+    const kind = sourceKind(relative);
+    return kind ? [{ path: relative, kind }] : [];
+  });
+  candidates.sort((left, right) => left.path.localeCompare(right.path));
+  const contents = new Map(files.map((file) => [file.path.replaceAll("\\", "/"), file.content]));
+  const stats: EvidenceRedactionStats = { redacted_occurrences: 0 };
+  const warnings: string[] = [];
+  const selected = candidates.slice(0, MAX_SOURCES);
+  const sources = selected.flatMap((candidate) => {
+    const content = contents.get(candidate.path);
+    if (content === undefined) {
+      warnings.push(`unreadable:${candidate.path}`);
+      return [];
+    }
+    const source = buildGuidanceSource(candidate, Buffer.from(content), stats, warnings);
     return source ? [source] : [];
   });
   return parseRepositoryGuidanceInventory({
@@ -94,7 +132,6 @@ function readGuidanceSource(
   stats: EvidenceRedactionStats,
   inventoryWarnings: string[]
 ): RepositoryGuidanceSource | undefined {
-  const warnings: string[] = [];
   let raw: Buffer;
   try {
     raw = fs.readFileSync(safeSourcePath(root, candidate.path));
@@ -106,6 +143,20 @@ function readGuidanceSource(
     inventoryWarnings.push(`binary:${candidate.path}`);
     return undefined;
   }
+  return buildGuidanceSource(candidate, raw, stats, inventoryWarnings);
+}
+
+function buildGuidanceSource(
+  candidate: Candidate,
+  raw: Buffer,
+  stats: EvidenceRedactionStats,
+  inventoryWarnings: string[]
+): RepositoryGuidanceSource | undefined {
+  if (raw.includes(0)) {
+    inventoryWarnings.push(`binary:${candidate.path}`);
+    return undefined;
+  }
+  const warnings: string[] = [];
   const truncated = raw.byteLength > MAX_EXCERPT_BYTES;
   if (truncated) warnings.push("excerpt_truncated");
   const text = raw.subarray(0, MAX_EXCERPT_BYTES).toString("utf8");

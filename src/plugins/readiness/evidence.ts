@@ -4,8 +4,8 @@ import path from "node:path";
 import { redactEvidenceText, type EvidenceRedactionStats } from "../../harness/redaction.js";
 import { readinessEvidenceRecipe, type ReadinessEvidenceRecipe } from "./evidence-recipe.js";
 import { readinessPluginManifest } from "./manifest.js";
-import { discoverRules } from "../rules/discovery.js";
-import type { RulesInventory } from "../rules/schemas.js";
+import { discoverRepositoryGuidance } from "../../repository-guidance/discovery.js";
+import type { RepositoryGuidanceInventory } from "../../repository-guidance/schemas.js";
 
 const ignoredDirs = new Set([
   ".agent-readiness",
@@ -35,7 +35,7 @@ interface ReadinessEvidence {
   plugin: string;
   evidence_recipe: string;
   redaction: ReadinessEvidenceRedaction;
-  rules: RulesInventory;
+  guidance: RepositoryGuidanceInventory;
   key_files: string[];
   docs: string[];
   standards: string[];
@@ -69,7 +69,7 @@ export function gatherReadinessEvidence(
     plugin: readinessPluginManifest.name,
     evidence_recipe: recipe.name,
     redaction,
-    rules: discoverRules(repoPath),
+    guidance: discoverRepositoryGuidance(repoPath),
     key_files: files.filter(isKeyFile).slice(0, 80),
     docs: files.filter(isDocFile).slice(0, 80),
     standards: files.filter(isStandardsFile).slice(0, 80),
