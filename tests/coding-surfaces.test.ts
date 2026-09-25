@@ -4,12 +4,16 @@ import path from "node:path";
 
 import type { Message } from "discord.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 
 import { openHistoryStore } from "../src/db/index.js";
 import { parseCodingCli } from "../src/surfaces/cli/code.js";
 import { parseDiscordCoding, handleDiscordCoding } from "../src/surfaces/chat/discord/coding.js";
 import { loadCodingPolicy, codingProfile } from "../src/plugins/coding/config.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
+import { PublicationSchema } from "../src/plugins/coding/schemas.js";
+import * as github from "../src/plugins/github/tools.js";
+import { defineRegisteredTool } from "../src/tools/registry.js";
 import * as coding from "../src/workflows/code.js";
 import { DockerWorker } from "../src/workspaces/docker.js";
 
@@ -171,6 +175,71 @@ describe("coding surface contracts", () => {
     expect(cleanup).not.toHaveBeenCalled();
     expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
       content: "coding_recovery_unavailable"
+    });
+  });
+  it("routes Discord publication through an exact authorized GitHub tool", async () => {
+    const f = discordFixture();
+    vi.stubEnv("CODING_PUBLICATION_ENABLED", "true");
+    vi.stubEnv("CODING_GITHUB_WRITE_TOKEN", "write-token");
+    seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-publish");
+    const execute = vi.fn(() => ({
+      result: {
+        id: "publication",
+        jobId: "job-publish",
+        proposalId: "proposal",
+        digest: "a".repeat(64),
+        runId: 1,
+        status: "published" as const,
+        prUrl: "https://github.com/owner/repo/pull/1"
+      },
+      text: "published"
+    }));
+    const tool = defineRegisteredTool({
+      pluginName: "github",
+      name: "publish_proposal",
+      label: "Publish",
+      description: "Publish approved proposal",
+      parameters: Type.Object({ jobId: Type.String(), digest: Type.String() }),
+      resultSchema: PublicationSchema,
+      requiresApproval: true,
+      requiredCredentials: ["github-publication-write"],
+      allowedSurfaces: ["discord"],
+      execute
+    });
+    vi.spyOn(github, "githubPublicationTool").mockReturnValue(tool);
+
+    await handleDiscordCoding(
+      f.message("publish"),
+      `code approve job-publish ${"a".repeat(64)}`
+    );
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]?.[0]).toEqual({
+      jobId: "job-publish",
+      digest: "a".repeat(64)
+    });
+    expect(execute.mock.calls[0]?.[1]).toMatchObject({
+      surface: "discord",
+      executionAuthority: { principal: "discord:1" },
+      sourceContext: { guildId: "guild", channelId: "channel", userId: "1" }
+    });
+    expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
+      content: expect.stringContaining("https://github.com/owner/repo/pull/1")
+    });
+  });
+  it("keeps the stable disabled error before GitHub publication tool execution", async () => {
+    const f = discordFixture();
+    seedDiscordJob(process.env.AGENT_OPS_HOME!, "job-disabled");
+    const tool = vi.spyOn(github, "githubPublicationTool");
+
+    await handleDiscordCoding(
+      f.message("disabled"),
+      `code approve job-disabled ${"a".repeat(64)}`
+    );
+
+    expect(tool).not.toHaveBeenCalled();
+    expect(f.reply.mock.calls.at(-1)?.[0]).toMatchObject({
+      content: "coding_publication_disabled"
     });
   });
   it("requires explicit repository, base and task; no default target or model approval claims", () => {

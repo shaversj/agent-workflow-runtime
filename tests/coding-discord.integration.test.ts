@@ -582,6 +582,11 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
         { status: "completed" },
         { id: publication.runId, kind: "coding_publish", status: "completed" }
       ]);
+      expect(approval.tools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "github_publish_proposal", source: "github" })
+        ])
+      );
       expect(approval.deliveries).toMatchObject([{ status: "acknowledged" }]);
       for (const input of [request, confirm, show, approve, consumed])
         for (const call of input.reply.mock.calls)

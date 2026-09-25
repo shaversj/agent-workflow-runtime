@@ -8,19 +8,27 @@ import { Value } from "typebox/value";
 
 import { beginInteraction } from "../../../harness/interaction.js";
 import type { InteractionRecorder } from "../../../harness/interaction.js";
+import { authorizeExecution } from "../../../harness/execution-policy.js";
 import { captureHistory } from "../../../harness/history-capture.js";
 import { logger } from "../../../logger.js";
 import { codingProfile, loadCodingPolicy } from "../../../plugins/coding/config.js";
 import { CodingGitHubSource } from "../../../plugins/coding/github-source.js";
-import { CodingTaskSchema, parseCoding } from "../../../plugins/coding/schemas.js";
+import {
+  CodingTaskSchema,
+  parseCoding,
+  PublicationSchema
+} from "../../../plugins/coding/schemas.js";
 import type { CodingTask } from "../../../plugins/coding/schemas.js";
+import {
+  GITHUB_PUBLICATION_WRITE_CREDENTIAL,
+  githubPublicationTool
+} from "../../../plugins/github/tools.js";
 import { prepareCoding } from "../../../workflows/code.js";
 import {
   codingDecision,
   inspectCoding,
   recoverCoding
 } from "../../../workflows/coding-approval.js";
-import { publishProposal } from "../../../workflows/publish-proposal.js";
 import { discordExplicitTargetProvenance, parseTargetRef } from "../../../workspaces/index.js";
 
 const pending = new Map<
@@ -168,16 +176,34 @@ export async function handleDiscordCoding(
       } else if (request.action === "recover") {
         content = await recoverCoding(request.id, principal, policy, recording, conversation);
       } else if (request.action === "approve" || request.action === "reconcile") {
-        const operation = await publishProposal(
-          request.id,
-          request.digest!,
+        if (!policy.publicationEnabled || !policy.writeToken)
+          throw new Error("coding_publication_disabled");
+        const reconcile = request.action === "reconcile";
+        const parameters = { jobId: request.id, digest: request.digest! };
+        const tool = githubPublicationTool(reconcile);
+        const authority = authorizeExecution({
           principal,
-          policy,
+          allowedPrincipals: policy.principals,
+          allowedRepositories: Object.keys(policy.profiles),
+          repository: details.job.repository,
+          surface: "discord",
+          toolName: `github.${tool.name}`,
+          parameters,
+          credentialCapabilities: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
+        });
+        const result = await tool.execute(parameters, {
+          surface: "discord",
+          executionAuthority: authority,
           recording,
-          request.action === "reconcile",
-          undefined,
-          conversation
-        );
+          sourceContext: {
+            source: "discord",
+            guildId: message.guildId ?? undefined,
+            channelId: discordParentChannelId(message),
+            messageId: message.id,
+            userId: message.author.id
+          }
+        });
+        const operation = parseCoding(PublicationSchema, result.result);
         content = `Job ${request.id}: ${operation.status}\nDraft PR: ${operation.prUrl ?? "none"}`;
       } else
         content = codingDecision(

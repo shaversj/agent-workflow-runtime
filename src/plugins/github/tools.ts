@@ -92,6 +92,15 @@ export function createGitHubTools(
 
 export const githubTools: RegisteredTool[] = createGitHubTools();
 
+export const GITHUB_PUBLICATION_WRITE_CREDENTIAL = "github-publication-write";
+
+export function githubPublicationTool(reconcile: boolean): RegisteredTool {
+  const name = reconcile ? "reconcile_publication" : "publish_proposal";
+  const tool = githubTools.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error("github_publication_tool_unavailable");
+  return tool;
+}
+
 function githubTool<TResult>(input: {
   name: string;
   label: string;

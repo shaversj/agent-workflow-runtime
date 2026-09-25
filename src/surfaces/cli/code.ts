@@ -7,9 +7,16 @@ import { authorizeExecution } from "../../harness/execution-policy.js";
 import { redactApplicationText } from "../../harness/redaction.js";
 import { loadCodingPolicy, codingProfile } from "../../plugins/coding/config.js";
 import { codingPlugin } from "../../plugins/coding/tools.js";
-import { CodingTaskSchema, parseCoding } from "../../plugins/coding/schemas.js";
+import {
+  CodingTaskSchema,
+  parseCoding,
+  PublicationSchema
+} from "../../plugins/coding/schemas.js";
+import {
+  GITHUB_PUBLICATION_WRITE_CREDENTIAL,
+  githubPublicationTool
+} from "../../plugins/github/tools.js";
 import { codingDecision, inspectCoding, recoverCoding } from "../../workflows/coding-approval.js";
-import { publishProposal } from "../../workflows/publish-proposal.js";
 import { normalizeCliArgs } from "./args.js";
 
 const SelectorSchema = Type.Object(
@@ -119,14 +126,27 @@ export async function runCodingCli(args: string[]): Promise<void> {
         terminal.close();
       }
       if (answer !== request.digest) throw new Error("coding_confirmation_denied");
-      const operation = await publishProposal(
-        request.jobId,
-        request.digest,
+      if (!policy.publicationEnabled || !policy.writeToken)
+        throw new Error("coding_publication_disabled");
+      const reconcile = request.action === "reconcile";
+      const parameters = { jobId: request.jobId, digest: request.digest };
+      const tool = githubPublicationTool(reconcile);
+      const authority = authorizeExecution({
         principal,
-        policy,
-        recording,
-        request.action === "reconcile"
-      );
+        allowedPrincipals: policy.principals,
+        allowedRepositories: Object.keys(policy.profiles),
+        repository: details.job.repository,
+        surface: "cli",
+        toolName: `github.${tool.name}`,
+        parameters,
+        credentialCapabilities: [GITHUB_PUBLICATION_WRITE_CREDENTIAL]
+      });
+      const result = await tool.execute(parameters, {
+        surface: "cli",
+        executionAuthority: authority,
+        recording
+      });
+      const operation = parseCoding(PublicationSchema, result.result);
       output = `Job ${request.jobId}: ${operation.status}\nDraft PR: ${operation.prUrl ?? "none"}`;
     } else {
       const details = inspectCoding(request.jobId, principal, policy, recording);
