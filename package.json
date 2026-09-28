@@ -33,7 +33,7 @@
     "better-sqlite3": "^13.0.3",
     "discord.js": "^14.27.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.13.7",
+    "hono": "^4.13.9",
     "lucide-react": "^1.43.0",
     "pino": "^10.1.0",
     "pino-pretty": "^13.1.3",
