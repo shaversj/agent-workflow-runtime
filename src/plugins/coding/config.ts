@@ -15,6 +15,7 @@ export const CodingPolicySchema = Type.Object(
     timeoutMs: Type.Integer({ minimum: 1000, maximum: 1200000 }),
     maxModelCalls: Type.Integer({ minimum: 1, maximum: 30 }),
     maxTokens: Type.Integer({ minimum: 1024, maximum: 100000 }),
+    maxRepairAttempts: Type.Optional(Type.Integer({ minimum: 0, maximum: 2 })),
     retentionMs: Type.Optional(Type.Integer({ minimum: 60000, maximum: 86400000 })),
     readToken: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
     writeToken: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 }))
@@ -43,6 +44,7 @@ export function loadCodingPolicy(env = process.env): CodingPolicy {
       timeoutMs: Number(env.CODING_TIMEOUT_MS ?? 1200000),
       maxModelCalls: Number(env.CODING_MAX_MODEL_CALLS ?? 30),
       maxTokens: Number(env.CODING_MAX_TOKENS ?? 100000),
+      maxRepairAttempts: Number(env.CODING_MAX_REPAIR_ATTEMPTS ?? 1),
       retentionMs: Number(env.CODING_PROPOSAL_RETENTION_MS ?? 86400000),
       ...(env.CODING_GITHUB_READ_TOKEN ? { readToken: env.CODING_GITHUB_READ_TOKEN } : {}),
       ...(env.CODING_GITHUB_WRITE_TOKEN ? { writeToken: env.CODING_GITHUB_WRITE_TOKEN } : {})

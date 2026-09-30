@@ -52,6 +52,8 @@ describe.skipIf(!image)("installed Pi coding SDK with isolated adapters", () => 
           "bash",
           "edit",
           "read",
+          "run_required_check",
+          "show_diff",
           "write"
         ]);
         expect(context.systemPrompt).not.toContain("host-extension-executed");

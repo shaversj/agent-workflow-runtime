@@ -15,6 +15,8 @@ Configure `$AGENT_OPS_HOME/.env` from the coding section of `.env.example`, or s
 
 Repository profiles specify the digest-pinned image, required verification commands, ignored generated directories, and allowed principal. Profiles are operator configuration; repository content and model output cannot change them.
 
+Profiles may also define `changePolicy.protectedPaths`, `maxChangedFiles`, and `maxChangedBytes`. The runtime always protects repository instruction and automation files. Dependency manifests and lock files are protected by default; an operator can set `allowDependencyChanges` for a repository that deliberately supports those tasks. A candidate that changes a protected trust root is rejected before verification. The model can inspect its cumulative candidate with `show_diff` and invoke an operator-configured check by index through `run_required_check`.
+
 ## CLI Flow
 
 ```bash
@@ -31,6 +33,8 @@ pnpm exec tsx src/cli.ts code reconcile <job-id> --digest <64-hex-digest>
 
 Approval requires an interactive terminal and the exact proposal digest. Preparation pins the base commit, creates an offline non-root worker, records model and tool activity, exports regular UTF-8 files, and runs operator-required checks in a fresh worker against root-owned read-only source. Checks can write temporary data only under `/tmp`; profiles that require source-tree build output are unsupported.
 
+When fresh verification fails with complete diagnostics, the runtime permits one repair attempt by default inside the original job timeout and shared model, token, and tool budgets. It then starts another fresh verifier. Set `CODING_MAX_REPAIR_ATTEMPTS=0` to disable repair or `2` for the maximum; truncated verification output never triggers model repair.
+
 ## Worker Boundaries
 
 The coding SDK and file tools use `/workspace`. The model receives operator-configured checks, but repository guidance cannot authorize dependency installation or replace fresh-worker verification.
@@ -46,7 +50,7 @@ Default limits are:
 - 2-minute command deadline
 - 64 KiB command output
 - 2 CPUs, 2 GiB memory, and 128 processes
-- 200 changed files and 10 MiB changed content
+- 50 changed files and 1 MiB changed content by default; 200 files and 10 MiB are hard ceilings
 
 Exact private proposals remain in SQLite. A bounded, redacted Markdown artifact is registered for history and browser inspection.
 

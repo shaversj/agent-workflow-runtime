@@ -7,11 +7,13 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { beginInteraction } from "../src/harness/interaction.js";
+import type { runIsolatedCoding } from "../src/harness/coding-runtime.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
 import type { CodingPolicy } from "../src/plugins/coding/config.js";
 import { codingDecision } from "../src/workflows/coding-approval.js";
 import { prepareCoding } from "../src/workflows/code.js";
 import { DockerWorker } from "../src/workspaces/docker.js";
+import type { CodingProfile } from "../src/workspaces/execution.js";
 
 const homes: string[] = [];
 afterEach(() => {
@@ -175,6 +177,97 @@ describe("coding lifecycle orchestration", () => {
       ).rejects.toThrow(/worker_unavailable/);
       expect(runtime).not.toHaveBeenCalled();
       expect(f.recording.coding((store) => store.get(jobId, f.principal))?.status).toBe("failed");
+    } finally {
+      f.recording.close();
+    }
+  });
+  it("uses one shared budget while repairing a failed fresh verification", async () => {
+    const f = fixture();
+    const source = new CodingGitHubSource();
+    const base = [
+      { path: "app.js", content: "module.exports=(a,b)=>a-b;\n", mode: "100644" as const }
+    ];
+    vi.spyOn(source, "base").mockResolvedValue(f.job.baseCommit);
+    vi.spyOn(source, "files").mockResolvedValue(base);
+    const starts: boolean[] = [];
+    const workers: Array<{
+      files: typeof base;
+      verification: boolean;
+    }> = [];
+    const start = vi.fn(
+      (
+        profile: CodingProfile,
+        _signal?: AbortSignal,
+        _jobId?: string,
+        verification: boolean = false
+      ) => {
+        const state = { files: [] as typeof base, verification };
+        workers.push(state);
+        starts.push(verification);
+        return Promise.resolve({
+          id: `worker-${workers.length}`,
+          profile,
+          importFiles: (files: typeof base) => {
+            state.files = structuredClone(files);
+            return Promise.resolve();
+          },
+          snapshot: () => Promise.resolve(structuredClone(state.files)),
+          freeze: () => Promise.resolve(),
+          close: () => Promise.resolve(),
+          rpc: (op: string, file: string, content?: string) => {
+            if (op !== "write") throw new Error("unexpected fake operation");
+            state.files = state.files.map((entry) =>
+              entry.path === file ? { ...entry, content: content! } : entry
+            );
+            return Promise.resolve(true);
+          },
+          command: (command: string) =>
+            Promise.resolve({
+              command,
+              exitCode: state.files[0]?.content.includes("a+b") ? 0 : 1,
+              output: state.files[0]?.content.includes("a+b") ? "passed" : "expected addition",
+              truncated: false
+            })
+        } as unknown as DockerWorker);
+      }
+    );
+    const budgets: object[] = [];
+    let executions = 0;
+    const runtime: typeof runIsolatedCoding = async (
+      worker,
+      _task,
+      _instructions,
+      _recording,
+      _policy,
+      _signal,
+      _injected,
+      _baseline,
+      budget
+    ) => {
+      budgets.push(budget);
+      await worker.rpc(
+        "write",
+        "app.js",
+        executions++ === 0 ? "module.exports=(a,b)=>a*b;\n" : "module.exports=(a,b)=>a+b;\n"
+      );
+      return executions === 1 ? "First candidate" : "Repaired candidate";
+    };
+    try {
+      const job = await prepareCoding(
+        { repository: "owner/repo", baseBranch: "main", task: "Fix addition" },
+        f.principal,
+        f.policy,
+        f.recording,
+        { source, worker: start, runtime }
+      );
+      expect(job.status).toBe("proposal-ready");
+      expect(starts).toEqual([false, true, false, true]);
+      expect(executions).toBe(2);
+      expect(budgets[0]).toBe(budgets[1]);
+      const proposal = f.recording.coding((store) => store.proposal(job.id, f.principal));
+      expect(proposal.summary).toBe("Repaired candidate");
+      expect(proposal.files[0]?.content).toContain("a+b");
+      expect(proposal.checks).toMatchObject([{ exitCode: 0, truncated: false }]);
     } finally {
       f.recording.close();
     }

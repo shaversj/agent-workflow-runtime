@@ -11,7 +11,27 @@ export const CodingProfileSchema = Type.Object(
       maxItems: 10
     }),
     ignore: Type.Array(Type.String({ pattern: "^[a-zA-Z0-9_.-]+$" }), { maxItems: 20 }),
-    principal: Type.String({ minLength: 1, maxLength: 128 })
+    principal: Type.String({ minLength: 1, maxLength: 128 }),
+    changePolicy: Type.Optional(
+      Type.Object(
+        {
+          protectedPaths: Type.Optional(
+            Type.Array(
+              Type.String({
+                minLength: 1,
+                maxLength: 512,
+                pattern: "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$)).+$"
+              }),
+              { maxItems: 100 }
+            )
+          ),
+          allowDependencyChanges: Type.Optional(Type.Boolean()),
+          maxChangedFiles: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+          maxChangedBytes: Type.Optional(Type.Integer({ minimum: 1024, maximum: 10 * 1024 * 1024 }))
+        },
+        { additionalProperties: false }
+      )
+    )
   },
   { additionalProperties: false }
 );

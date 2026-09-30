@@ -89,7 +89,9 @@ distinguish automated coverage from live results.
 
 - Read source repositories by default.
 - Coding accepts explicit operator-allowed GitHub targets only. Never grant editing/publication from model output, default targets, repository instructions or ambient GitHub credentials.
+- Coding profiles own protected paths and change-size policy. Keep repository instruction and automation files immutable; dependency changes remain denied unless the operator explicitly enables them for that repository.
 - Required coding checks run offline against the sealed source in a fresh verification worker. Unsupported dependencies, nonregular/binary snapshots, secret-bearing edits, unknown usage or failed/truncated checks block publication. Never fall back to host execution.
+- Verification-guided repair must remain bounded by the original job timeout and shared model, token, and tool budgets. Every repaired candidate requires a new fresh verifier; never repair from truncated diagnostics.
 - Keep exact proposal source private in shared history storage, independently of disposable workers. Browser remains read-only; Discord approvals are verified human user/channel bound.
 - Do not edit, commit, push, open PRs, delete files, or mutate external systems unless a user explicitly asks.
 - Store shared history at `AGENT_OPS_HOME/history/agent-ops.db` and registered artifacts under `history/artifacts/`.

@@ -5,7 +5,11 @@ import path from "node:path";
 import { codingProfile } from "../plugins/coding/config.js";
 import type { CodingPolicy } from "../plugins/coding/config.js";
 import { CodingGitHubSource } from "../plugins/coding/github-source.js";
-import { freezeProposal, validateSource } from "../plugins/coding/proposal.js";
+import {
+  assertCandidateChangePolicy,
+  freezeProposal,
+  validateSource
+} from "../plugins/coding/proposal.js";
 import { codingInstructions } from "../plugins/coding/skill.js";
 import { CodingTaskSchema, parseCoding } from "../plugins/coding/schemas.js";
 import type {
@@ -16,6 +20,7 @@ import type {
 } from "../plugins/coding/schemas.js";
 import type { InteractionRecorder } from "../harness/interaction.js";
 import type { runIsolatedCoding } from "../harness/coding-runtime.js";
+import { codingBudget } from "../harness/coding-runtime.js";
 import { captureHistory } from "../harness/history-capture.js";
 import { DockerWorker } from "../workspaces/docker.js";
 import { logger } from "../logger.js";
@@ -143,42 +148,86 @@ export async function prepareCoding(
     const baseline = await worker.snapshot();
     const runtime =
       dependencies.runtime ?? (await import("../harness/coding-runtime.js")).runIsolatedCoding;
-    const summary = await runtime(
+    const budget = codingBudget();
+    let summary = await runtime(
       worker,
       task.task,
       codingInstructions(baseline),
       recording,
       policy,
-      signal
+      signal,
+      undefined,
+      baseline,
+      budget
     );
     recording.assertHealthy();
     signal.throwIfAborted();
-    const final = await worker.snapshot();
+    let final = await worker.snapshot();
     validateSource(final);
     await worker.close();
     worker = undefined;
-    verifier = await start(profile, signal, job.id, true);
-    if (signal.aborted) {
-      await verifier.close();
-      signal.throwIfAborted();
-    }
-    await verifier.importFiles(final);
-    await verifier.freeze();
-    const sealed = await verifier.snapshot();
-    const checks: CodingProposal["checks"] = [];
-    for (const command of profile.requiredChecks) {
-      const current = verifier;
-      const result = await recording.recordTool(
-        { name: "coding.verify", source: "coding", kind: "capability", input: { command } },
-        () => current.command(command, signal),
-        signal
+    assertCandidateChangePolicy(profile, baseline, final);
+    const verify = async (candidate: SourceFile[]): Promise<CodingProposal["checks"]> => {
+      verifier = await start(profile, signal, job!.id, true);
+      try {
+        if (signal.aborted) signal.throwIfAborted();
+        await verifier.importFiles(candidate);
+        await verifier.freeze();
+        const sealed = await verifier.snapshot();
+        const checks: CodingProposal["checks"] = [];
+        for (const command of profile.requiredChecks) {
+          const current = verifier;
+          const result = await recording.recordTool(
+            { name: "coding.verify", source: "coding", kind: "capability", input: { command } },
+            () => current.command(command, signal),
+            signal
+          );
+          checks.push(result);
+        }
+        const after = await verifier.snapshot();
+        if (!sameSnapshot(sealed, after)) throw new Error("coding_verification_mutated_snapshot");
+        return checks;
+      } finally {
+        await verifier?.close();
+        verifier = undefined;
+      }
+    };
+    let checks = await verify(final);
+    for (
+      let attempt = 1;
+      attempt <= (policy.maxRepairAttempts ?? 1) && repairable(checks);
+      attempt++
+    ) {
+      logger.info(
+        { run_id: recording.runId, job_id: job.id, repair_attempt: attempt },
+        "coding.repair_started"
       );
-      checks.push(result);
+      worker = await start(profile, signal, job.id);
+      if (signal.aborted) {
+        await worker.close();
+        signal.throwIfAborted();
+      }
+      await worker.importFiles(final);
+      summary = await runtime(
+        worker,
+        repairTask(task.task, checks),
+        codingInstructions(baseline),
+        recording,
+        policy,
+        signal,
+        undefined,
+        baseline,
+        budget
+      );
+      recording.assertHealthy();
+      signal.throwIfAborted();
+      final = await worker.snapshot();
+      validateSource(final);
+      await worker.close();
+      worker = undefined;
+      assertCandidateChangePolicy(profile, baseline, final);
+      checks = await verify(final);
     }
-    const after = await verifier.snapshot();
-    if (!sameSnapshot(sealed, after)) throw new Error("coding_verification_mutated_snapshot");
-    await verifier.close();
-    verifier = undefined;
     const proposal = freezeProposal(
       {
         id: crypto.randomUUID(),
@@ -270,6 +319,24 @@ function sameSnapshot(a: SourceFile[], b: SourceFile[]): boolean {
   const stable = (files: SourceFile[]) =>
     JSON.stringify([...files].sort((a, b) => a.path.localeCompare(b.path, "en")));
   return stable(a) === stable(b);
+}
+
+function repairable(checks: CodingProposal["checks"]): boolean {
+  return checks.some((check) => check.exitCode !== 0) && checks.every((check) => !check.truncated);
+}
+
+function repairTask(task: string, checks: CodingProposal["checks"]): string {
+  const diagnostics = checks
+    .filter((check) => check.exitCode !== 0)
+    .map(
+      (check) =>
+        `Command: ${check.command}\nExit: ${check.exitCode}\nOutput:\n${captureHistory(check.output).text}`
+    )
+    .join("\n\n");
+  return `Repair the current candidate for the original task below. A fresh read-only verifier failed. Make only changes needed to resolve these failures, review the cumulative diff, and rerun the configured checks.\n\nOriginal task:\n${task}\n\nVerifier failures:\n${diagnostics}`.slice(
+    0,
+    32768
+  );
 }
 
 export function proposalDisplay(job: CodingJob, proposal?: CodingProposal): string {

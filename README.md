@@ -60,7 +60,7 @@ Repository-authored guidance is shared runtime infrastructure consumed by coding
 
 1. **Prepare:** a CLI or Discord request selects an operator-allowed repository and pins its base commit.
 2. **Execute:** Pi edits the checkout through bounded tools inside an offline, non-root Docker worker.
-3. **Verify:** required checks run in a fresh worker against immutable source plus the proposed change set.
+3. **Verify:** required checks run in a fresh worker against immutable source plus the proposed change set. A complete failure may trigger one bounded repair attempt followed by another fresh verification.
 4. **Review:** the runtime stores an exact private proposal, records model and tool activity, and exposes a sealed digest for inspection.
 5. **Approve and publish:** the initiating human approves that exact digest; the runtime may then create a new branch and draft pull request.
 

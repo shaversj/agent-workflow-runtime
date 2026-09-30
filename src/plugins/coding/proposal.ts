@@ -3,8 +3,30 @@ import crypto from "node:crypto";
 import { Type } from "typebox";
 
 import { redactApplicationText } from "../../harness/redaction.js";
+import type { CodingProfile } from "../../workspaces/execution.js";
 import { CodingProposalSchema, SourceFileSchema, parseCoding } from "./schemas.js";
 import type { CodingProposal, SourceFile } from "./schemas.js";
+
+const DEFAULT_PROTECTED_PATHS = [
+  ".agents/**",
+  ".cursor/**",
+  ".github/**",
+  ".pi/**",
+  "AGENTS.md",
+  "CLAUDE.md"
+];
+const DEPENDENCY_PATHS = [
+  "Cargo.lock",
+  "Cargo.toml",
+  "go.mod",
+  "go.sum",
+  "package-lock.json",
+  "package.json",
+  "pnpm-lock.yaml",
+  "pyproject.toml",
+  "uv.lock",
+  "yarn.lock"
+];
 
 export function validateSource(files: SourceFile[]): void {
   parseCoding(Type.Array(SourceFileSchema, { maxItems: 10000 }), files);
@@ -24,6 +46,56 @@ export function validateSource(files: SourceFile[]): void {
     if (Buffer.byteLength(file.content) > 1024 * 1024 || bytes > 32 * 1024 * 1024)
       throw new Error("coding_source_limit");
   }
+}
+
+export function assertCandidateChangePolicy(
+  profile: CodingProfile,
+  base: SourceFile[],
+  candidate: SourceFile[]
+): void {
+  validateSource(base);
+  validateSource(candidate);
+  const previous = new Map(base.map((file) => [file.path, file]));
+  const current = new Map(candidate.map((file) => [file.path, file]));
+  const changed = candidate.filter((file) => {
+    const old = previous.get(file.path);
+    return !old || old.content !== file.content || old.mode !== file.mode;
+  });
+  const deleted = base.filter((file) => !current.has(file.path));
+  const policy = profile.changePolicy;
+  const protectedPaths = [
+    ...DEFAULT_PROTECTED_PATHS,
+    ...(policy?.allowDependencyChanges ? [] : DEPENDENCY_PATHS),
+    ...(policy?.protectedPaths ?? [])
+  ];
+  if (
+    [...changed, ...deleted].some((file) =>
+      protectedPaths.some((rule) => pathMatches(rule, file.path))
+    )
+  )
+    throw new Error("coding_protected_path_changed");
+  if (changed.length + deleted.length > (policy?.maxChangedFiles ?? 50))
+    throw new Error("coding_change_policy_blocked");
+  const changedBytes = [...changed, ...deleted].reduce(
+    (sum, file) => sum + Buffer.byteLength(file.content),
+    0
+  );
+  if (changedBytes > (policy?.maxChangedBytes ?? 1024 * 1024))
+    throw new Error("coding_change_policy_blocked");
+}
+
+function pathMatches(rule: string, filePath: string): boolean {
+  if (
+    rule.startsWith("/") ||
+    rule.includes("\\") ||
+    rule.split("/").some((part) => !part || part === "." || part === "..")
+  )
+    throw new Error("coding_change_policy_invalid");
+  const escaped = rule
+    .split("**")
+    .map((part) => part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", "[^/]*"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`, "u").test(filePath);
 }
 
 export function proposalDigest(proposal: CodingProposal): string {
