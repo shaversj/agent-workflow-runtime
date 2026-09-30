@@ -725,6 +725,7 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
     it.each(["failed", "truncated"])(
       "real fresh-worker %s checks refuse human approval with simulated model/transports",
       async (kind) => {
+        vi.stubEnv("CODING_MAX_REPAIR_ATTEMPTS", "0");
         profile([
           kind === "failed"
             ? "node --test && node -e 'process.exit(1)'"
