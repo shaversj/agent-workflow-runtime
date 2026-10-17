@@ -3,11 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
+import { ChannelType } from "discord.js";
+import type { Message } from "discord.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { openHistoryStore } from "../src/db/index.js";
 import { displayInspectionTarget } from "../src/db/inspection.js";
 import {
+  discordChannelContext,
   normalizeDiscordMessage,
   renderDiscordResponse
 } from "../src/surfaces/chat/discord/adapter.js";
@@ -30,6 +33,43 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Discord chat surface", () => {
+  it.each([
+    ChannelType.PublicThread,
+    ChannelType.PrivateThread,
+    ChannelType.AnnouncementThread
+  ])("normalizes Discord thread type %s to its parent channel", (type) => {
+    const message = {
+      channelId: "thread-1",
+      channel: { type, parentId: "channel-1" }
+    } as unknown as Message;
+
+    expect(discordChannelContext(message)).toEqual({
+      channelId: "channel-1",
+      threadId: "thread-1"
+    });
+  });
+
+  it("falls back to the thread channel when Discord omits its parent", () => {
+    const message = {
+      channelId: "thread-1",
+      channel: { type: ChannelType.PublicThread, parentId: null }
+    } as unknown as Message;
+
+    expect(discordChannelContext(message)).toEqual({
+      channelId: "thread-1",
+      threadId: "thread-1"
+    });
+  });
+
+  it("keeps non-thread Discord channels unthreaded", () => {
+    const message = {
+      channelId: "channel-1",
+      channel: { type: ChannelType.GuildText, parentId: null }
+    } as unknown as Message;
+
+    expect(discordChannelContext(message)).toEqual({ channelId: "channel-1" });
+  });
+
   it("disables SDK retries so uncertain sends cannot bypass delivery tracking", async () => {
     const client = createDiscordClient(
       loadDiscordBotConfig({

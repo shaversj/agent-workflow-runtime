@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertCandidateChangePolicy,
+  candidateDeltaDigest,
   checkpointCandidate,
   freezeProposal,
   proposalDigest,
@@ -23,6 +24,29 @@ const input = {
 };
 const checks = [{ command: "node --test", exitCode: 0, output: "passed", truncated: false }];
 describe("frozen coding proposals", () => {
+  it("uses schema field order for candidate identity", () => {
+    const canonical = {
+      baselineDigest: "b".repeat(64),
+      files: [{ path: "index.js", content: "new\n", mode: "100644" as const }],
+      deleted: ["old.js"],
+      revision: 1
+    };
+    const reordered = {
+      revision: 1,
+      deleted: ["old.js"],
+      files: [{ mode: "100644" as const, content: "new\n", path: "index.js" }],
+      baselineDigest: "b".repeat(64)
+    };
+
+    expect(candidateDeltaDigest(reordered)).toBe(candidateDeltaDigest(canonical));
+    expect(candidateDeltaDigest({ ...canonical, revision: 2 })).not.toBe(
+      candidateDeltaDigest(canonical)
+    );
+    expect(() => candidateDeltaDigest({ ...canonical, extra: true } as never)).toThrow(
+      "invalid_coding_contract"
+    );
+  });
+
   it("binds content, destination, requested task and actual checks to approval", () => {
     const proposal = freezeProposal(input, base, [{ ...base[0]!, content: "new\n" }], checks);
     validateProposal(proposal, ["node --test"]);

@@ -1,5 +1,8 @@
 import path from "node:path";
 
+import { ChannelType } from "discord.js";
+import type { Message } from "discord.js";
+
 import { resolveInspectionReportPath } from "../../../db/inspection.js";
 import type { ChatMessage, ChatResponse } from "../types.js";
 
@@ -28,6 +31,20 @@ export interface DiscordOutboundMessage {
   replyToMessageId?: string;
   content: string;
   attachments?: DiscordOutboundAttachment[];
+}
+
+export function discordChannelContext(message: Message): {
+  channelId: string;
+  threadId?: string;
+} {
+  const threaded =
+    message.channel.type === ChannelType.PublicThread ||
+    message.channel.type === ChannelType.PrivateThread ||
+    message.channel.type === ChannelType.AnnouncementThread;
+  return {
+    channelId: threaded ? (message.channel.parentId ?? message.channelId) : message.channelId,
+    ...(threaded ? { threadId: message.channelId } : {})
+  };
 }
 
 export function normalizeDiscordMessage(input: DiscordInboundMessage): ChatMessage | undefined {

@@ -1,6 +1,5 @@
 import {
   AttachmentBuilder,
-  ChannelType,
   Client,
   Events,
   GatewayIntentBits,
@@ -19,6 +18,7 @@ import { createChatRequestContext } from "../request-context.js";
 import { handleChatMessage } from "../runner.js";
 import type { ChatHandlerOptions } from "../types.js";
 import {
+  discordChannelContext,
   normalizeDiscordMessage,
   renderDiscordResponse,
   type DiscordOutboundMessage,
@@ -362,10 +362,11 @@ export function shouldAcceptDiscordMessage(
 }
 
 function buildDiscordInboundMessage(message: Message, botUserId: string): DiscordInboundMessage {
+  const channel = discordChannelContext(message);
   return {
     guildId: message.guildId ?? undefined,
-    channelId: discordParentChannelId(message),
-    threadId: discordThreadId(message),
+    channelId: channel.channelId,
+    threadId: channel.threadId,
     messageId: message.id,
     authorId: message.author.id,
     botUserId,
@@ -381,26 +382,10 @@ function discordPolicyInput(message: Message, botUserId: string): DiscordMessage
     isWebhook: Boolean(message.webhookId),
     authorId: message.author.id,
     guildId: message.guildId ?? undefined,
-    channelId: discordParentChannelId(message),
+    channelId: discordChannelContext(message).channelId,
     mentionedUserIds: new Set(message.mentions.users.map((user) => user.id)),
     botUserId
   };
-}
-
-function discordParentChannelId(message: Message): string {
-  return message.channel.type === ChannelType.PublicThread ||
-    message.channel.type === ChannelType.PrivateThread ||
-    message.channel.type === ChannelType.AnnouncementThread
-    ? (message.channel.parentId ?? message.channelId)
-    : message.channelId;
-}
-
-function discordThreadId(message: Message): string | undefined {
-  return message.channel.type === ChannelType.PublicThread ||
-    message.channel.type === ChannelType.PrivateThread ||
-    message.channel.type === ChannelType.AnnouncementThread
-    ? message.channelId
-    : undefined;
 }
 
 function formatDiscordProgress(event: WorkflowProgressEvent): string | undefined {

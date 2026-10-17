@@ -148,6 +148,17 @@ export function sourceManifestDigest(files: SourceFile[]): string {
     .digest("hex");
 }
 
+export function candidateDeltaDigest(value: CandidateDelta): string {
+  const candidate = parseCoding(CandidateDeltaSchema, value);
+  const ordered = {
+    baselineDigest: candidate.baselineDigest,
+    files: candidate.files.map(({ path, content, mode }) => ({ path, content, mode })),
+    deleted: candidate.deleted,
+    revision: candidate.revision
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(ordered)).digest("hex");
+}
+
 export function checkpointCandidate(
   profile: CodingProfile,
   baseline: SourceFile[],

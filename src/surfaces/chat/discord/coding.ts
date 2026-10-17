@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { types } from "node:util";
 
-import { AttachmentBuilder, ChannelType } from "discord.js";
+import { AttachmentBuilder } from "discord.js";
 import type { Client, Message } from "discord.js";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
@@ -27,6 +27,7 @@ import { prepareCoding, resumeCoding } from "../../../workflows/code.js";
 import { codingDecision, inspectCoding } from "../../../workflows/coding-approval.js";
 import { discordExplicitTargetProvenance, parseTargetRef } from "../../../workspaces/index.js";
 import { openHistoryReader } from "../../../db/index.js";
+import { discordChannelContext } from "./adapter.js";
 import type { DiscordBotConfig } from "./config.js";
 import type { DiscordLifecycle } from "./lifecycle.js";
 
@@ -204,7 +205,8 @@ export async function handleDiscordCoding(
 ): Promise<void> {
   if (message.author.bot) return;
   const principal = `discord:${message.author.id}`;
-  const conversation = `${message.guildId ?? "dm"}:${discordParentChannelId(message)}`;
+  const channel = discordChannelContext(message);
+  const conversation = `${message.guildId ?? "dm"}:${channel.channelId}`;
   const recording = beginInteraction(
     {
       source: "discord",
@@ -323,7 +325,7 @@ export async function handleDiscordCoding(
           sourceContext: {
             source: "discord",
             guildId: message.guildId ?? undefined,
-            channelId: discordParentChannelId(message),
+            channelId: channel.channelId,
             messageId: message.id,
             userId: message.author.id
           }
@@ -359,14 +361,6 @@ export async function handleDiscordCoding(
   } finally {
     recording.close();
   }
-}
-
-function discordParentChannelId(message: Message): string {
-  return message.channel.type === ChannelType.PublicThread ||
-    message.channel.type === ChannelType.PrivateThread ||
-    message.channel.type === ChannelType.AnnouncementThread
-    ? (message.channel.parentId ?? message.channelId)
-    : message.channelId;
 }
 
 const HttpStatusSchema = Type.Integer({ minimum: 400, maximum: 599 });
