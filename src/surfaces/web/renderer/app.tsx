@@ -7,7 +7,7 @@ import {
   RefreshCw,
   Search
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import type { ReactNode } from "react";
 import Markdown from "react-markdown";
 
@@ -240,22 +240,138 @@ function Activity({
   );
 }
 
+interface InspectorState {
+  filters: InspectorListOptions;
+  target: string;
+  pages: (string | undefined)[];
+  activityPages: (string | undefined)[];
+  list?: HistoryListResult;
+  detail?: HistoryDetailResult;
+  selected?: string;
+  selectedTitle: string;
+  expanded: Set<string>;
+  reportId?: number;
+  report?: InspectorReport;
+  error?: string;
+  updated?: string;
+  refresh: number;
+  pending: boolean;
+}
+
+type InspectorAction =
+  | { type: "target_changed"; target: string }
+  | { type: "filters_changed"; filters: InspectorListOptions }
+  | { type: "interaction_selected"; id: string; title: string }
+  | { type: "interaction_closed" }
+  | { type: "activity_toggled"; key: string }
+  | { type: "report_opened"; id: number }
+  | { type: "report_closed" }
+  | { type: "list_page_opened"; cursor: string }
+  | { type: "list_page_closed" }
+  | { type: "activity_page_opened"; cursor: string }
+  | { type: "activity_page_closed" }
+  | { type: "list_loaded"; list: HistoryListResult }
+  | { type: "detail_loaded"; detail: HistoryDetailResult }
+  | { type: "report_loaded"; report: InspectorReport }
+  | { type: "poll_started" }
+  | { type: "poll_succeeded"; updated: string }
+  | { type: "poll_failed"; error: string }
+  | { type: "refresh_requested" };
+
+const initialInspectorState: InspectorState = {
+  filters: {},
+  target: "",
+  pages: [undefined],
+  activityPages: [undefined],
+  selectedTitle: "Saved request",
+  expanded: new Set(),
+  refresh: 0,
+  pending: false
+};
+
+function inspectorReducer(state: InspectorState, action: InspectorAction): InspectorState {
+  switch (action.type) {
+    case "target_changed":
+      return { ...state, target: action.target };
+    case "filters_changed":
+      return {
+        ...state,
+        filters: action.filters,
+        pages: [undefined],
+        list: undefined,
+        updated: undefined
+      };
+    case "interaction_selected":
+      return {
+        ...state,
+        selected: action.id,
+        selectedTitle: action.title,
+        detail: undefined,
+        activityPages: [undefined],
+        expanded: new Set(),
+        reportId: undefined,
+        report: undefined
+      };
+    case "interaction_closed":
+      return { ...state, selected: undefined };
+    case "activity_toggled": {
+      const expanded = new Set(state.expanded);
+      if (expanded.has(action.key)) expanded.delete(action.key);
+      else expanded.add(action.key);
+      return { ...state, expanded };
+    }
+    case "report_opened":
+      return { ...state, reportId: action.id, report: undefined };
+    case "report_closed":
+      return { ...state, reportId: undefined };
+    case "list_page_opened":
+      return { ...state, pages: [...state.pages, action.cursor], list: undefined };
+    case "list_page_closed":
+      return { ...state, pages: state.pages.slice(0, -1), list: undefined };
+    case "activity_page_opened":
+      return {
+        ...state,
+        activityPages: [...state.activityPages, action.cursor],
+        detail: undefined
+      };
+    case "activity_page_closed":
+      return { ...state, activityPages: state.activityPages.slice(0, -1), detail: undefined };
+    case "list_loaded":
+      return { ...state, list: action.list };
+    case "detail_loaded":
+      return { ...state, detail: action.detail };
+    case "report_loaded":
+      return { ...state, report: action.report };
+    case "poll_started":
+      return { ...state, pending: true };
+    case "poll_succeeded":
+      return { ...state, pending: false, updated: action.updated, error: undefined };
+    case "poll_failed":
+      return { ...state, pending: false, error: action.error };
+    case "refresh_requested":
+      return { ...state, refresh: state.refresh + 1 };
+  }
+}
+
 export default function App() {
-  const [filters, setFilters] = useState<InspectorListOptions>({});
-  const [target, setTarget] = useState("");
-  const [pages, setPages] = useState<(string | undefined)[]>([undefined]);
-  const [activityPages, setActivityPages] = useState<(string | undefined)[]>([undefined]);
-  const [list, setList] = useState<HistoryListResult>();
-  const [detail, setDetail] = useState<HistoryDetailResult>();
-  const [selected, setSelected] = useState<string>();
-  const [selectedTitle, setSelectedTitle] = useState("Saved request");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [reportId, setReportId] = useState<number>();
-  const [report, setReport] = useState<InspectorReport>();
-  const [error, setError] = useState<string>();
-  const [updated, setUpdated] = useState<string>();
-  const [refresh, setRefresh] = useState(0);
-  const [pending, setPending] = useState(false);
+  const [state, dispatch] = useReducer(inspectorReducer, initialInspectorState);
+  const {
+    filters,
+    target,
+    pages,
+    activityPages,
+    list,
+    detail,
+    selected,
+    selectedTitle,
+    expanded,
+    reportId,
+    report,
+    error,
+    updated,
+    refresh,
+    pending
+  } = state;
   const polling = useRef(Promise.resolve());
   const cursor = pages.at(-1);
   const activityCursor = activityPages.at(-1);
@@ -278,14 +394,14 @@ export default function App() {
     }
     async function poll() {
       if (cancelled) return;
-      setPending(true);
+      dispatch({ type: "poll_started" });
       try {
         const rows = await query({
           method: "list",
           options: { ...filters, limit: 20, ...(cursor ? { cursor } : {}) }
         });
         if (cancelled) return;
-        if (rows.method === "list") setList(rows.data);
+        if (rows.method === "list") dispatch({ type: "list_loaded", list: rows.data });
         if (selected) {
           const data = await query({
             method: "show",
@@ -293,7 +409,7 @@ export default function App() {
             options: { limit: 50, ...(activityCursor ? { cursor: activityCursor } : {}) }
           });
           if (cancelled) return;
-          if (data.method === "show") setDetail(data.data);
+          if (data.method === "show") dispatch({ type: "detail_loaded", detail: data.data });
         }
         if (selected && reportId) {
           const data = await query({
@@ -302,18 +418,17 @@ export default function App() {
             artifactId: reportId
           });
           if (cancelled) return;
-          if (data.method === "report") setReport(data.data);
+          if (data.method === "report") dispatch({ type: "report_loaded", report: data.data });
         }
-        setUpdated(new Date().toISOString());
-        setError(undefined);
+        dispatch({ type: "poll_succeeded", updated: new Date().toISOString() });
       } catch {
         if (!cancelled)
-          setError(
-            "History could not be refreshed. Check the local store and filters, then retry."
-          );
+          dispatch({
+            type: "poll_failed",
+            error: "History could not be refreshed. Check the local store and filters, then retry."
+          });
       } finally {
         if (!cancelled) {
-          setPending(false);
           timer = setTimeout(
             () => {
               polling.current = polling.current.then(poll);
@@ -333,25 +448,17 @@ export default function App() {
   }, [filters, cursor, selected, activityCursor, reportId, refresh]);
 
   function changeFilters(next: InspectorListOptions) {
-    setFilters(next);
-    setPages([undefined]);
-    setList(undefined);
-    setUpdated(undefined);
+    dispatch({ type: "filters_changed", filters: next });
   }
   function choose(id: string) {
-    setSelected(id);
-    setSelectedTitle(
-      list?.interactions.find((row) => row.id === id)?.requestPreview || "Saved request"
-    );
-    setDetail(undefined);
-    setActivityPages([undefined]);
-    setExpanded(new Set());
-    setReportId(undefined);
-    setReport(undefined);
+    dispatch({
+      type: "interaction_selected",
+      id,
+      title: list?.interactions.find((row) => row.id === id)?.requestPreview || "Saved request"
+    });
   }
   function openReport(id: number) {
-    setReportId(id);
-    setReport(undefined);
+    dispatch({ type: "report_opened", id });
   }
   const current = detail?.found ? detail : undefined;
   const interaction = current?.interaction;
@@ -378,7 +485,7 @@ export default function App() {
             aria-label="Refresh history"
             disabled={pending}
             onClick={() => {
-              setRefresh((value) => value + 1);
+              dispatch({ type: "refresh_requested" });
             }}
           >
             <RefreshCw size={17} />
@@ -410,7 +517,7 @@ export default function App() {
                 placeholder="Exact repository target"
                 value={target}
                 onChange={(event) => {
-                  setTarget(event.target.value);
+                  dispatch({ type: "target_changed", target: event.target.value });
                 }}
               />
               <button aria-label="Filter target" title="Filter target">
@@ -528,13 +635,11 @@ export default function App() {
             previous={pages.length > 1}
             next={Boolean(list?.nextCursor)}
             onPrevious={() => {
-              setPages((value) => value.slice(0, -1));
-              setList(undefined);
+              dispatch({ type: "list_page_closed" });
             }}
             onNext={() => {
               if (list?.nextCursor) {
-                setPages((value) => [...value, list.nextCursor!]);
-                setList(undefined);
+                dispatch({ type: "list_page_opened", cursor: list.nextCursor });
               }
             }}
           />
@@ -552,7 +657,7 @@ export default function App() {
               <button
                 className="command back-mobile"
                 onClick={() => {
-                  setSelected(undefined);
+                  dispatch({ type: "interaction_closed" });
                 }}
               >
                 <ArrowLeft size={16} />
@@ -682,12 +787,7 @@ export default function App() {
                           item={item}
                           expanded={expanded.has(item.key)}
                           toggle={() => {
-                            setExpanded((previous) => {
-                              const next = new Set(previous);
-                              if (next.has(item.key)) next.delete(item.key);
-                              else next.add(item.key);
-                              return next;
-                            });
+                            dispatch({ type: "activity_toggled", key: item.key });
                           }}
                           openReport={openReport}
                         />
@@ -698,13 +798,14 @@ export default function App() {
                     previous={activityPages.length > 1}
                     next={Boolean(current?.activity.nextCursor)}
                     onPrevious={() => {
-                      setActivityPages((value) => value.slice(0, -1));
-                      setDetail(undefined);
+                      dispatch({ type: "activity_page_closed" });
                     }}
                     onNext={() => {
                       if (current?.activity.nextCursor) {
-                        setActivityPages((value) => [...value, current.activity.nextCursor!]);
-                        setDetail(undefined);
+                        dispatch({
+                          type: "activity_page_opened",
+                          cursor: current.activity.nextCursor
+                        });
                       }
                     }}
                   />
@@ -719,7 +820,7 @@ export default function App() {
               <button
                 className="command"
                 onClick={() => {
-                  setReportId(undefined);
+                  dispatch({ type: "report_closed" });
                 }}
               >
                 <ArrowLeft size={16} />
