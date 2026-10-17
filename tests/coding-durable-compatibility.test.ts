@@ -3,11 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-  createAssistantMessageEventStream,
-  createModels,
-  InMemoryCredentialStore
-} from "@earendil-works/pi-ai";
+import { createModels, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 import {
@@ -30,6 +26,7 @@ import {
   codingProfileFingerprint,
   protectDurableProvider
 } from "../src/harness/coding-runtime.js";
+import { assistantMessage, assistantStream } from "./helpers/pi-model.js";
 
 const PackageManifestSchema = Type.Object({
   dependencies: Type.Record(Type.String(), Type.String())
@@ -147,11 +144,7 @@ describe("Pi Durable compatibility", () => {
       streamSimple(model) {
         ++modelCalls;
         const toolTurn = modelCalls === 1;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -163,23 +156,10 @@ describe("Pi Durable compatibility", () => {
               ]
             : [{ type: "text", text: "complete" }],
           stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 5,
-            output: 3,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 8,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({
-          type: "done",
-          reason: toolTurn ? "toolUse" : "stop",
-          message
+          inputTokens: 5,
+          outputTokens: 3
         });
-        return stream;
+        return assistantStream(message);
       }
     });
 
@@ -293,30 +273,13 @@ describe("Pi Durable compatibility", () => {
         protectDurableProvider({
           ...provider,
           streamSimple(model) {
-            const message: AssistantMessage = {
-              role: "assistant",
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
+            const message = assistantMessage(model, {
               content: [...content],
               stopReason: content[0].type === "toolCall" ? "toolUse" : "stop",
-              timestamp: Date.now(),
-              usage: {
-                input: 1,
-                output: 1,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 2,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-              }
-            };
-            const stream = createAssistantMessageEventStream();
-            stream.push({
-              type: "done",
-              reason: message.stopReason === "toolUse" ? "toolUse" : "stop",
-              message
+              inputTokens: 1,
+              outputTokens: 1
             });
-            return stream;
+            return assistantStream(message);
           }
         })
       );
@@ -363,26 +326,13 @@ describe("Pi Durable compatibility", () => {
           ...provider,
           streamSimple(model) {
             ++providerCalls;
-            const message: AssistantMessage = {
-              role: "assistant",
-              api: model.api,
-              provider: model.provider,
-              model: model.id,
+            const message = assistantMessage(model, {
               content: [{ type: "text", text: "complete" }],
               stopReason: "stop",
-              timestamp: Date.now(),
-              usage: {
-                input: 5,
-                output: 3,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 8,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-              }
-            };
-            const stream = createAssistantMessageEventStream();
-            stream.push({ type: "done", reason: "stop", message });
-            return stream;
+              inputTokens: 5,
+              outputTokens: 3
+            });
+            return assistantStream(message);
           }
         },
         {
@@ -455,11 +405,7 @@ describe("Pi Durable compatibility", () => {
       streamSimple(model) {
         ++modelCalls;
         const toolTurn = modelCalls === 1;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -470,24 +416,9 @@ describe("Pi Durable compatibility", () => {
                 }
               ]
             : [{ type: "text", text: "complete" }],
-          stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 2,
-            output: 2,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 4,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({
-          type: "done",
-          reason: toolTurn ? "toolUse" : "stop",
-          message
+          stopReason: toolTurn ? "toolUse" : "stop"
         });
-        return stream;
+        return assistantStream(message);
       }
     });
 
@@ -577,11 +508,7 @@ describe("Pi Durable compatibility", () => {
       streamSimple(model) {
         ++modelCalls;
         const toolTurn = modelCalls === 1;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -593,19 +520,10 @@ describe("Pi Durable compatibility", () => {
               ]
             : [{ type: "text", text: "cancelled" }],
           stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 1,
-            output: 1,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 2,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
-        return stream;
+          inputTokens: 1,
+          outputTokens: 1
+        });
+        return assistantStream(message);
       }
     });
     const started = Promise.withResolvers<void>();
@@ -673,11 +591,7 @@ describe("Pi Durable compatibility", () => {
       streamSimple(model) {
         ++modelCalls;
         const toolTurn = modelCalls === 1;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -694,20 +608,9 @@ describe("Pi Durable compatibility", () => {
                 }
               ]
             : [{ type: "text", text: "complete" }],
-          stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 2,
-            output: 2,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 4,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
-        return stream;
+          stopReason: toolTurn ? "toolUse" : "stop"
+        });
+        return assistantStream(message);
       }
     });
     let externalCalls = 0;

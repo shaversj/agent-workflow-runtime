@@ -3,12 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import {
-  createAssistantMessageEventStream,
-  createModels,
-  InMemoryCredentialStore
-} from "@earendil-works/pi-ai";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { createModels, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { minimaxProvider } from "@earendil-works/pi-ai/providers/minimax";
 import { createRegistry, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -18,15 +13,18 @@ import { openHistoryReader } from "../src/db/index.js";
 import {
   checkpointedCodingExtension,
   CodingCandidateDoc,
+  checkpointDurableCodingProposal,
   dockerCheckpointedWorkerRuntime,
   initializeCodingCandidate,
   runDurableCodingVerification,
-  runDurableCodingTurn
+  runDurableCodingTurn,
+  validateDurableCodingExecution
 } from "../src/harness/coding-durable.js";
 import { beginInteraction } from "../src/harness/interaction.js";
 import { checkpointCandidate, restoreCandidate } from "../src/plugins/coding/proposal.js";
 import type { SourceFile } from "../src/plugins/coding/schemas.js";
 import type { DockerWorker } from "../src/workspaces/docker.js";
+import { assistantMessage, assistantStream } from "./helpers/pi-model.js";
 
 interface DurableHookTransaction {
   doc(token: { definition: { kind: string } }): Promise<Record<string, unknown>>;
@@ -102,6 +100,50 @@ function durableHooks(documents: Record<string, Record<string, unknown>>) {
 }
 
 describe("checkpointed durable coding tools", () => {
+  it("closes every acquired durable harness on success, failure, and cancellation", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "coding-durable-lifecycle-"));
+    const originalOpen = Harness.open.bind(Harness);
+    let closed = 0;
+    let abortOnOpen: AbortController | undefined;
+    const open = vi.spyOn(Harness, "open").mockImplementation(async (...args) => {
+      const harness = await originalOpen(...args);
+      const originalClose = harness.close.bind(harness);
+      vi.spyOn(harness, "close").mockImplementation(async (...closeArgs) => {
+        ++closed;
+        await originalClose(...closeArgs);
+      });
+      abortOnOpen?.abort(new Error("coding_cancelled"));
+      return harness;
+    });
+    try {
+      await validateDurableCodingExecution(
+        path.join(home, "success.sqlite"),
+        new AbortController().signal
+      );
+      await expect(
+        checkpointDurableCodingProposal({
+          databasePath: path.join(home, "failure.sqlite"),
+          proposal: {} as never,
+          signal: new AbortController().signal,
+          assertOwned: vi.fn()
+        })
+      ).rejects.toThrow("invalid_coding_contract");
+      abortOnOpen = new AbortController();
+      await expect(
+        checkpointDurableCodingProposal({
+          databasePath: path.join(home, "cancelled.sqlite"),
+          proposal: {} as never,
+          signal: abortOnOpen.signal,
+          assertOwned: vi.fn()
+        })
+      ).rejects.toThrow();
+      expect(closed).toBe(3);
+    } finally {
+      open.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed durable model reservations before reserving budget", async () => {
     const { generation } = durableHooks({
       "agent-ops.coding-model-reservation": {
@@ -317,11 +359,7 @@ describe("checkpointed durable coding tools", () => {
       streamSimple(model) {
         ++modelCalls;
         const toolTurn = modelCalls === 1;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -344,20 +382,9 @@ describe("checkpointed durable coding tools", () => {
                 }
               ]
             : [{ type: "text", text: "complete" }],
-          stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 2,
-            output: 2,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 4,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
-        return stream;
+          stopReason: toolTurn ? "toolUse" : "stop"
+        });
+        return assistantStream(message);
       }
     });
     const harness = await Harness.open(
@@ -416,11 +443,7 @@ describe("checkpointed durable coding tools", () => {
         ...provider,
         streamSimple(model) {
           const toolTurn = modelCalls++ === 0;
-          const message: AssistantMessage = {
-            role: "assistant",
-            api: model.api,
-            provider: model.provider,
-            model: model.id,
+          const message = assistantMessage(model, {
             content: toolTurn
               ? [
                   {
@@ -431,20 +454,9 @@ describe("checkpointed durable coding tools", () => {
                   }
                 ]
               : [{ type: "text", text: "Changed the value once." }],
-            stopReason: toolTurn ? "toolUse" : "stop",
-            timestamp: Date.now(),
-            usage: {
-              input: 2,
-              output: 2,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 4,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-            }
-          };
-          const stream = createAssistantMessageEventStream();
-          stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
-          return stream;
+            stopReason: toolTurn ? "toolUse" : "stop"
+          });
+          return assistantStream(message);
         }
       });
       return models;
@@ -536,11 +548,7 @@ describe("checkpointed durable coding tools", () => {
       ...provider,
       streamSimple(model) {
         const toolTurn = modelCalls++ === 0;
-        const message: AssistantMessage = {
-          role: "assistant",
-          api: model.api,
-          provider: model.provider,
-          model: model.id,
+        const message = assistantMessage(model, {
           content: toolTurn
             ? [
                 {
@@ -551,20 +559,9 @@ describe("checkpointed durable coding tools", () => {
                 }
               ]
             : [{ type: "text", text: "Read the requested file." }],
-          stopReason: toolTurn ? "toolUse" : "stop",
-          timestamp: Date.now(),
-          usage: {
-            input: 2,
-            output: 2,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 4,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-          }
-        };
-        const stream = createAssistantMessageEventStream();
-        stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
-        return stream;
+          stopReason: toolTurn ? "toolUse" : "stop"
+        });
+        return assistantStream(message);
       }
     });
     const start = vi.fn<typeof DockerWorker.start>((workerProfile) => {
