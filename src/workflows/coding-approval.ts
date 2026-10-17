@@ -6,7 +6,7 @@ import type { InteractionRecorder } from "../harness/interaction.js";
 import { codingProfile } from "../plugins/coding/config.js";
 import type { CodingPolicy } from "../plugins/coding/config.js";
 import { parseCoding } from "../plugins/coding/schemas.js";
-import { DockerWorker } from "../workspaces/docker.js";
+import { codingExecutionDirectory } from "../workspaces/storage.js";
 import { proposalDisplay, cancelCodingJob } from "./code.js";
 
 const DecisionSchema = Type.Object(
@@ -40,7 +40,18 @@ export function inspectCoding(
       ? recording.coding((store) => store.proposal(jobId, principal))
       : undefined;
   const publication = recording.coding((store) => store.publication(jobId, principal));
-  return { job, proposal, publication, display: proposalDisplay(job, proposal) };
+  const execution = recording.coding((store) => store.execution(jobId, principal));
+  const executionSummary = `Execution: ${execution.phase}; resumes=${execution.resumeCount}; deadline=${execution.deadlineAt}`;
+  const display = proposalDisplay(job, proposal);
+  return {
+    job,
+    execution,
+    proposal,
+    publication,
+    display,
+    executionSummary,
+    inspection: `${executionSummary}\n\n${display}`
+  };
 }
 
 export function codingDecision(
@@ -51,7 +62,13 @@ export function codingDecision(
   conversationKey?: string
 ): string {
   const decision = parseCoding(DecisionSchema, input);
-  const { job } = inspectCoding(decision.jobId, principal, policy, recording, conversationKey);
+  const { job, proposal } = inspectCoding(
+    decision.jobId,
+    principal,
+    policy,
+    recording,
+    conversationKey
+  );
   if (decision.action === "show") return job.status;
   if (decision.action === "cancel") {
     recording.coding((store) => store.requestCancellation(job.id, principal));
@@ -60,6 +77,8 @@ export function codingDecision(
   }
   if (decision.action === "expire" && Date.parse(job.expiresAt) > Date.now())
     throw new Error("coding_job_not_expired");
+  if (decision.action === "expire")
+    recording.coding((store) => store.assertExecutionRemovable(job.id, principal));
   const next =
     decision.action === "expire" && job.status === "expired"
       ? job
@@ -69,29 +88,19 @@ export function codingDecision(
   if (decision.action === "expire")
     recording.coding((store) => store.removePrivateProposal(job.id, principal));
   if (decision.action === "expire")
-    fs.rmSync(path.join(recording.artifactsPath, `${job.runId}-coding-proposal.md`), {
-      force: true
-    });
+    fs.rmSync(
+      path.join(
+        recording.artifactsPath,
+        `${proposal?.id ?? `proposal-${job.id}`}-coding-proposal.md`
+      ),
+      {
+        force: true
+      }
+    );
+  if (decision.action === "expire")
+    fs.rmSync(
+      codingExecutionDirectory(job.id, path.dirname(path.dirname(recording.artifactsPath))),
+      { recursive: true, force: true }
+    );
   return next.status;
-}
-
-export async function recoverCoding(
-  jobId: string,
-  principal: string,
-  policy: CodingPolicy,
-  recording: InteractionRecorder,
-  conversationKey?: string
-): Promise<string> {
-  const details = inspectCoding(jobId, principal, policy, recording, conversationKey);
-  recording.coding((store) => store.recover(details.job.id, principal));
-  await recording.recordTool(
-    {
-      name: "coding.cleanup_workers",
-      source: "coding",
-      kind: "capability",
-      input: { jobId: details.job.id }
-    },
-    () => DockerWorker.cleanupJob(details.job.id)
-  );
-  return "Stopped coding job recovered; owned workers removed. Work was not replayed.";
 }

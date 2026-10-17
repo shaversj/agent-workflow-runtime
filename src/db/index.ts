@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 
 import Database from "better-sqlite3";
-import { and, asc, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 
 import * as contracts from "../harness/history-schemas.js";
 import { captureHistory as capture, captureHistoryMetadata } from "../harness/history-capture.js";
+import { CodingJobSchema, parseCoding } from "../plugins/coding/schemas.js";
 import {
   agentOpsHome,
   historyArtifactsPath,
@@ -24,10 +25,21 @@ import {
   runs,
   toolCalls
 } from "./schema.js";
-import { codingJobs, codingProposals, codingApprovals, codingPublications } from "./schema.js";
-import { CodingStore, codingBootstrapSql } from "./coding-store.js";
+import {
+  codingJobs,
+  codingExecutions,
+  codingProposals,
+  codingApprovals,
+  codingPublications
+} from "./schema.js";
+import {
+  CodingStore,
+  codingBootstrapSql,
+  codingExecutionSql,
+  compactExecution
+} from "./coding-store.js";
 
-const HISTORY_SCHEMA_VERSION = 2;
+const HISTORY_SCHEMA_VERSION = 4;
 const processOwner: contracts.HistoryOwner = {
   token: crypto.randomUUID(),
   pid: process.pid,
@@ -90,6 +102,7 @@ function verifySchema(sqlite: Database.Database): void {
     artifacts,
     deliveryAttempts,
     codingJobs,
+    codingExecutions,
     codingProposals,
     codingApprovals,
     codingPublications
@@ -145,7 +158,13 @@ function openConnection(
       return sqlite;
     }
     const version = databaseVersion(sqlite);
-    if (version !== 0 && version !== 1 && version !== HISTORY_SCHEMA_VERSION)
+    if (
+      version !== 0 &&
+      version !== 1 &&
+      version !== 2 &&
+      version !== 3 &&
+      version !== HISTORY_SCHEMA_VERSION
+    )
       throw new Error("Unsupported history schema version");
     if (
       version === 0 &&
@@ -168,31 +187,47 @@ function openConnection(
     if (sqlite.pragma("journal_mode = WAL", { simple: true }) !== "wal")
       throw new Error("History WAL initialization failed");
     sqlite.pragma("synchronous = FULL");
-    sqlite
-      .transaction(() => {
-        if (databaseVersion(sqlite) === 0) {
-          sqlite.exec(bootstrapSql);
-          sqlite.exec(codingBootstrapSql);
+    const needsRuntimeSourceMigration = version >= 1 && version <= 3;
+    if (needsRuntimeSourceMigration) sqlite.pragma("foreign_keys = OFF");
+    try {
+      sqlite
+        .transaction(() => {
+          if (databaseVersion(sqlite) === 0) {
+            sqlite.exec(bootstrapSql);
+            sqlite.exec(codingBootstrapSql);
+          } else {
+            if (databaseVersion(sqlite) === 1) {
+              // Only the supported shared-history schema can upgrade, never retired target stores.
+              const db = drizzle(sqlite);
+              for (const table of [
+                interactions,
+                runs,
+                messages,
+                toolCalls,
+                modelCalls,
+                artifacts,
+                deliveryAttempts
+              ])
+                db.select().from(table).limit(0).all();
+              sqlite.exec(codingBootstrapSql);
+            } else if (databaseVersion(sqlite) === 2) {
+              sqlite.exec(codingExecutionSql);
+              sqlite.exec(
+                `UPDATE coding_job SET status='interrupted', data=json_set(data, '$.status', 'interrupted', '$.reason', 'coding_legacy_interrupted') WHERE status='preparing'`
+              );
+              sqlite.exec(legacyCodingExecutionBackfillSql);
+            }
+            if (needsRuntimeSourceMigration) sqlite.exec(interactionRuntimeSourceMigrationSql);
+          }
           sqlite.pragma(`user_version = ${HISTORY_SCHEMA_VERSION}`);
-        } else if (databaseVersion(sqlite) === 1) {
-          // Only the supported shared-history schema can upgrade, never retired target stores.
-          const db = drizzle(sqlite);
-          for (const table of [
-            interactions,
-            runs,
-            messages,
-            toolCalls,
-            modelCalls,
-            artifacts,
-            deliveryAttempts
-          ])
-            db.select().from(table).limit(0).all();
-          sqlite.exec(codingBootstrapSql);
-          sqlite.pragma(`user_version = ${HISTORY_SCHEMA_VERSION}`);
-        }
-        verifySchema(sqlite);
-      })
-      .immediate();
+          verifySchema(sqlite);
+        })
+        .immediate();
+    } finally {
+      if (needsRuntimeSourceMigration) sqlite.pragma("foreign_keys = ON");
+    }
+    if ((sqlite.pragma("foreign_key_check") as unknown[]).length > 0)
+      throw new Error("History foreign-key validation failed");
     for (const suffix of ["", "-wal", "-shm"]) {
       if (fs.existsSync(resolvedFile + suffix)) fs.chmodSync(resolvedFile + suffix, 0o600);
     }
@@ -233,6 +268,44 @@ class HistoryReader {
       .limit(pageLimit(limit))
       .all()
       .map((row) => contracts.parseHistory(contracts.InteractionRecordSchema, row));
+  }
+  listResumableCoding(limit = 4) {
+    return this.db
+      .select()
+      .from(codingJobs)
+      .innerJoin(codingExecutions, eq(codingExecutions.jobId, codingJobs.id))
+      .where(eq(codingJobs.status, "preparing"))
+      .orderBy(asc(codingExecutions.updatedAt), asc(codingJobs.id))
+      .limit(pageLimit(limit))
+      .all()
+      .flatMap((row) => {
+        const parsed = parseCoding(CodingJobSchema, row.coding_job.data);
+        const execution = compactExecution(row.coding_execution);
+        return execution.phase === "terminal" ? [] : [{ job: parsed, execution }];
+      });
+  }
+  listLegacyCodingCleanup(limit = 4) {
+    return this.db
+      .select()
+      .from(codingJobs)
+      .innerJoin(codingExecutions, eq(codingExecutions.jobId, codingJobs.id))
+      .where(
+        and(
+          eq(codingJobs.status, "interrupted"),
+          or(eq(codingExecutions.phase, "blocked"), eq(codingExecutions.phase, "preparing"))
+        )
+      )
+      .orderBy(asc(codingExecutions.updatedAt), asc(codingJobs.id))
+      .limit(pageLimit(limit))
+      .all()
+      .flatMap((row) => {
+        const job = parseCoding(CodingJobSchema, row.coding_job.data);
+        const execution = compactExecution(row.coding_execution);
+        return job.reason === "coding_legacy_interrupted" &&
+          execution.profileFingerprint === "0".repeat(64)
+          ? [{ job, execution }]
+          : [];
+      });
   }
   listRuns(interactionId: string, limit = 50, afterId = 0) {
     return this.db
@@ -324,9 +397,14 @@ export class HistoryStore extends HistoryReader {
   }
   coding(runId: number): CodingStore {
     this.ownedRun(runId);
-    return new CodingStore(this.sqlite, runId, () => {
-      this.ownedRun(runId);
-    });
+    return new CodingStore(
+      this.sqlite,
+      runId,
+      () => {
+        this.ownedRun(runId);
+      },
+      this.owner
+    );
   }
   private observed(interactionId: string, envelope: contracts.CaptureEnvelope): void {
     if (envelope.incomplete)
@@ -923,12 +1001,49 @@ export function openHistoryReader(options: HistoryOpenOptions = {}): HistoryRead
   return sqlite ? new HistoryReader(sqlite) : undefined;
 }
 
+const interactionRuntimeSourceMigrationSql = `
+CREATE TABLE interaction_runtime_source (
+ id TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, application_id TEXT, source_message_id TEXT, conversation_key TEXT, target TEXT,
+ owner_token TEXT NOT NULL, owner_pid INTEGER NOT NULL, owner_host TEXT NOT NULL, incomplete INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'running', started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
+ CONSTRAINT ck_interaction_source CHECK ((source IN ('cli','runtime') AND application_id IS NULL AND source_message_id IS NULL) OR (source='discord' AND application_id IS NOT NULL AND source_message_id IS NOT NULL))
+);
+INSERT INTO interaction_runtime_source SELECT * FROM interaction;
+DROP TABLE interaction;
+ALTER TABLE interaction_runtime_source RENAME TO interaction;
+CREATE UNIQUE INDEX ux_interaction_source ON interaction(source, application_id, source_message_id);
+CREATE INDEX ix_interaction_time ON interaction(started_at,id);
+CREATE INDEX ix_interaction_target ON interaction(target,started_at,id);
+CREATE INDEX ix_interaction_source_time ON interaction(source,started_at,id);
+CREATE INDEX ix_interaction_status ON interaction(status,started_at,id);
+CREATE INDEX ix_interaction_owner ON interaction(owner_host,owner_pid);
+`;
+
+const legacyCodingExecutionBackfillSql = `
+INSERT INTO coding_execution (
+ id, job_id, task, profile_fingerprint, deadline_at, fence, phase, resume_count, updated_at, terminal_run_id
+)
+SELECT
+ lower(hex(randomblob(16))),
+ job.id,
+ coalesce(json_extract(proposal.data, '$.task'), 'Legacy pre-Durable coding job'),
+ '${"0".repeat(64)}',
+ json_extract(job.data, '$.expiresAt'),
+ 0,
+ CASE WHEN job.status='interrupted' THEN 'blocked' ELSE 'terminal' END,
+ 0,
+ json_extract(job.data, '$.createdAt'),
+ CASE WHEN job.status='interrupted' THEN NULL ELSE job.run_id END
+FROM coding_job AS job
+LEFT JOIN coding_proposal AS proposal ON proposal.job_id=job.id;
+`;
+
 const bootstrapSql = `
 CREATE TABLE interaction (
  id TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, application_id TEXT, source_message_id TEXT, conversation_key TEXT, target TEXT,
  owner_token TEXT NOT NULL, owner_pid INTEGER NOT NULL, owner_host TEXT NOT NULL, incomplete INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'running', started_at TEXT NOT NULL, finished_at TEXT, error TEXT,
- CONSTRAINT ck_interaction_source CHECK ((source='cli' AND application_id IS NULL AND source_message_id IS NULL) OR (source='discord' AND application_id IS NOT NULL AND source_message_id IS NOT NULL))
+ CONSTRAINT ck_interaction_source CHECK ((source IN ('cli','runtime') AND application_id IS NULL AND source_message_id IS NULL) OR (source='discord' AND application_id IS NOT NULL AND source_message_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX ux_interaction_source ON interaction(source, application_id, source_message_id);
 CREATE INDEX ix_interaction_time ON interaction(started_at,id);

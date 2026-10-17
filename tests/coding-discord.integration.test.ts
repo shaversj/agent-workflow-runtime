@@ -13,6 +13,7 @@ import { Type } from "typebox";
 import type { Static, TSchema } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { checkpointCandidate } from "../src/plugins/coding/proposal.js";
 import {
   CodingApprovalSchema,
   CodingJobSchema,
@@ -208,11 +209,11 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
   () => {
     let home: string;
     let bot: typeof import("../src/surfaces/chat/discord/bot.js");
-    let runtime: typeof import("../src/harness/coding-runtime.js");
+    let durable: typeof import("../src/harness/coding-durable.js");
     let db: typeof import("../src/db/index.js");
     let workers: typeof import("../src/workspaces/docker.js");
     let github: Awaited<ReturnType<typeof simulatedGitHub>>;
-    let editor: ReturnType<typeof vi.spyOn<typeof runtime, "runIsolatedCoding">>;
+    let editor: ReturnType<typeof vi.spyOn<typeof durable, "runDurableCodingTurn">>;
     let freeze: ReturnType<typeof vi.spyOn<DockerWorker, "freeze">>;
     let started: { worker: DockerWorker; verification: boolean }[];
     let ownedJobIds: Set<string>;
@@ -255,7 +256,7 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
       github = await simulatedGitHub();
       vi.stubGlobal("fetch", github.transport);
       bot = await import("../src/surfaces/chat/discord/bot.js");
-      runtime = await import("../src/harness/coding-runtime.js");
+      durable = await import("../src/harness/coding-durable.js");
       db = await import("../src/db/index.js");
       workers = await import("../src/workspaces/docker.js");
       const start = workers.DockerWorker.start;
@@ -268,25 +269,45 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
         }
       );
       freeze = vi.spyOn(workers.DockerWorker.prototype, "freeze");
-      editor = vi
-        .spyOn(runtime, "runIsolatedCoding")
-        .mockImplementation(async (worker, _task, _instructions, recording, _policy, signal) => {
-          const edit = runtime
-            .isolatedCodingTools(worker, recording, signal)
-            .find((tool) => tool.name === "edit")!;
-          await edit.execute(
-            "simulated-model-edit",
-            { path: "app.js", edits: [{ oldText: "a-b", newText: "a+b" }] },
-            signal,
-            undefined,
-            undefined as never
+      editor = vi.spyOn(durable, "runDurableCodingTurn").mockImplementation(async (options) => {
+        options.assertOwned();
+        const worker = await options.start!(
+          options.profile,
+          options.signal,
+          options.jobId,
+          false,
+          options.fence
+        );
+        try {
+          await worker.importFiles(options.baseline);
+          await options.recording.recordTool(
+            {
+              name: "edit_file",
+              source: "coding",
+              kind: "capability",
+              input: { path: "app.js", oldBytes: 3, newBytes: 3 }
+            },
+            async () => {
+              await worker.rpc("write", "app.js", fixed, options.signal);
+              return { revision: 1 };
+            },
+            options.signal
           );
           await worker.command(
             `node -e "require('node:fs').writeFileSync('/tmp/editor-only','1')"`,
-            signal
+            options.signal
           );
-          return "Simulated model corrected addition. @everyone <@1> cannot grant publication.";
-        });
+          const candidate = await worker.snapshot();
+          return {
+            conversationId: 1,
+            submissionId: 1,
+            summary: "Simulated model corrected addition. @everyone <@1> cannot grant publication.",
+            candidate: checkpointCandidate(options.profile, options.baseline, candidate, 1)
+          };
+        } finally {
+          await worker.close();
+        }
+      });
     });
     afterEach(async () => {
       try {
@@ -570,7 +591,7 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
         { id: job.runId, kind: "coding_prepare", status: "completed" }
       ]);
       expect(preparation.tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["coding.acquire_source", "coding.edit", "coding.verify"])
+        expect.arrayContaining(["coding.acquire_source", "edit_file", "coding.verify"])
       );
       expect(preparation.artifacts).toMatchObject([{ type: "coding-proposal", runId: job.runId }]);
       expect(fs.readFileSync(preparation.artifacts[0]!.path, "utf8")).toBe(display);
@@ -752,12 +773,22 @@ describe.skipIf(!process.env.CODING_TEST_IMAGE)(
       "concurrent human cancellation stops active real %s despite simulated final reply failures",
       async (phase) => {
         if (phase === "editor") {
-          editor.mockImplementation(
-            async (worker, _task, _instructions, _recording, _policy, signal) => {
-              await worker.command(blockingCommand, signal, 15000);
-              return "must not seal cancelled work";
+          editor.mockImplementation(async (options) => {
+            const worker = await options.start!(
+              options.profile,
+              options.signal,
+              options.jobId,
+              false,
+              options.fence
+            );
+            try {
+              await worker.importFiles(options.baseline);
+              await worker.command(blockingCommand, options.signal, 15000);
+              throw new Error("coding_cancellation_not_observed");
+            } finally {
+              await worker.close();
             }
-          );
+          });
         } else profile([blockingCommand]);
         const { id } = await confirmation();
         const confirm = inbound(`code confirm ${id}`);

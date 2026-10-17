@@ -8,21 +8,32 @@ import { CodingGitHubSource } from "../plugins/coding/github-source.js";
 import {
   assertCandidateChangePolicy,
   freezeProposal,
+  restoreCandidate,
+  sourceManifestDigest,
   validateSource
 } from "../plugins/coding/proposal.js";
 import { codingInstructions } from "../plugins/coding/skill.js";
 import { CodingTaskSchema, parseCoding } from "../plugins/coding/schemas.js";
 import type {
   CodingJob,
+  CodingExecution,
   CodingProposal,
-  CodingTask,
-  SourceFile
+  SourceFile,
+  CodingTask
 } from "../plugins/coding/schemas.js";
 import type { InteractionRecorder } from "../harness/interaction.js";
-import type { runIsolatedCoding } from "../harness/coding-runtime.js";
-import { codingBudget } from "../harness/coding-runtime.js";
+import type {
+  runDurableCodingTurn,
+  runDurableCodingVerification,
+  checkpointDurableCodingProposal,
+  validateDurableCodingExecution
+} from "../harness/coding-durable.js";
+import { beginInteraction } from "../harness/interaction.js";
+import { codingProfileFingerprint } from "../harness/coding-runtime.js";
 import { captureHistory } from "../harness/history-capture.js";
+import { openHistoryStore } from "../db/index.js";
 import { DockerWorker } from "../workspaces/docker.js";
+import { prepareCodingExecutionDatabase } from "../workspaces/storage.js";
 import { logger } from "../logger.js";
 
 const activeJobs = new Map<string, { principal: string; controller: AbortController }>();
@@ -33,13 +44,86 @@ export function cancelCodingJob(id: string, principal: string): boolean {
   return true;
 }
 
+export async function cleanupLegacyCodingWorkers(
+  options: {
+    home?: string;
+    signal?: AbortSignal;
+    cleanup?: (jobId: string) => Promise<void>;
+    limit?: number;
+  } = {}
+): Promise<number> {
+  const store = openHistoryStore(options.home ? { home: options.home } : {});
+  let candidates: ReturnType<typeof store.listLegacyCodingCleanup>;
+  try {
+    candidates = store.listLegacyCodingCleanup(options.limit ?? 100);
+  } finally {
+    store.close();
+  }
+  let completed = 0;
+  for (const { job } of candidates) {
+    const recording = beginInteraction(
+      {
+        source: "runtime",
+        kind: "coding_legacy_cleanup",
+        userMessage: `Clean legacy coding workers for job ${job.id}`,
+        target: job.repository,
+        metadata: { jobId: job.id }
+      },
+      { ...(options.home ? { home: options.home } : {}), signal: options.signal }
+    );
+    let fence: number | undefined;
+    try {
+      const execution = recording.coding((store) =>
+        store.claimLegacyCleanup(job.id, job.principal)
+      );
+      fence = execution.fence;
+      await recording.recordTool(
+        {
+          name: "coding.cleanup_legacy_workers",
+          source: "coding",
+          kind: "capability",
+          input: { jobId: job.id }
+        },
+        () => (options.cleanup ?? DockerWorker.cleanupJob)(job.id)
+      );
+      recording.coding((store) =>
+        store.finishLegacyCleanup(job.id, execution.fence, job.principal, true)
+      );
+      recording.finishRun({ status: "completed" });
+      recording.finishInteraction({ status: "completed" });
+      ++completed;
+    } catch {
+      if (fence !== undefined) {
+        try {
+          recording.coding((store) =>
+            store.finishLegacyCleanup(job.id, fence!, job.principal, false)
+          );
+        } catch {
+          // Ownership or storage failure is already durable; a later process may reclaim it.
+        }
+      }
+      recording.finishRun({ status: "failed", error: "coding_legacy_cleanup_failed" });
+      recording.finishInteraction({ status: "failed", error: "coding_legacy_cleanup_failed" });
+      logger.warn({ job_id: job.id }, "coding.legacy_cleanup_failed");
+    } finally {
+      recording.close();
+    }
+  }
+  return completed;
+}
+
 interface CodingDependencies {
   source?: CodingGitHubSource;
   worker?: typeof DockerWorker.start;
-  runtime?: typeof runIsolatedCoding;
+  turn?: typeof runDurableCodingTurn;
+  verify?: typeof runDurableCodingVerification;
+  checkpointProposal?: typeof checkpointDurableCodingProposal;
+  validateExecution?: typeof validateDurableCodingExecution;
+  preflight?: typeof DockerWorker.preflight;
   onJob?: (job: CodingJob) => void | Promise<void>;
   conversationKey?: string;
   expectedBaseCommit?: string;
+  resumeJobId?: string;
 }
 
 export async function prepareCoding(
@@ -51,6 +135,7 @@ export async function prepareCoding(
 ): Promise<CodingJob> {
   const task = parseCoding(CodingTaskSchema, input);
   const profile = codingProfile(policy, principal, task.repository);
+  const profileFingerprint = codingProfileFingerprint(profile, policy);
   if (activeJobs.size >= 4) throw new Error("coding_admission_limit");
   const recording = parent.childRun({
     kind: "coding_prepare",
@@ -58,47 +143,78 @@ export async function prepareCoding(
     ref: task.baseBranch
   });
   const controller = new AbortController();
+  const deadlineController = new AbortController();
+  let deadlineAt = new Date(Date.now() + policy.timeoutMs).toISOString();
+  let deadlineTimer = setTimeout(
+    () => deadlineController.abort(new Error("coding_deadline_exceeded")),
+    policy.timeoutMs
+  );
   const reservationId = crypto.randomUUID();
   activeJobs.set(reservationId, { principal, controller });
-  const signal = AbortSignal.any([
-    recording.signal,
-    controller.signal,
-    AbortSignal.timeout(policy.timeoutMs)
-  ]);
+  const signal = AbortSignal.any([recording.signal, controller.signal, deadlineController.signal]);
   const source = dependencies.source ?? new CodingGitHubSource(policy.readToken);
   const start = dependencies.worker ?? DockerWorker.start;
-  let worker: DockerWorker | undefined,
-    verifier: DockerWorker | undefined,
-    job: CodingJob | undefined;
+  let job: CodingJob | undefined;
+  let fence: number | undefined;
   let cancellationPoll: ReturnType<typeof setInterval> | undefined;
-  const abort = () => {
-    void worker?.close().catch(() => {});
-    void verifier?.close().catch(() => {});
-  };
-  signal.addEventListener("abort", abort, { once: true });
   try {
-    const baseCommit = await recording.recordTool(
-      { name: "coding.resolve_base", source: "coding", kind: "capability", input: task.repository },
-      () => source.base(task, signal),
-      signal
-    );
-    if (dependencies.expectedBaseCommit && dependencies.expectedBaseCommit !== baseCommit)
-      throw new Error("coding_confirmed_base_moved");
-    recording.updateRun({ commitSha: baseCommit });
-    job = recording.coding((store) =>
-      store.create({
-        id: crypto.randomUUID(),
-        principal,
-        repository: task.repository,
-        baseBranch: task.baseBranch,
-        baseCommit,
-        runId: recording.runId,
-        status: "preparing",
-        ...(dependencies.conversationKey ? { conversationKey: dependencies.conversationKey } : {}),
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + (policy.retentionMs ?? 86400000)).toISOString()
-      })
-    );
+    let baseCommit: string;
+    if (dependencies.resumeJobId) {
+      job = recording.coding((store) => store.get(dependencies.resumeJobId!, principal));
+      if (!job || job.status !== "preparing") throw new Error("coding_resume_unavailable");
+      const existing = recording.coding((store) => store.execution(job!.id, principal));
+      if (
+        existing.task !== task.task ||
+        existing.profileFingerprint !== profileFingerprint ||
+        Date.parse(existing.deadlineAt) <= Date.now()
+      )
+        throw new Error("coding_resume_policy_changed");
+      deadlineAt = existing.deadlineAt;
+      clearTimeout(deadlineTimer);
+      deadlineTimer = setTimeout(
+        () => deadlineController.abort(new Error("coding_deadline_exceeded")),
+        Date.parse(deadlineAt) - Date.now()
+      );
+      baseCommit = job.baseCommit;
+    } else {
+      baseCommit = await recording.recordTool(
+        {
+          name: "coding.resolve_base",
+          source: "coding",
+          kind: "capability",
+          input: task.repository
+        },
+        () => source.base(task, signal),
+        signal
+      );
+      if (dependencies.expectedBaseCommit && dependencies.expectedBaseCommit !== baseCommit)
+        throw new Error("coding_confirmed_base_moved");
+      job = recording.coding((store) => {
+        const createdAt = new Date().toISOString();
+        return store.create(
+          {
+            id: crypto.randomUUID(),
+            principal,
+            repository: task.repository,
+            baseBranch: task.baseBranch,
+            baseCommit,
+            runId: recording.runId,
+            status: "preparing",
+            ...(dependencies.conversationKey
+              ? { conversationKey: dependencies.conversationKey }
+              : {}),
+            createdAt,
+            expiresAt: new Date(Date.now() + (policy.retentionMs ?? 86400000)).toISOString()
+          },
+          {
+            task: task.task,
+            profileFingerprint,
+            deadlineAt
+          }
+        );
+      });
+    }
+    recording.updateRun({ commitSha: baseCommit, metadata: { jobId: job.id } });
     logger.info(
       {
         interaction_id: recording.interactionId,
@@ -122,7 +238,68 @@ export async function prepareCoding(
       }
     }, 250);
     await dependencies.onJob?.(job);
-    const base = await recording.recordTool(
+    if (
+      dependencies.resumeJobId === undefined &&
+      recording.coding((store) => store.get(job!.id, principal))?.cancelRequested
+    ) {
+      controller.abort(new Error("coding_cancelled"));
+      throw new Error("coding_cancelled");
+    }
+    const execution = recording.coding((store) =>
+      store.claimExecution(job!.id, principal, {
+        allowCancelled: dependencies.resumeJobId !== undefined
+      })
+    );
+    fence = execution.fence;
+    const assertOwned = () => {
+      const current = recording.coding((store) => store.execution(job!.id, principal));
+      if (current.fence !== fence || current.activeRunId !== recording.runId)
+        throw new Error("coding_execution_ownership_lost");
+    };
+    const projectExecution = (current: CodingExecution) => {
+      recording.updateRun({
+        metadata: {
+          jobId: job!.id,
+          execution: {
+            phase: current.phase,
+            fence: current.fence,
+            resumeCount: current.resumeCount,
+            deadlineAt: current.deadlineAt,
+            ...(current.conversationId === undefined
+              ? {}
+              : { conversationId: current.conversationId }),
+            ...(current.taskId === undefined ? {} : { taskId: current.taskId })
+          }
+        }
+      });
+      return current;
+    };
+    const updateExecution = (
+      changes: Pick<CodingExecution, "phase"> &
+        Partial<Pick<CodingExecution, "conversationId" | "taskId" | "terminalRunId">>
+    ) =>
+      projectExecution(
+        recording.coding((store) => store.updateExecution(job!.id, fence!, principal, changes))
+      );
+    projectExecution(execution);
+    await DockerWorker.cleanupJob(job.id);
+    if (recording.coding((store) => store.get(job!.id, principal))?.cancelRequested) {
+      controller.abort(new Error("coding_cancelled"));
+      throw new Error("coding_cancelled");
+    }
+    const databasePath = prepareCodingExecutionDatabase(
+      job.id,
+      path.dirname(path.dirname(recording.artifactsPath))
+    );
+    const validateExecution =
+      dependencies.validateExecution ??
+      (await import("../harness/coding-durable.js")).validateDurableCodingExecution;
+    await validateExecution(databasePath, signal);
+    const preflight =
+      dependencies.preflight ?? (dependencies.worker ? undefined : DockerWorker.preflight);
+    await preflight?.(profile, signal);
+    let base: SourceFile[] | undefined;
+    await recording.recordTool(
       {
         name: "coding.acquire_source",
         source: "coding",
@@ -132,67 +309,64 @@ export async function prepareCoding(
       async () => {
         const files = await source.files(task, baseCommit, signal);
         validateSource(files);
-        return files;
+        base = files;
+        return { files: files.length, manifestDigest: sourceManifestDigest(files) };
       },
       signal
     );
+    if (!base) throw new Error("coding_source_result_missing");
     recording.assertHealthy();
     signal.throwIfAborted();
-    worker = await start(profile, signal, job.id);
-    if (signal.aborted) {
-      await worker.close();
-      signal.throwIfAborted();
-    }
-    recording.updateRun({ metadata: { jobId: job.id, workerId: worker.id } });
-    await worker.importFiles(base);
-    const baseline = await worker.snapshot();
-    const runtime =
-      dependencies.runtime ?? (await import("../harness/coding-runtime.js")).runIsolatedCoding;
-    const budget = codingBudget();
-    let summary = await runtime(
-      worker,
-      task.task,
-      codingInstructions(baseline),
-      recording,
-      policy,
-      signal,
-      undefined,
+    const baseline = base;
+    const turn =
+      dependencies.turn ?? (await import("../harness/coding-durable.js")).runDurableCodingTurn;
+    updateExecution({ phase: "preparing" });
+    let turnResult = await turn({
+      databasePath,
       baseline,
-      budget
-    );
+      profile,
+      jobId: job.id,
+      fence,
+      task: task.task,
+      instructions: codingInstructions(baseline),
+      requestId: "initial",
+      deadlineAt: execution.deadlineAt,
+      policy,
+      model: policy.model,
+      recording,
+      signal,
+      assertOwned,
+      start,
+      apiKey: process.env.MINIMAX_API_KEY
+    });
+    updateExecution({
+      phase: "verifying",
+      conversationId: turnResult.conversationId,
+      taskId: turnResult.submissionId
+    });
+    let summary = turnResult.summary;
     recording.assertHealthy();
     signal.throwIfAborted();
-    let final = await worker.snapshot();
+    let final = restoreCandidate(baseline, turnResult.candidate);
     validateSource(final);
-    await worker.close();
-    worker = undefined;
     assertCandidateChangePolicy(profile, baseline, final);
-    const verify = async (candidate: SourceFile[]): Promise<CodingProposal["checks"]> => {
-      verifier = await start(profile, signal, job!.id, true);
-      try {
-        if (signal.aborted) signal.throwIfAborted();
-        await verifier.importFiles(candidate);
-        await verifier.freeze();
-        const sealed = await verifier.snapshot();
-        const checks: CodingProposal["checks"] = [];
-        for (const command of profile.requiredChecks) {
-          const current = verifier;
-          const result = await recording.recordTool(
-            { name: "coding.verify", source: "coding", kind: "capability", input: { command } },
-            () => current.command(command, signal),
-            signal
-          );
-          checks.push(result);
-        }
-        const after = await verifier.snapshot();
-        if (!sameSnapshot(sealed, after)) throw new Error("coding_verification_mutated_snapshot");
-        return checks;
-      } finally {
-        await verifier?.close();
-        verifier = undefined;
-      }
-    };
-    let checks = await verify(final);
+    const verify =
+      dependencies.verify ??
+      (await import("../harness/coding-durable.js")).runDurableCodingVerification;
+    const durableVerify = (candidate: typeof turnResult.candidate) =>
+      verify({
+        databasePath,
+        baseline,
+        candidate,
+        profile,
+        jobId: job!.id,
+        fence: fence!,
+        recording,
+        signal,
+        assertOwned,
+        start
+      });
+    let checks = await durableVerify(turnResult.candidate);
     for (
       let attempt = 1;
       attempt <= (policy.maxRepairAttempts ?? 1) && repairable(checks);
@@ -202,56 +376,87 @@ export async function prepareCoding(
         { run_id: recording.runId, job_id: job.id, repair_attempt: attempt },
         "coding.repair_started"
       );
-      worker = await start(profile, signal, job.id);
-      if (signal.aborted) {
-        await worker.close();
-        signal.throwIfAborted();
-      }
-      await worker.importFiles(final);
-      summary = await runtime(
-        worker,
-        repairTask(task.task, checks),
-        codingInstructions(baseline),
-        recording,
-        policy,
-        signal,
-        undefined,
+      updateExecution({ phase: "repairing" });
+      turnResult = await turn({
+        databasePath,
         baseline,
-        budget
-      );
+        profile,
+        jobId: job.id,
+        fence,
+        task: repairTask(task.task, checks),
+        instructions: codingInstructions(baseline),
+        requestId: `repair-${attempt}`,
+        deadlineAt: execution.deadlineAt,
+        policy,
+        repairAttempt: attempt,
+        model: policy.model,
+        recording,
+        signal,
+        assertOwned,
+        start,
+        apiKey: process.env.MINIMAX_API_KEY
+      });
+      summary = turnResult.summary;
       recording.assertHealthy();
       signal.throwIfAborted();
-      final = await worker.snapshot();
+      final = restoreCandidate(baseline, turnResult.candidate);
       validateSource(final);
-      await worker.close();
-      worker = undefined;
       assertCandidateChangePolicy(profile, baseline, final);
-      checks = await verify(final);
+      updateExecution({
+        phase: "verifying",
+        conversationId: turnResult.conversationId,
+        taskId: turnResult.submissionId
+      });
+      checks = await durableVerify(turnResult.candidate);
     }
+    updateExecution({ phase: "sealing" });
     const proposal = freezeProposal(
       {
-        id: crypto.randomUUID(),
+        id: `proposal-${job.id}`,
         jobId: job.id,
         repository: task.repository,
         baseBranch: task.baseBranch,
         baseCommit,
         task: task.task,
         summary,
-        createdAt: new Date().toISOString()
+        createdAt: job.createdAt
       },
       baseline,
       final,
       checks
     );
+    const checkpointProposal =
+      dependencies.checkpointProposal ??
+      (await import("../harness/coding-durable.js")).checkpointDurableCodingProposal;
+    await checkpointProposal({
+      databasePath,
+      proposal,
+      signal,
+      assertOwned
+    });
     const jobId = job.id;
-    job = recording.coding((store) => store.seal(jobId, proposal, principal));
-    const artifact = path.join(recording.artifactsPath, `${recording.runId}-coding-proposal.md`);
-    await fs.writeFile(artifact, proposalDisplay(job, proposal), { mode: 0o600, flag: "wx" });
+    const artifact = path.join(recording.artifactsPath, `${proposal.id}-coding-proposal.md`);
+    const projected = {
+      ...job,
+      proposalId: proposal.id,
+      status: proposal.checks.every((check) => check.exitCode === 0 && !check.truncated)
+        ? ("proposal-ready" as const)
+        : ("blocked" as const)
+    };
+    const display = proposalDisplay(projected, proposal);
+    try {
+      await fs.writeFile(artifact, display, { mode: 0o600, flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if ((await fs.readFile(artifact, "utf8")) !== display)
+        throw new Error("coding_artifact_conflict");
+    }
     recording.registerArtifact({
       path: artifact,
       type: "coding-proposal",
       title: `Coding proposal ${job.id}`
     });
+    job = recording.coding((store) => store.sealOrLoad(jobId, proposal, principal));
     recording.updateRun({
       metadata: {
         jobId: job.id,
@@ -260,6 +465,8 @@ export async function prepareCoding(
         status: job.status
       }
     });
+    updateExecution({ phase: "terminal", terminalRunId: recording.runId });
+    recording.coding((store) => store.releaseExecution(job!.id, fence!, principal));
     recording.finishRun({
       status: job.status === "proposal-ready" ? "completed" : "failed",
       ...(job.status === "blocked" ? { error: "coding_required_checks_failed" } : {})
@@ -271,11 +478,15 @@ export async function prepareCoding(
     return job;
   } catch (error) {
     recording.assertHealthy();
-    const reason =
+    const cancelled =
       controller.signal.aborted &&
       controller.signal.reason instanceof Error &&
-      controller.signal.reason.message === "coding_cancelled"
-        ? "coding_cancelled"
+      controller.signal.reason.message === "coding_cancelled";
+    const deadlineExceeded = deadlineController.signal.aborted;
+    const reason = cancelled
+      ? "coding_cancelled"
+      : deadlineExceeded
+        ? "coding_deadline_exceeded"
         : signal.aborted
           ? "coding_preparation_interrupted"
           : error instanceof Error && /^coding_[a-z_]+$/.test(error.message)
@@ -283,10 +494,17 @@ export async function prepareCoding(
             : "coding_preparation_stopped";
     if (job && job.status === "preparing") {
       // The run remains active until its job decision is durable; cancellation must not bypass recording.
-      if (!recording.signal.aborted)
+      if (!recording.signal.aborted && (cancelled || deadlineExceeded || !signal.aborted))
         recording.coding((store) =>
-          store.transition(job!.id, signal.aborted ? "interrupted" : "failed", principal, reason)
+          store.transition(job!.id, cancelled ? "interrupted" : "failed", principal, reason)
         );
+    }
+    if (job && fence !== undefined && !recording.signal.aborted) {
+      try {
+        recording.coding((store) => store.releaseExecution(job!.id, fence!, principal));
+      } catch {
+        // Lost ownership is already durable and must not mask the preparation failure.
+      }
     }
     logger.warn(
       {
@@ -298,27 +516,44 @@ export async function prepareCoding(
       "coding.failed"
     );
     recording.finishRun({
-      status: signal.aborted ? "cancelled" : "failed",
+      status: signal.aborted && !deadlineExceeded ? "cancelled" : "failed",
       error: reason
     });
-    throw error instanceof Error && error.message.startsWith("coding_") ? error : new Error(reason);
+    throw error instanceof Error && error.message.startsWith("coding_")
+      ? error
+      : new Error(reason, { cause: error });
   } finally {
     if (cancellationPoll) clearInterval(cancellationPoll);
-    signal.removeEventListener("abort", abort);
+    clearTimeout(deadlineTimer);
     activeJobs.delete(reservationId);
     if (job) activeJobs.delete(job.id);
-    const cleanup: Promise<void>[] = [];
-    if (worker) cleanup.push(worker.close());
-    if (verifier) cleanup.push(verifier.close());
-    for (const operation of cleanup) await operation;
+    if (job && fence !== undefined)
+      await DockerWorker.cleanupJobFence(job.id, fence).catch(() => {});
     recording.close();
   }
 }
 
-function sameSnapshot(a: SourceFile[], b: SourceFile[]): boolean {
-  const stable = (files: SourceFile[]) =>
-    JSON.stringify([...files].sort((a, b) => a.path.localeCompare(b.path, "en")));
-  return stable(a) === stable(b);
+export async function resumeCoding(
+  jobId: string,
+  principal: string,
+  policy: CodingPolicy,
+  parent: InteractionRecorder,
+  dependencies: Omit<CodingDependencies, "resumeJobId"> = {}
+): Promise<CodingJob> {
+  const job = parent.coding((store) => store.get(jobId, principal));
+  if (!job) throw new Error("coding_job_not_found");
+  const execution = parent.coding((store) => store.execution(job.id, principal));
+  return prepareCoding(
+    {
+      repository: job.repository,
+      baseBranch: job.baseBranch,
+      task: execution.task
+    },
+    principal,
+    policy,
+    parent,
+    { ...dependencies, resumeJobId: job.id, conversationKey: job.conversationKey }
+  );
 }
 
 function repairable(checks: CodingProposal["checks"]): boolean {

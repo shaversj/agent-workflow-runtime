@@ -187,6 +187,30 @@ describe("shared history store", () => {
     expect(fs.statSync(path.join(home, "history")).mode & 0o777).toBe(0o700);
   });
 
+  it("records runtime-initiated work without a fake external message identity", () => {
+    const { store } = fixture();
+    const accepted = store.acceptInteraction({
+      source: "runtime",
+      kind: "coding_runtime_resume",
+      userMessage: "Resume coding job job-1",
+      metadata: { jobId: "job-1" }
+    });
+    expect(store.getInteraction(accepted.interactionId)).toMatchObject({
+      source: "runtime",
+      applicationId: null,
+      sourceMessageId: null
+    });
+    expect(() =>
+      store.acceptInteraction({
+        source: "runtime",
+        kind: "coding_runtime_resume",
+        userMessage: "Invalid runtime identity",
+        applicationId: "application",
+        sourceMessageId: "message"
+      })
+    ).toThrow(/source identity/);
+  });
+
   it("rolls back acceptance on an actual SQLite failure before work can execute", () => {
     const { store, home } = fixture();
     const db = new Database(historyDatabasePath(home));

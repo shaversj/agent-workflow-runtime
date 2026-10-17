@@ -39,18 +39,25 @@ function fixture(conversationKey?: string) {
     { home }
   );
   const job = preparation.coding((store) =>
-    store.create({
-      id: "job",
-      principal,
-      repository,
-      baseBranch: "main",
-      baseCommit: "a".repeat(40),
-      runId: preparation.runId,
-      status: "preparing",
-      createdAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 86400000).toISOString(),
-      ...(conversationKey ? { conversationKey } : {})
-    })
+    store.create(
+      {
+        id: "job",
+        principal,
+        repository,
+        baseBranch: "main",
+        baseCommit: "a".repeat(40),
+        runId: preparation.runId,
+        status: "preparing",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 86400000).toISOString(),
+        ...(conversationKey ? { conversationKey } : {})
+      },
+      {
+        task: "Fix",
+        profileFingerprint: "c".repeat(64),
+        deadlineAt: new Date(Date.now() + 1_200_000).toISOString()
+      }
+    )
   );
   const files = ["first.js", "second.js"].map((path) => ({
     path,
@@ -72,7 +79,15 @@ function fixture(conversationKey?: string) {
     files,
     [{ command: "node --test", exitCode: 0, output: "passed", truncated: false }]
   );
-  preparation.coding((store) => store.seal(job.id, proposal, principal));
+  preparation.coding((store) => {
+    const owned = store.claimExecution(job.id, principal);
+    store.seal(job.id, proposal, principal);
+    store.updateExecution(job.id, owned.fence, principal, {
+      phase: "terminal",
+      terminalRunId: preparation.runId
+    });
+    store.releaseExecution(job.id, owned.fence, principal);
+  });
   preparation.finishRun({ status: "completed" });
   preparation.finishInteraction({ status: "completed" });
   preparation.close();

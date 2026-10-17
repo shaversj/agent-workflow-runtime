@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openHistoryStore, openHistoryReader } from "../src/db/index.js";
+import { cleanupLegacyCodingWorkers } from "../src/workflows/code.js";
 import { historyDatabasePath } from "../src/workspaces/storage.js";
 
 const homes: string[] = [];
@@ -50,32 +51,19 @@ function fixture() {
   };
   return { home, store, accepted, coding, job, proposal };
 }
+const execution = {
+  task: "Fix",
+  profileFingerprint: "c".repeat(64),
+  deadlineAt: new Date(Date.now() + 1_200_000).toISOString()
+};
 describe("coding lifecycle in shared history", () => {
-  it("permits cleanup recovery to be retried only after the preparation owner stops", () => {
-    const { store, accepted, coding, job } = fixture();
-    try {
-      coding.create(job);
-      expect(() => coding.recover(job.id, job.principal)).toThrow(/recovery_unavailable/);
-      store.finishInteraction({ id: accepted.interactionId, status: "failed" });
-      const next = store.acceptInteraction({
-        source: "cli",
-        kind: "recover",
-        userMessage: "Recover"
-      });
-      const recovery = store.coding(next.runId);
-      expect(recovery.recover(job.id, job.principal).status).toBe("interrupted");
-      expect(recovery.recover(job.id, job.principal).status).toBe("interrupted");
-    } finally {
-      store.close();
-    }
-  });
   it("rolls back a failed additive upgrade without changing schema version or history", () => {
     const { store, home, accepted } = fixture();
     store.close();
     const file = historyDatabasePath(home);
     const db = new Database(file);
     db.exec(
-      "DROP TABLE coding_publication; DROP TABLE coding_approval; DROP TABLE coding_proposal; DROP TABLE coding_job; CREATE TABLE coding_approval (collision TEXT)"
+      "DROP TABLE coding_publication; DROP TABLE coding_approval; DROP TABLE coding_proposal; DROP TABLE coding_execution; DROP TABLE coding_job; CREATE TABLE coding_approval (collision TEXT)"
     );
     db.pragma("user_version = 1");
     db.close();
@@ -96,9 +84,15 @@ describe("coding lifecycle in shared history", () => {
   it("seals immutable proposals and binds/consumes approval exactly once across connections", () => {
     const { store, accepted, coding, job, proposal, home } = fixture();
     try {
-      coding.create(job);
+      coding.create(job, execution);
+      const owned = coding.claimExecution(job.id, job.principal);
       coding.seal(job.id, proposal, job.principal);
-      expect(() => coding.seal(job.id, proposal, job.principal)).toThrow();
+      expect(coding.seal(job.id, proposal, job.principal).status).toBe("proposal-ready");
+      coding.updateExecution(job.id, owned.fence, job.principal, {
+        phase: "terminal",
+        terminalRunId: accepted.runId
+      });
+      coding.releaseExecution(job.id, owned.fence, job.principal);
       expect(() => coding.approve(job.id, digest, job.principal)).toThrow(/unavailable/);
       store.finishInteraction({ id: accepted.interactionId, status: "completed" });
       const next = store.acceptInteraction({
@@ -130,7 +124,7 @@ describe("coding lifecycle in shared history", () => {
     store.close();
     const db = new Database(historyDatabasePath(home));
     db.exec(
-      "DROP TABLE coding_publication; DROP TABLE coding_approval; DROP TABLE coding_proposal; DROP TABLE coding_job"
+      "DROP TABLE coding_publication; DROP TABLE coding_approval; DROP TABLE coding_proposal; DROP TABLE coding_execution; DROP TABLE coding_job"
     );
     db.pragma("user_version = 1");
     db.close();
@@ -142,18 +136,132 @@ describe("coding lifecycle in shared history", () => {
       upgraded.close();
     }
     const inspect = new Database(historyDatabasePath(home), { readonly: true });
-    expect(inspect.pragma("user_version", { simple: true })).toBe(2);
+    expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+    inspect.close();
+  });
+  it("classifies unfinished version 2 jobs and cleans their labeled workers exactly once", async () => {
+    const { store, home, coding, job } = fixture();
+    coding.create(job, execution);
+    store.close();
+    const db = new Database(historyDatabasePath(home));
+    db.exec("DROP TABLE coding_execution");
+    db.pragma("user_version = 2");
+    db.close();
+
+    const cleaned: string[] = [];
+    await expect(
+      cleanupLegacyCodingWorkers({
+        home,
+        cleanup: (jobId) => {
+          cleaned.push(jobId);
+          return Promise.resolve();
+        }
+      })
+    ).resolves.toBe(1);
+    await expect(
+      cleanupLegacyCodingWorkers({
+        home,
+        cleanup: (jobId) => {
+          cleaned.push(jobId);
+          return Promise.resolve();
+        }
+      })
+    ).resolves.toBe(0);
+    expect(cleaned).toEqual([job.id]);
+    const completed = openHistoryStore({ home });
+    try {
+      const inspection = completed.acceptInteraction({
+        source: "cli",
+        kind: "show",
+        userMessage: "Show"
+      });
+      expect(completed.coding(inspection.runId).get(job.id, job.principal)).toMatchObject({
+        status: "interrupted",
+        reason: "coding_legacy_interrupted"
+      });
+      expect(completed.coding(inspection.runId).execution(job.id, job.principal)).toMatchObject({
+        jobId: job.id,
+        phase: "terminal",
+        profileFingerprint: "0".repeat(64),
+        task: "Legacy pre-Durable coding job"
+      });
+    } finally {
+      completed.close();
+    }
+    const inspect = new Database(historyDatabasePath(home), { readonly: true });
+    expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+    inspect.close();
+  });
+  it("keeps completed version 2 proposals inspectable after execution metadata is added", () => {
+    const { store, home, accepted, coding, job, proposal } = fixture();
+    coding.create(job, execution);
+    const claim = coding.claimExecution(job.id, job.principal);
+    coding.seal(job.id, proposal, job.principal);
+    coding.updateExecution(job.id, claim.fence, job.principal, {
+      phase: "terminal",
+      terminalRunId: accepted.runId
+    });
+    coding.releaseExecution(job.id, claim.fence, job.principal);
+    store.finishInteraction({ id: accepted.interactionId, status: "completed" });
+    store.close();
+    const db = new Database(historyDatabasePath(home));
+    db.exec("DROP TABLE coding_execution");
+    db.pragma("user_version = 2");
+    db.close();
+
+    const upgraded = openHistoryStore({ home });
+    try {
+      const next = upgraded.acceptInteraction({ source: "cli", kind: "show", userMessage: "Show" });
+      expect(upgraded.coding(next.runId).execution(job.id, job.principal)).toMatchObject({
+        phase: "terminal",
+        task: proposal.task,
+        terminalRunId: accepted.runId
+      });
+      expect(upgraded.coding(next.runId).proposal(job.id, job.principal).digest).toBe(digest);
+    } finally {
+      upgraded.close();
+    }
+  });
+  it("upgrades version 3 history to runtime-initiated interaction identities", () => {
+    const { store, home, accepted } = fixture();
+    store.close();
+    const db = new Database(historyDatabasePath(home));
+    db.pragma("user_version = 3");
+    db.close();
+
+    const upgraded = openHistoryStore({ home });
+    try {
+      expect(upgraded.getInteraction(accepted.interactionId)?.source).toBe("cli");
+      const resumed = upgraded.acceptInteraction({
+        source: "runtime",
+        kind: "coding_runtime_resume",
+        userMessage: "Resume job",
+        metadata: { jobId: "job" }
+      });
+      expect(upgraded.getInteraction(resumed.interactionId)?.source).toBe("runtime");
+    } finally {
+      upgraded.close();
+    }
+    const inspect = new Database(historyDatabasePath(home), { readonly: true });
+    expect(inspect.pragma("user_version", { simple: true })).toBe(4);
+    expect(inspect.pragma("foreign_key_check")).toEqual([]);
     inspect.close();
   });
   it("blocks unverified proposals, rejects revoked access and does not allow late writes", () => {
     const { store, coding, job, proposal, accepted } = fixture();
     try {
-      coding.create(job);
+      coding.create(job, execution);
+      const owned = coding.claimExecution(job.id, job.principal);
       coding.seal(
         job.id,
         { ...proposal, checks: [{ ...proposal.checks[0]!, exitCode: 1 }] },
         job.principal
       );
+      coding.updateExecution(job.id, owned.fence, job.principal, {
+        phase: "terminal",
+        terminalRunId: accepted.runId
+      });
+      coding.releaseExecution(job.id, owned.fence, job.principal);
       expect(coding.get(job.id, job.principal)?.status).toBe("blocked");
       expect(() => coding.approve(job.id, digest, job.principal)).toThrow();
       store.finishInteraction({ id: accepted.interactionId, status: "completed" });

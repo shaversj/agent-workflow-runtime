@@ -12,6 +12,7 @@ import {
   parseLiveArgs
 } from "../scripts/coding-live.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
+import { checkpointCandidate } from "../src/plugins/coding/proposal.js";
 import type { SourceFile } from "../src/plugins/coding/schemas.js";
 import type { DockerWorker } from "../src/workspaces/docker.js";
 import { openHistoryReader } from "../src/db/index.js";
@@ -72,6 +73,34 @@ function fixture() {
   return { root, source, worker, workers, base, files };
 }
 
+function simulatedTurn(
+  content: string,
+  summary: string,
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
+) {
+  return (
+    options: Parameters<typeof import("../src/harness/coding-durable.js").runDurableCodingTurn>[0]
+  ) => {
+    const call = options.recording.modelStart({ provider: "fixture", model: "fixture" });
+    options.recording.modelFinish({
+      id: call,
+      status: "completed",
+      ...(usage ? { usage } : {})
+    });
+    return Promise.resolve({
+      conversationId: 1,
+      submissionId: 1,
+      summary,
+      candidate: checkpointCandidate(
+        options.profile,
+        options.baseline,
+        [{ path: "app.js", content, mode: "100644" }],
+        1
+      )
+    });
+  };
+}
+
 describe("opt-in coding live controls", () => {
   it("requires explicit config and does not silently load .env", () => {
     expect(parseLiveArgs(["--config", "scenario.json"])).toEqual({ config: "scenario.json" });
@@ -123,16 +152,11 @@ describe("opt-in coding live controls", () => {
       root: f.root,
       source: f.source,
       worker: f.worker,
-      runtime: async (worker, _task, _instructions, recording) => {
-        const call = recording.modelStart({ provider: "fixture", model: "fixture" });
-        recording.modelFinish({
-          id: call,
-          status: "completed",
-          usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
-        });
-        await worker.rpc("write", "app.js", "fixed\n");
-        return "Fixed addition";
-      }
+      turn: simulatedTurn("fixed\n", "Fixed addition", {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15
+      })
     });
     expect(Value.Check(LiveReceiptSchema, result.receipt)).toBe(true);
     expect(result.receipt).toMatchObject({
@@ -153,7 +177,7 @@ describe("opt-in coding live controls", () => {
     });
     expect(result.receipt.jobId).toBeDefined();
     expect(result.receipt.digest).toMatch(/^[a-f0-9]{64}$/);
-    expect(f.workers).toHaveLength(2);
+    expect(f.workers).toHaveLength(1);
     for (const worker of f.workers) expect(worker.close).toHaveBeenCalled();
     const saved = fs.readFileSync(result.receiptPath, "utf8");
     expect(saved).not.toContain("test-credential");
@@ -215,11 +239,7 @@ describe("opt-in coding live controls", () => {
       root: f.root,
       source: f.source,
       worker: f.worker,
-      runtime: (worker, _task, _instructions, recording) => {
-        const id = recording.modelStart({ provider: "fixture", model: "fixture" });
-        recording.modelFinish({ id, status: "completed" });
-        return worker.rpc("write", "app.js", "fixed\n").then(() => "Fixed");
-      }
+      turn: simulatedTurn("fixed\n", "Fixed")
     });
     expect(result.receipt.modelCalls).toBe(1);
     expect(result.receipt.totalTokens).toBeNull();
@@ -247,8 +267,7 @@ describe("opt-in coding live controls", () => {
       home,
       receiptPath: path.join(home, "receipt.json")
     });
-    expect(f.workers).toHaveLength(1);
-    expect(f.workers[0]!.close).toHaveBeenCalled();
+    expect(f.workers).toHaveLength(0);
   });
   it("interrupts an active scenario at its finite timeout and closes owned workers", async () => {
     const f = fixture();
@@ -256,16 +275,18 @@ describe("opt-in coding live controls", () => {
       root: f.root,
       source: f.source,
       worker: f.worker,
-      runtime: async (_worker, _task, _instructions, _recording, _policy, signal) => {
+      turn: async (options) => {
         await new Promise<void>((_resolve, reject) => {
-          signal.throwIfAborted();
-          signal.addEventListener("abort", () => reject(new Error("timed out")), { once: true });
+          options.signal.throwIfAborted();
+          options.signal.addEventListener("abort", () => reject(new Error("timed out")), {
+            once: true
+          });
         });
-        return "unreachable";
+        throw new Error("unreachable");
       }
     });
     expect(result.receipt.status).toBe("interrupted");
-    expect(f.workers[0]!.close).toHaveBeenCalled();
+    expect(f.workers).toHaveLength(0);
     expect(result.receipt.publicationWrites).toBe(0);
   });
 });

@@ -10,6 +10,7 @@ Tests should prove behavior at the boundaries Agent Workflow Runtime exposes:
 - database persistence and schema-sensitive flows
 - Markdown report contents and artifact paths
 - external response validation, conditional cache revalidation, stale fallback, and cancellation
+- durable coding replay, fencing, request deduplication, candidate restoration, and restart recovery
 
 Prefer tests that exercise real project objects over tests that only mock local
 helper functions.

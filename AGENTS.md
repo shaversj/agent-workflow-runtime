@@ -30,7 +30,7 @@ Every readiness sweep must attempt the OSSRules reference comparison. Keep share
 - Keep model-facing GitHub API access read-only. The GitHub plugin may use write APIs only through
   its hidden, approval-gated publication and reconciliation tools.
 - Use the fixed public ossrules API only through the bounded readiness reference adapter; do not add general web access to readiness.
-- Coding uses an opt-in Pi coding-agent SDK session with Docker-backed tools; no repository code or resource discovery runs on the host.
+- Coding uses an opt-in Pi Durable session with checkpointed Docker-backed tools; no repository code or resource discovery runs on the host.
 - Keep GitHub publication separate from intelligence at the capability and credential boundaries.
   It is disabled by default and requires a principal/content-bound consumed human approval,
   exact harness-minted execution authority, and separately scoped credentials.

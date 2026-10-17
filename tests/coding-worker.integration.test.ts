@@ -8,6 +8,25 @@ import { DockerWorker } from "../src/workspaces/docker.js";
 
 const image = process.env.CODING_TEST_IMAGE;
 describe.skipIf(!image)("real coding worker containment", () => {
+  it("preflights the exact pinned image without starting a worker", async () => {
+    await expect(
+      DockerWorker.preflight({
+        image: image!,
+        requiredChecks: ["true"],
+        ignore: [],
+        principal: "cli:test"
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      DockerWorker.preflight({
+        image: `node@sha256:${"0".repeat(64)}`,
+        requiredChecks: ["true"],
+        ignore: [],
+        principal: "cli:test"
+      })
+    ).rejects.toThrow("coding_worker_image_unavailable");
+  });
+
   it("force-cleans only workers owned by this process", async () => {
     const worker = await DockerWorker.start(
       { image: image!, requiredChecks: ["true"], ignore: [], principal: "cli:test" },

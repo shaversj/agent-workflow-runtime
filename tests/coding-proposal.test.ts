@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertCandidateChangePolicy,
+  checkpointCandidate,
   freezeProposal,
   proposalDigest,
+  restoreCandidate,
+  sourceManifestDigest,
   validateProposal
 } from "../src/plugins/coding/proposal.js";
 
@@ -83,5 +86,59 @@ describe("frozen coding proposals", () => {
         [{ path: "package.json", content: "new", mode: "100644" }]
       )
     ).not.toThrow();
+  });
+  it("restores an exact candidate from a bounded baseline-linked delta", () => {
+    const profile = {
+      image: `node@sha256:${"a".repeat(64)}`,
+      requiredChecks: ["node --test"],
+      ignore: [],
+      principal: "cli:test"
+    };
+    const baseline = [...base, { path: "old.js", content: "remove\n", mode: "100644" as const }];
+    const candidate = [
+      { ...base[0]!, content: "new\n" },
+      { path: "added.js", content: "added\n", mode: "100755" as const }
+    ];
+    const delta = checkpointCandidate(profile, baseline, candidate, 1);
+    expect(delta).toMatchObject({
+      baselineDigest: sourceManifestDigest(baseline),
+      deleted: ["old.js"],
+      revision: 1
+    });
+    expect(restoreCandidate(baseline, delta)).toEqual(
+      [...candidate].sort((a, b) => a.path.localeCompare(b.path, "en"))
+    );
+    expect(() => restoreCandidate([{ ...base[0]!, content: "changed baseline" }], delta)).toThrow(
+      "coding_baseline_changed"
+    );
+  });
+
+  it("applies policy and secret gates before candidate checkpointing", () => {
+    const profile = {
+      image: `node@sha256:${"a".repeat(64)}`,
+      requiredChecks: ["node --test"],
+      ignore: [],
+      principal: "cli:test",
+      changePolicy: { maxChangedFiles: 1 }
+    };
+    expect(() =>
+      checkpointCandidate(
+        profile,
+        base,
+        [
+          { ...base[0]!, content: "new\n" },
+          { path: "extra.js", content: "new\n", mode: "100644" }
+        ],
+        1
+      )
+    ).toThrow("coding_change_policy_blocked");
+    expect(() =>
+      checkpointCandidate(
+        profile,
+        base,
+        [{ ...base[0]!, content: "password=synthetic-checkpoint-secret\n" }],
+        1
+      )
+    ).toThrow("coding_secret_gate_blocked");
   });
 });

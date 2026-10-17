@@ -77,10 +77,13 @@ export class DockerWorker {
     input: CodingProfile,
     signal?: AbortSignal,
     jobId?: string,
-    verification = false
+    verification = false,
+    fence?: number
   ): Promise<DockerWorker> {
     const profile = parseProfile(input);
     if (jobId && !/^[a-zA-Z0-9-]{1,128}$/.test(jobId)) throw new Error("coding_job_id_invalid");
+    if (fence !== undefined && (!Number.isSafeInteger(fence) || fence < 1))
+      throw new Error("coding_fence_invalid");
     const worker = new DockerWorker(
       `agent-ops-coding-${crypto.randomUUID()}`,
       profile,
@@ -106,6 +109,7 @@ export class DockerWorker {
         "--label",
         `agent-ops.owner=${workerOwner}`,
         ...(jobId ? ["--label", `agent-ops.job=${jobId}`] : []),
+        ...(fence ? ["--label", `agent-ops.fence=${fence}`] : []),
         "--network=none",
         "--read-only",
         "--cap-drop=ALL",
@@ -139,6 +143,12 @@ export class DockerWorker {
       await worker.close();
       throw new Error("coding_worker_unavailable");
     }
+  }
+  static async preflight(this: void, input: CodingProfile, signal?: AbortSignal): Promise<void> {
+    const profile = parseProfile(input);
+    const worker = new DockerWorker("agent-ops-preflight", profile);
+    const result = await worker.docker(["image", "inspect", profile.image], undefined, signal);
+    if (result.exitCode !== 0) throw new Error("coding_worker_image_unavailable");
   }
   private docker(
     args: string[],
@@ -283,6 +293,32 @@ export class DockerWorker {
       "--all",
       "--filter=label=agent-ops.coding=true",
       `--filter=label=agent-ops.job=${jobId}`,
+      "--format={{.ID}}"
+    ]);
+    if (result.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");
+    const ids = result.output.trim().split("\n").filter(Boolean);
+    if (ids.length > 16 || ids.some((id) => !/^[a-f0-9]{12,64}$/.test(id)))
+      throw new Error("coding_worker_cleanup_failed");
+    for (const id of ids) {
+      const removed = await worker.docker(["rm", "--force", id]);
+      if (removed.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");
+    }
+  }
+  static async cleanupJobFence(this: void, jobId: string, fence: number): Promise<void> {
+    if (!/^[a-zA-Z0-9-]{1,128}$/.test(jobId)) throw new Error("coding_job_id_invalid");
+    if (!Number.isSafeInteger(fence) || fence < 1) throw new Error("coding_fence_invalid");
+    const worker = new DockerWorker("agent-ops-cleanup", {
+      image: "unused",
+      requiredChecks: [],
+      ignore: [],
+      principal: "unused"
+    });
+    const result = await worker.docker([
+      "ps",
+      "--all",
+      "--filter=label=agent-ops.coding=true",
+      `--filter=label=agent-ops.job=${jobId}`,
+      `--filter=label=agent-ops.fence=${fence}`,
       "--format={{.ID}}"
     ]);
     if (result.exitCode !== 0) throw new Error("coding_worker_cleanup_failed");

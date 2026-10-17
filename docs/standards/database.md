@@ -32,7 +32,9 @@ local filesystem. Verify the runtime SQLite WAL-reset fix before enabling WAL. K
 sidecars, and artifacts owner-readable/writable, and directories owner-only.
 
 The versioned bootstrap accepts the current shared-history schema and transactionally upgrades
-the supported shared-history version 1 to version 2. This is not a legacy target-database migration.
+supported shared-history versions 1 through 3 to version 4. The version 2 cutover marks unfinished
+pre-Durable coding jobs interrupted and backfills non-resumable execution metadata so retained jobs
+remain inspectable. This is not a legacy target-database migration.
 Unknown, corrupt, and newer schemas fail
 explicitly. Read-only inspection must not bootstrap, migrate, recover, checkpoint, or create an
 absent database. Missing state is empty, not an error suppression policy.
@@ -44,7 +46,16 @@ operations. Sum usage from model-call rows rather than adding parent and child s
 
 Only a writer may recover unfinished work whose same-host process is provably absent. PID reuse,
 permission failures, live processes, and foreign hosts remain unresolved. Pending deliveries may
-become uncertain while completed execution stays completed. Never resume or replay work implicitly.
+become uncertain while completed execution stays completed. General interactions never resume or
+replay implicitly.
+
+Coding preparation is the deliberate exception. Each job has a private Pi Durable SQLite database
+under `AGENT_OPS_HOME/history/coding/<job-id>/` and a shared-history execution projection with a
+monotonic fence, owner identity, phase, resume count, absolute deadline, and terminal run. A CLI
+resumes only by explicit job ID; a long-lived Discord service may scan eligible Discord jobs at
+startup. Open the private database only after claiming the shared execution fence. Persist bounded
+candidate deltas and task receipts, not unchanged repository snapshots. Approval, delivery,
+publication, and reconciliation never enter the Durable scheduler.
 
 Mirror mutation follows the same conservative ownership rule. Hold no SQLite transaction across
 Git or filesystem work. Acquire a monotonically increasing fence in a short transaction, build in

@@ -50,7 +50,10 @@ vi.mock("@earendil-works/pi-agent-core", () => {
     initialState: {
       tools: MockTool[];
     };
-    shouldStopAfterTurn?: (state: { toolResults: MockToolResult[] }) => boolean;
+    finishTurn?: (state: {
+      message: { stopReason: "stop" };
+      toolResults: MockToolResult[];
+    }) => { action: "end" | "continue" } | undefined;
   }
 
   type MockAgentEvent = Record<string, unknown>;
@@ -88,7 +91,11 @@ vi.mock("@earendil-works/pi-agent-core", () => {
           result,
           isError: false
         });
-        const shouldStop = this.options.shouldStopAfterTurn?.({ toolResults: [result] }) ?? false;
+        const decision = this.options.finishTurn?.({
+          message: { stopReason: "stop" },
+          toolResults: [result]
+        });
+        const shouldStop = decision?.action === "end";
         mockAgentState.stopDecisions.push(shouldStop);
         if (shouldStop) {
           this.listener?.({ type: "agent_end", messages: [] });

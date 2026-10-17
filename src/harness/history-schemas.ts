@@ -29,6 +29,11 @@ export const CaptureEnvelopeSchema = object({
   capturedBytes: Type.Integer({ minimum: 0, maximum: 65536 })
 });
 export type CaptureEnvelope = Static<typeof CaptureEnvelopeSchema>;
+const historySource = Type.Union([
+  Type.Literal("cli"),
+  Type.Literal("discord"),
+  Type.Literal("runtime")
+]);
 export const HistoryOwnerSchema = object({
   token: Type.String({ minLength: 1, maxLength: 2048 }),
   pid: id,
@@ -36,7 +41,7 @@ export const HistoryOwnerSchema = object({
 });
 export type HistoryOwner = Static<typeof HistoryOwnerSchema>;
 export const AcceptInteractionSchema = object({
-  source: Type.Union([Type.Literal("cli"), Type.Literal("discord")]),
+  source: historySource,
   kind: text,
   userMessage: Type.Unknown(),
   applicationId: optionalText,
@@ -258,7 +263,6 @@ export const HistoryTimestampSchema = Type.String({
   maxLength: 40,
   pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-]\\d{2}:\\d{2})$"
 });
-const historySource = Type.Union([Type.Literal("cli"), Type.Literal("discord")]);
 const historyPageOptions = {
   home: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
   busyTimeoutMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 10000 })),

@@ -270,12 +270,13 @@ async function executeChatAgent(
       }
     },
     toolExecution: "sequential",
-    shouldStopAfterTurn: ({ toolResults }) => {
+    finishTurn: ({ message, toolResults }) => {
+      if (message.stopReason === "error" || message.stopReason === "aborted") return;
       recording.assertHealthy();
-      return (
+      const shouldStop =
         toolResults.length === 0 ||
-        toolResults.some((toolResult) => workflowResultFromDetails(toolResult.details))
-      );
+        toolResults.some((toolResult) => workflowResultFromDetails(toolResult.details));
+      return shouldStop ? { action: "end" } : undefined;
     }
   });
 

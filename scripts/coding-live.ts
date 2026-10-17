@@ -289,13 +289,13 @@ export async function runCodingLive(
           save();
           return (dependencies.worker ?? DockerWorker.start)(...args);
         },
-        runtime: async (...args) => {
-          receipt.boundaries.model = dependencies.runtime ? "simulated" : "live";
+        turn: async (...args) => {
+          receipt.boundaries.model = dependencies.turn ? "simulated" : "live";
           save();
-          const runtime =
-            dependencies.runtime ??
-            (await import("../src/harness/coding-runtime.js")).runIsolatedCoding;
-          return runtime(...args);
+          const turn =
+            dependencies.turn ??
+            (await import("../src/harness/coding-durable.js")).runDurableCodingTurn;
+          return turn(...args);
         },
         onJob: async (next) => {
           job = next;

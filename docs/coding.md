@@ -1,6 +1,6 @@
 # Coding Workflow
 
-Coding is an opt-in capability separate from read-only sweeps. It uses Pi's coding-agent SDK with worker-backed tools and never executes repository code on the host.
+Coding is an opt-in capability separate from read-only sweeps. It uses Pi Durable with checkpointed worker-backed tools and never executes repository code on the host.
 
 ## Requirements
 
@@ -26,12 +26,12 @@ pnpm exec tsx src/cli.ts code show <job-id> --json
 pnpm exec tsx src/cli.ts code approve <job-id> --digest <64-hex-digest>
 pnpm exec tsx src/cli.ts code reject <job-id>
 pnpm exec tsx src/cli.ts code cancel <job-id>
-pnpm exec tsx src/cli.ts code recover <job-id>
+pnpm exec tsx src/cli.ts code resume <job-id>
 pnpm exec tsx src/cli.ts code expire <job-id>
 pnpm exec tsx src/cli.ts code reconcile <job-id> --digest <64-hex-digest>
 ```
 
-Approval requires an interactive terminal and the exact proposal digest. Preparation pins the base commit, creates an offline non-root worker, records model and tool activity, exports regular UTF-8 files, and runs operator-required checks in a fresh worker against root-owned read-only source. Checks can write temporary data only under `/tmp`; profiles that require source-tree build output are unsupported.
+Approval requires an interactive terminal and the exact proposal digest. Preparation pins the base commit, checkpoints model turns and candidate deltas in a private per-job SQLite database, recreates an offline non-root worker for each operation, and runs operator-required checks in a separate fresh worker against root-owned read-only source. Checks can write temporary data only under `/tmp`; profiles that require source-tree build output are unsupported.
 
 When fresh verification fails with complete diagnostics, the runtime permits one repair attempt by default inside the original job timeout and shared model, token, and tool budgets. It then starts another fresh verifier. Set `CODING_MAX_REPAIR_ATTEMPTS=0` to disable repair or `2` for the maximum; truncated verification output never triggers model repair.
 
@@ -85,13 +85,15 @@ code prepare example/example-repository main Fix the addition bug
 
 The bot returns a pinned target and task confirmation. Reply with `code confirm <confirmation-id>` within five minutes. Confirmation is bound to the initiating user and channel, is single-use, and is discarded on restart.
 
-After preparation, use `code show`, `code approve`, `code reject`, `code cancel`, `code expire`, `code recover`, or `code reconcile`. Only platform-authenticated, allowlisted human messages can authorize execution or publication. The LLM router cannot manufacture approval, and the browser inspector remains read-only.
+After preparation, use `code show`, `code approve`, `code reject`, `code cancel`, `code expire`, `code resume`, or `code reconcile`. Only platform-authenticated, allowlisted human messages can authorize execution or publication. The LLM router cannot manufacture approval, and the browser inspector remains read-only.
 
 Coding execution and Discord delivery are recorded separately. Definite attachment rejection falls back to text; ambiguous delivery is not automatically retried. `code show <job-id>` retrieves the saved proposal without rerunning coding.
 
 ## Cancellation And Retention
 
-Workers are removed after capture or failure. Restart does not replay work. Cancellation is principal-bound and durable across CLI processes; SIGINT and SIGTERM are also supported.
+Workers are removed after each checkpoint, verification, or failure. Candidate deltas, replay receipts, model/tool budgets, repair attempts, and the absolute deadline survive restart. The Discord service scans eligible unfinished jobs when it starts; CLI jobs resume only through `code resume <job-id>`. Resume reacquires the pinned commit and rebuilds fresh workers. It never replays approval or GitHub publication. Cancellation is principal-bound and durable across CLI processes; SIGINT and SIGTERM are also supported.
+
+Pi Durable execution state is private implementation data under `AGENT_OPS_HOME/history/coding/<job-id>/`. It retains redacted, bounded file reads selected by the model so work can resume, but never a complete unchanged repository snapshot. Shared history records only bounded tool audit metadata; `code show` remains the operator-facing proposal API. A live or uncertain execution owner, changed policy, expired deadline, missing credential, unavailable image, or corrupt execution database fails closed instead of starting work.
 
 Proposals expire after 24 hours by default. `CODING_PROPOSAL_RETENTION_MS` can reduce that window to a minimum of one minute. `code expire` removes unpublished proposal and approval data plus its local display artifact. Retained private proposals are capped at 128 MiB. SQLite deletion is not cryptographic erasure, and delivered Discord attachments or remote branches are never deleted.
 

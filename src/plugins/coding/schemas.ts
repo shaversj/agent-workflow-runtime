@@ -30,6 +30,15 @@ const CodingStatusSchema = Type.Union([
   Type.Literal("interrupted"),
   Type.Literal("publication-uncertain")
 ]);
+const CodingExecutionPhaseSchema = Type.Union([
+  Type.Literal("waiting-runtime"),
+  Type.Literal("preparing"),
+  Type.Literal("verifying"),
+  Type.Literal("repairing"),
+  Type.Literal("sealing"),
+  Type.Literal("terminal"),
+  Type.Literal("blocked")
+]);
 export const CodingJobSchema = Type.Object(
   {
     id,
@@ -56,12 +65,47 @@ export const SourceFileSchema = Type.Object(
   },
   { additionalProperties: false }
 );
+export const CandidateDeltaSchema = Type.Object(
+  {
+    baselineDigest: digest,
+    files: Type.Array(SourceFileSchema, { maxItems: 200 }),
+    deleted: Type.Array(Type.String({ minLength: 1, maxLength: 512 }), { maxItems: 200 }),
+    revision: Type.Integer({ minimum: 0 })
+  },
+  { additionalProperties: false }
+);
+export const MutationReceiptSchema = Type.Object(
+  {
+    committed: Type.Boolean(),
+    tool: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+    output: Type.Optional(Type.String({ maxLength: 65536 })),
+    deltaDigest: Type.Optional(digest),
+    revision: Type.Optional(Type.Integer({ minimum: 1 }))
+  },
+  { additionalProperties: false }
+);
 export const VerificationSchema = Type.Object(
   {
     command: Type.String({ minLength: 1, maxLength: 2048 }),
     exitCode: Type.Integer(),
     output: Type.String({ maxLength: 65536 }),
     truncated: Type.Boolean()
+  },
+  { additionalProperties: false }
+);
+export const VerificationCheckpointSchema = Type.Object(
+  {
+    records: Type.Array(
+      Type.Object(
+        {
+          key: digest,
+          candidateDigest: digest,
+          check: VerificationSchema
+        },
+        { additionalProperties: false }
+      ),
+      { maxItems: 64 }
+    )
   },
   { additionalProperties: false }
 );
@@ -85,6 +129,10 @@ export const CodingProposalSchema = Type.Object(
   },
   { additionalProperties: false }
 );
+export const CodingProposalCheckpointSchema = Type.Object(
+  { proposal: Type.Optional(CodingProposalSchema) },
+  { additionalProperties: false }
+);
 export const CodingApprovalSchema = Type.Object(
   {
     id,
@@ -95,6 +143,27 @@ export const CodingApprovalSchema = Type.Object(
     runId: Type.Integer({ minimum: 1 }),
     expiresAt: timestamp,
     consumed: Type.Boolean()
+  },
+  { additionalProperties: false }
+);
+export const CodingExecutionSchema = Type.Object(
+  {
+    id,
+    jobId: id,
+    conversationId: Type.Optional(Type.Integer({ minimum: 1 })),
+    taskId: Type.Optional(Type.Integer({ minimum: 1 })),
+    task: Type.String({ minLength: 1, maxLength: 8000 }),
+    profileFingerprint: digest,
+    deadlineAt: timestamp,
+    fence: Type.Integer({ minimum: 0 }),
+    ownerToken: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+    ownerPid: Type.Optional(Type.Integer({ minimum: 1 })),
+    ownerHost: Type.Optional(Type.String({ minLength: 1, maxLength: 2048 })),
+    activeRunId: Type.Optional(Type.Integer({ minimum: 1 })),
+    terminalRunId: Type.Optional(Type.Integer({ minimum: 1 })),
+    phase: CodingExecutionPhaseSchema,
+    resumeCount: Type.Integer({ minimum: 0 }),
+    updatedAt: timestamp
   },
   { additionalProperties: false }
 );
@@ -121,8 +190,13 @@ export const PublicationSchema = Type.Object(
 export type CodingTask = Static<typeof CodingTaskSchema>;
 export type CodingJob = Static<typeof CodingJobSchema>;
 export type SourceFile = Static<typeof SourceFileSchema>;
+export type CandidateDelta = Static<typeof CandidateDeltaSchema>;
+export type MutationReceipt = Static<typeof MutationReceiptSchema>;
+export type VerificationCheckpoint = Static<typeof VerificationCheckpointSchema>;
 export type CodingProposal = Static<typeof CodingProposalSchema>;
+export type CodingProposalCheckpoint = Static<typeof CodingProposalCheckpointSchema>;
 export type CodingApproval = Static<typeof CodingApprovalSchema>;
+export type CodingExecution = Static<typeof CodingExecutionSchema>;
 export type Publication = Static<typeof PublicationSchema>;
 export function parseCoding<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (!Value.Check(schema, value)) throw new Error("invalid_coding_contract");

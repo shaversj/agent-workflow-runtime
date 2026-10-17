@@ -79,17 +79,19 @@ The bot responds when an allowed user mentions it in an allowed guild channel:
 @agent-ops runs list
 @agent-ops show run <run-id> repo=https://github.com/org/repo
 @agent-ops reports latest
-@agent-ops code recover <job-id>
+@agent-ops code resume <job-id>
 ```
 
-`code recover` is cleanup-only. It is accepted only from the original user and parent channel after
-the original preparation owner has stopped. It marks a still-preparing job interrupted and removes
-containers labelled for that job. Repeating it retries cleanup; it never reacquires source, calls a
-model, verifies code, grants approval, or publishes.
+`code resume` is accepted only from the original user and parent channel after the original
+preparation owner has stopped. It claims a higher execution fence, reacquires the pinned commit,
+restores the last committed candidate in fresh offline workers, and continues the existing job under
+its original deadline and budgets. Bot startup performs the same policy checks before automatically
+resuming eligible Discord jobs. Resume never grants approval or publishes.
 
 On `SIGINT` or `SIGTERM`, the bot closes admission, aborts active request scopes, removes workers,
 and waits up to `DISCORD_SHUTDOWN_GRACE_MS` for handlers to drain. It then performs owner-scoped
-forced worker cleanup before closing Discord transports. Interrupted work is not replayed.
+forced worker cleanup before closing Discord transports. A later bot instance can resume committed
+preparation state; human approval, publication, and uncertain Discord delivery are never replayed.
 
 If `DISCORD_DEFAULT_REPO_PATH` is set, users can omit the repo path:
 

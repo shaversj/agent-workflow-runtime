@@ -4,8 +4,13 @@ import { Type } from "typebox";
 
 import { redactApplicationText } from "../../harness/redaction.js";
 import type { CodingProfile } from "../../workspaces/execution.js";
-import { CodingProposalSchema, SourceFileSchema, parseCoding } from "./schemas.js";
-import type { CodingProposal, SourceFile } from "./schemas.js";
+import {
+  CandidateDeltaSchema,
+  CodingProposalSchema,
+  SourceFileSchema,
+  parseCoding
+} from "./schemas.js";
+import type { CandidateDelta, CodingProposal, SourceFile } from "./schemas.js";
 
 const DEFAULT_PROTECTED_PATHS = [
   ".agents/**",
@@ -125,6 +130,64 @@ export function proposalDigest(proposal: CodingProposal): string {
   return crypto.createHash("sha256").update(JSON.stringify(ordered)).digest("hex");
 }
 
+export function sourceManifestDigest(files: SourceFile[]): string {
+  validateSource(files);
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify(
+        [...files]
+          .sort((a, b) => a.path.localeCompare(b.path, "en"))
+          .map((file) => ({
+            path: file.path,
+            mode: file.mode,
+            content: crypto.createHash("sha256").update(file.content).digest("hex")
+          }))
+      )
+    )
+    .digest("hex");
+}
+
+export function checkpointCandidate(
+  profile: CodingProfile,
+  baseline: SourceFile[],
+  candidate: SourceFile[],
+  revision: number
+): CandidateDelta {
+  assertCandidateChangePolicy(profile, baseline, candidate);
+  const previous = new Map(baseline.map((file) => [file.path, file]));
+  const current = new Map(candidate.map((file) => [file.path, file]));
+  const files = candidate
+    .filter((file) => {
+      const old = previous.get(file.path);
+      return !old || old.content !== file.content || old.mode !== file.mode;
+    })
+    .sort((a, b) => a.path.localeCompare(b.path, "en"));
+  const deleted = baseline
+    .filter((file) => !current.has(file.path))
+    .map((file) => file.path)
+    .sort();
+  assertNoSecrets(files);
+  return parseCoding(CandidateDeltaSchema, {
+    baselineDigest: sourceManifestDigest(baseline),
+    files,
+    deleted,
+    revision
+  });
+}
+
+export function restoreCandidate(baseline: SourceFile[], delta: CandidateDelta): SourceFile[] {
+  const parsed = parseCoding(CandidateDeltaSchema, delta);
+  if (sourceManifestDigest(baseline) !== parsed.baselineDigest)
+    throw new Error("coding_baseline_changed");
+  const restored = new Map(baseline.map((file) => [file.path, file]));
+  for (const file of parsed.files) restored.set(file.path, file);
+  for (const file of parsed.deleted) restored.delete(file);
+  const candidate = [...restored.values()].sort((a, b) => a.path.localeCompare(b.path, "en"));
+  validateSource(candidate);
+  return candidate;
+}
+
 export function freezeProposal(
   input: Omit<
     CodingProposal,
@@ -154,18 +217,7 @@ export function freezeProposal(
     files.reduce((sum, file) => sum + Buffer.byteLength(file.content), 0) > 10 * 1024 * 1024
   )
     throw new Error("coding_change_limit");
-  for (const file of files) {
-    if (
-      redactApplicationText(file.content) !== file.content ||
-      redactApplicationText(file.path) !== file.path ||
-      file.path
-        .split("/")
-        .some((name) =>
-          /^\.env(?:\.|$)|^\.npmrc$|^credentials\.|^id_(rsa|ed25519)$|\.(pem|key|p12)$/i.test(name)
-        )
-    )
-      throw new Error("coding_secret_gate_blocked");
-  }
+  assertNoSecrets(files);
   const proposal = parseCoding(CodingProposalSchema, {
     ...input,
     task: redactApplicationText(input.task),
@@ -206,4 +258,19 @@ export function validateProposal(input: unknown, requiredChecks: string[]): Codi
     if (redactApplicationText(file.content) !== file.content)
       throw new Error("coding_secret_gate_blocked");
   return proposal;
+}
+
+function assertNoSecrets(files: SourceFile[]): void {
+  for (const file of files) {
+    if (
+      redactApplicationText(file.content) !== file.content ||
+      redactApplicationText(file.path) !== file.path ||
+      file.path
+        .split("/")
+        .some((name) =>
+          /^\.env(?:\.|$)|^\.npmrc$|^credentials\.|^id_(rsa|ed25519)$|\.(pem|key|p12)$/i.test(name)
+        )
+    )
+      throw new Error("coding_secret_gate_blocked");
+  }
 }

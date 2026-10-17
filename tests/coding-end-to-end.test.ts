@@ -9,9 +9,9 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 
 import { beginInteraction } from "../src/harness/interaction.js";
-import { isolatedCodingTools } from "../src/harness/coding-runtime.js";
 import { CodingGitHubSource } from "../src/plugins/coding/github-source.js";
 import type { CodingPolicy } from "../src/plugins/coding/config.js";
+import { checkpointCandidate } from "../src/plugins/coding/proposal.js";
 import { GitHubPublicationClient } from "../src/plugins/github/publication/client.js";
 import { prepareCoding } from "../src/workflows/code.js";
 import { inspectCoding } from "../src/workflows/coding-approval.js";
@@ -93,9 +93,18 @@ describe.skipIf(!image)("isolated coding preparation, approval and publication",
         parent,
         {
           source: fixture.source,
-          runtime: async (worker) => {
-            await worker.rpc("write", "app.js", "module.exports = (a,b) => a*b;\n");
-            return "Changed the implementation, but required tests still fail.";
+          turn: (options) => {
+            const candidate = options.baseline.map((file) =>
+              file.path === "app.js"
+                ? { ...file, content: "module.exports = (a,b) => a*b;\n" }
+                : file
+            );
+            return Promise.resolve({
+              conversationId: 1,
+              submissionId: 1,
+              summary: "Changed the implementation, but required tests still fail.",
+              candidate: checkpointCandidate(options.profile, options.baseline, candidate, 1)
+            });
           }
         }
       );
@@ -267,18 +276,18 @@ describe.skipIf(!image)("isolated coding preparation, approval and publication",
           preparation,
           {
             source: fixture.source,
-            runtime: async (worker, _task, _instructions, recorder, _policy, signal) => {
-              const edit = isolatedCodingTools(worker, recorder, signal).find(
-                (tool) => tool.name === "edit"
-              )!;
-              await edit.execute(
-                "edit-1",
-                { path: "app.js", edits: [{ oldText: "a-b", newText: "a+b" }] },
-                signal,
-                undefined,
-                undefined as never
+            turn: (options) => {
+              const candidate = options.baseline.map((file) =>
+                file.path === "app.js"
+                  ? { ...file, content: file.content.replace("a-b", "a+b") }
+                  : file
               );
-              return "Corrected addition and left publication to the operator.";
+              return Promise.resolve({
+                conversationId: 1,
+                submissionId: 1,
+                summary: "Corrected addition and left publication to the operator.",
+                candidate: checkpointCandidate(options.profile, options.baseline, candidate, 1)
+              });
             }
           }
         );

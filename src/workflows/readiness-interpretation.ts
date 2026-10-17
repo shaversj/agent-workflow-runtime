@@ -150,13 +150,14 @@ export async function runReadinessInterpretation(options: {
       }
     },
     toolExecution: "sequential",
-    shouldStopAfterTurn: ({ toolResults }) => {
-      if (toolResults.length === 0) return true;
+    finishTurn: ({ message, toolResults }) => {
+      if (message.stopReason === "error" || message.stopReason === "aborted") return;
+      if (toolResults.length === 0) return { action: "end" };
       if (turns >= MAX_TURNS) {
         turnLimitReached = true;
-        return true;
+        return { action: "end" };
       }
-      return false;
+      return;
     }
   });
 

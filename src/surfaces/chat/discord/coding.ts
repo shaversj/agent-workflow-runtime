@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { types } from "node:util";
 
 import { AttachmentBuilder, ChannelType } from "discord.js";
-import type { Message } from "discord.js";
+import type { Client, Message } from "discord.js";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 
@@ -18,18 +18,17 @@ import {
   parseCoding,
   PublicationSchema
 } from "../../../plugins/coding/schemas.js";
-import type { CodingTask } from "../../../plugins/coding/schemas.js";
+import type { CodingJob, CodingTask } from "../../../plugins/coding/schemas.js";
 import {
   GITHUB_PUBLICATION_WRITE_CREDENTIAL,
   githubPublicationTool
 } from "../../../plugins/github/tools.js";
-import { prepareCoding } from "../../../workflows/code.js";
-import {
-  codingDecision,
-  inspectCoding,
-  recoverCoding
-} from "../../../workflows/coding-approval.js";
+import { prepareCoding, resumeCoding } from "../../../workflows/code.js";
+import { codingDecision, inspectCoding } from "../../../workflows/coding-approval.js";
 import { discordExplicitTargetProvenance, parseTargetRef } from "../../../workspaces/index.js";
+import { openHistoryReader } from "../../../db/index.js";
+import type { DiscordBotConfig } from "./config.js";
+import type { DiscordLifecycle } from "./lifecycle.js";
 
 const pending = new Map<
   string,
@@ -44,7 +43,7 @@ const Selector = Type.Object(
       Type.Literal("reject"),
       Type.Literal("cancel"),
       Type.Literal("expire"),
-      Type.Literal("recover"),
+      Type.Literal("resume"),
       Type.Literal("reconcile")
     ]),
     id: Type.String({ pattern: "^[a-zA-Z0-9-]{1,128}$" }),
@@ -78,6 +77,123 @@ export function parseDiscordCoding(text: string) {
   if (["approve", "reconcile"].includes(parsed.action) && !parsed.digest)
     throw new Error("coding_digest_required");
   return parsed;
+}
+
+export function resumeDiscordCodingJobs(
+  client: Client,
+  config: DiscordBotConfig,
+  lifecycle: DiscordLifecycle
+): number {
+  const reader = openHistoryReader();
+  if (!reader) return 0;
+  let pending: ReturnType<typeof reader.listResumableCoding>;
+  try {
+    pending = reader.listResumableCoding(100);
+  } finally {
+    reader.close();
+  }
+  const eligible = pending.flatMap(({ job }) => {
+    const userId = /^discord:([0-9]+)$/.exec(job.principal)?.[1];
+    const [guildId, channelId] = job.conversationKey?.split(":") ?? [];
+    if (
+      !userId ||
+      !guildId ||
+      !channelId ||
+      !config.allowedUserIds.has(userId) ||
+      (!config.allowedGuildIds.has(guildId) && !config.allowedChannelIds.has(channelId))
+    )
+      return [];
+    return [{ job, channelId }];
+  });
+  let next = 0;
+  const scheduleNext = (): boolean => {
+    const item = eligible[next++];
+    if (!item) return false;
+    return lifecycle.run(
+      async (signal) => {
+        try {
+          await resumeDiscordCodingJob(client, item.job, item.channelId, signal);
+        } finally {
+          scheduleNext();
+        }
+      },
+      () => logger.error({ job_id: item.job.id }, "coding.resume_failed")
+    );
+  };
+  let initiallyScheduled = 0;
+  while (initiallyScheduled < 4 && scheduleNext()) ++initiallyScheduled;
+  return initiallyScheduled;
+}
+
+async function resumeDiscordCodingJob(
+  client: Client,
+  job: CodingJob,
+  channelId: string,
+  signal: AbortSignal
+): Promise<void> {
+  const recording = beginInteraction(
+    {
+      source: "runtime",
+      kind: "coding_runtime_resume",
+      userMessage: `Resume coding job ${job.id}`,
+      conversationKey: job.conversationKey,
+      target: job.repository,
+      metadata: { principal: job.principal, jobId: job.id }
+    },
+    { signal }
+  );
+  try {
+    const policy = loadCodingPolicy();
+    codingProfile(policy, job.principal, job.repository);
+    const resumed = await resumeCoding(job.id, job.principal, policy, recording);
+    const details = inspectCoding(
+      resumed.id,
+      job.principal,
+      policy,
+      recording,
+      job.conversationKey
+    );
+    const content = `Resumed coding job ${job.id}: ${resumed.status}\n${details.executionSummary}\nDigest: ${details.proposal?.digest ?? "none"}\nNo remote writes were performed.`;
+    const messageId = recording.appendMessage({ role: "assistant", content });
+    recording.finishRun({ status: "completed" });
+    recording.finishInteraction({ status: "completed" });
+    const delivery = recording.deliveryStart({ messageId, part: 1, attempt: 1 });
+    try {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel?.isTextBased() || !("send" in channel))
+        throw new Error("coding_discord_channel_unavailable");
+      const sent = await channel.send({
+        content,
+        files: details.proposal
+          ? [
+              new AttachmentBuilder(Buffer.from(details.display), {
+                name: `${details.proposal.id}.md`
+              })
+            ]
+          : [],
+        allowedMentions: { parse: [] }
+      });
+      recording.deliveryFinish({
+        id: delivery,
+        status: "acknowledged",
+        surfaceMessageId: sent.id
+      });
+    } catch {
+      recording.deliveryFinish({
+        id: delivery,
+        status: "uncertain",
+        error: "coding_discord_resume_delivery_failed"
+      });
+    }
+  } catch (error) {
+    recording.finishRun({ status: signal.aborted ? "interrupted" : "failed", error });
+    recording.finishInteraction({
+      status: signal.aborted ? "interrupted" : "failed",
+      error
+    });
+  } finally {
+    recording.close();
+  }
 }
 
 /** Only platform-authenticated human messages enter here, never model output or tool arguments. */
@@ -167,14 +283,23 @@ export async function handleDiscordCoding(
       });
       const details = inspectCoding(job.id, principal, policy, recording, conversation);
       display = details.display;
-      content = `Coding job ${job.id}: ${job.status}\nDigest: ${details.proposal?.digest ?? "none"}\nNo remote writes. Inspect the attached proposal before approval.\nTo publish: code approve ${job.id} ${details.proposal?.digest ?? "<digest>"}`;
+      content = `Coding job ${job.id}: ${job.status}\n${details.executionSummary}\nDigest: ${details.proposal?.digest ?? "none"}\nNo remote writes. Inspect the attached proposal before approval.\nTo publish: code approve ${job.id} ${details.proposal?.digest ?? "<digest>"}`;
     } else {
       const details = inspectCoding(request.id, principal, policy, recording, conversation);
       if (request.action === "show") {
-        content = `Job ${request.id}: ${details.job.status}\nDraft PR: ${details.publication?.prUrl ?? "none"}`;
+        content = `Job ${request.id}: ${details.job.status}\n${details.executionSummary}\nDraft PR: ${details.publication?.prUrl ?? "none"}`;
         display = details.display;
-      } else if (request.action === "recover") {
-        content = await recoverCoding(request.id, principal, policy, recording, conversation);
+      } else if (request.action === "resume") {
+        const resumed = await resumeCoding(request.id, principal, policy, recording);
+        const resumedDetails = inspectCoding(
+          resumed.id,
+          principal,
+          policy,
+          recording,
+          conversation
+        );
+        content = `Coding job ${resumed.id}: ${resumed.status}\n${resumedDetails.executionSummary}\nDigest: ${resumedDetails.proposal?.digest ?? "none"}`;
+        display = resumedDetails.display;
       } else if (request.action === "approve" || request.action === "reconcile") {
         if (!policy.publicationEnabled || !policy.writeToken)
           throw new Error("coding_publication_disabled");

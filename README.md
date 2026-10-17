@@ -15,7 +15,7 @@ This project builds that runtime layer: typed plugin contracts, disposable works
 
 - Accepts natural-language requests through CLI and Discord surfaces.
 - Discovers tools through validated plugin manifests instead of hard-coded surface commands.
-- Runs Pi coding-agent sessions inside constrained, offline Docker workers.
+- Runs resumable Pi Durable coding sessions through constrained, offline Docker workers.
 - Runs read-only repository readiness sweeps from a local Git checkout or Git URL, including the required public OSSRules reference comparison.
 - Provides a local TanStack Start history inspector for prior runs and artifacts.
 - Records interactions, tool calls, model usage, delivery state, and reports in SQLite.
@@ -50,7 +50,7 @@ Plugins are TypeBox-validated capability bundles. Each manifest declares what th
 
 | Plugin      | Responsibility                                                                                    | Authority                                                                  |
 | ----------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `coding`    | Prepare an isolated, verified change proposal with the Pi coding agent                            | Repository write access inside a disposable worker; never publishes        |
+| `coding`    | Prepare and resume an isolated, verified change proposal with Pi Durable                          | Repository write access inside a disposable worker; never publishes        |
 | `github`    | Read repository intelligence and, through hidden tools, publish or reconcile an approved proposal | Read-only by default; separate write credential plus exact-digest approval |
 | `readiness` | Gather repository evidence, interpret readiness, and inspect reports                              | Read-only target access; writes managed reports and history                |
 
@@ -59,7 +59,7 @@ Repository-authored guidance is shared runtime infrastructure consumed by coding
 ## Coding Agent Workflow
 
 1. **Prepare:** a CLI or Discord request selects an operator-allowed repository and pins its base commit.
-2. **Execute:** Pi edits the checkout through bounded tools inside an offline, non-root Docker worker.
+2. **Execute:** Pi Durable checkpoints model turns, budgets, and candidate deltas while bounded tools edit fresh offline, non-root Docker workers.
 3. **Verify:** required checks run in a fresh worker against immutable source plus the proposed change set. A complete failure may trigger one bounded repair attempt followed by another fresh verification.
 4. **Review:** the runtime stores an exact private proposal, records model and tool activity, and exposes a sealed digest for inspection.
 5. **Approve and publish:** the initiating human approves that exact digest; the runtime may then create a new branch and draft pull request.
@@ -68,6 +68,7 @@ Coding is disabled by default. See [Coding workflow and containment](docs/coding
 
 ```bash
 pnpm exec tsx src/cli.ts code prepare example/example-repository main "Fix the cart calculation"
+pnpm exec tsx src/cli.ts code resume <job-id>
 pnpm exec tsx src/cli.ts code show <job-id>
 pnpm exec tsx src/cli.ts code approve <job-id> --digest <64-hex-digest>
 ```
@@ -85,7 +86,7 @@ A sweep produces a Markdown report and a durable history record. The target is c
 - **Deterministic plus interpretive workflows:** bounded evidence gathering followed by LLM interpretation.
 - **Auditable execution:** structured Pino logs and normalized SQLite records for requests, activities, usage, artifacts, and delivery.
 - **Repository isolation:** managed Git mirrors, short-lived workspace leases, and read-only collection.
-- **Approval-bound coding:** offline Docker execution, proposal sealing, principal-bound confirmation, and draft-PR-only publication.
+- **Durable, approval-bound coding:** restart-safe preparation, offline Docker execution, proposal sealing, principal-bound confirmation, and draft-PR-only publication.
 - **Multiple surfaces, one runtime:** CLI, Discord, and a local browser inspector share contracts and history.
 
 ## Safety Model

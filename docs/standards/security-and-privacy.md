@@ -38,8 +38,8 @@ Coding and GitHub publication are separate, default-disabled capabilities even t
 plugin owns both read intelligence and publication tools. Read tools may be discovered by the
 model; publication and reconciliation tools must remain hidden and require exact harness-minted
 authority plus a separately scoped write credential. Require explicit operator-allowed GitHub
-targets/profiles and authenticated initiating principals. The coding runtime stays on the host
-with model credentials; read/edit/search/commands execute only in non-root offline workers,
+targets/profiles and authenticated initiating principals. The Pi Durable coding scheduler stays on
+the host with model credentials; repository read/edit/commands execute only in fresh non-root offline workers,
 without host mounts, home, history, credentials or Docker socket.
 Disable repository/global Pi resource discovery, extensions, settings and hooks. Guidance is
 bounded redacted text, not authority. Use digest-pinned trusted images, built-in seccomp, dropped
@@ -49,23 +49,31 @@ Containers are not a hostile multi-tenant security guarantee.
 Freeze regular UTF-8 file changes and verify in a fresh worker whose source is root-owned and
 read-only to checks. Reject unsupported entries, secret-bearing changes and unavailable/failed
 verification; do not silently redact operational code or run checks on the host. Exact private
-snapshots live in shared history SQLite with bounded retention; displayed artifacts and transcripts
-are separately redacted/bounded. Expiration deletes local private data, not cryptographic traces,
-remote branches or already delivered messages.
+proposals live in shared history SQLite with bounded retention. Private Pi Durable storage retains
+only sanitized model context, bounded candidate deltas, replay receipts, and budgets. Sanitized,
+bounded file reads selected by the model are part of that context; complete unchanged repository
+snapshots are not. Neither store may retain credentials or host paths, and shared tool audits must
+record bounded metadata rather than candidate snapshots. Displayed artifacts and shared transcripts
+are separately redacted and bounded. Expiration deletes local private data, not
+cryptographic traces, remote branches, or already delivered messages.
 
 Publication uses its own scoped credential and narrow Git-data/draft-PR APIs. Approval must be
 durable, authenticated, short-lived, single-use and bound to proposal content, base, target, checks,
 branch and PR metadata. Recheck policy and base before remote side effects; never force-update,
 merge, deploy or silently rebase. Record each remote stage and stop on fatal history failure.
-Uncertain outcomes require explicit reconciliation before retries. Never automatically replay
-coding/publication on restart or delete a partially published branch.
+Uncertain publication outcomes require explicit reconciliation before retries. Never submit human
+approval, Discord delivery, GitHub publication, or reconciliation to the Durable scheduler, and
+never delete a partially published branch. Coding preparation may resume only from committed,
+fenced checkpoints against its pinned base under the original principal, policy, budgets, and
+absolute deadline.
 
 Discord shutdown closes admission before cancellation, aborts every active request scope, performs
 process-owner-scoped worker cleanup, waits only a bounded grace period, and then awaits Discord
-transport destruction. Explicit recovery is bound to the original principal and normalized parent
-channel, is unavailable while the original run remains active, and performs only durable
-interruption plus job-labelled container cleanup. Recovery never reacquires source, invokes a
-model, verifies changes, approves, publishes, or replays prior delivery.
+transport destruction. Startup resume revalidates the original principal, normalized parent
+channel, repository profile, deadline, credentials, and dead-owner proof before claiming a higher
+execution fence. It removes only stale containers from the claimed execution, reacquires the pinned
+source, and restores committed candidate state into fresh workers. Resume may continue model work
+and verification, but never approves, publishes, reconciles, or replays prior delivery.
 
 ## Secrets
 

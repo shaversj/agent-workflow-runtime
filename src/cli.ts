@@ -43,7 +43,7 @@ function printUsage() {
   agent-ops code show <job-id> [--json]
   agent-ops code approve <job-id> --digest <digest>
   agent-ops code reconcile <job-id> --digest <digest>
-  agent-ops code reject|cancel|expire|recover <job-id>
+  agent-ops code reject|cancel|expire|resume <job-id>
   agent-ops history list [--target repo-target] [--source cli|discord] [--outcome completed] [--since ISO] [--until ISO] [--limit 20] [--cursor value] [--json]
   agent-ops history show <interaction-id> [--limit 50] [--cursor value] [--json]
   pnpm sweep -- <repo-target> [--ref main] [--harness-model MiniMax-M3] [--timeout-ms 120000]`);

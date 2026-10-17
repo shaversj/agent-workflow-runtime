@@ -20,6 +20,7 @@ import type {
   CodingJob,
   CodingProposal,
   CodingApproval,
+  CodingExecution,
   Publication
 } from "../plugins/coding/schemas.js";
 
@@ -56,7 +57,7 @@ export const interactions = sqliteTable(
     index("ix_interaction_owner").on(t.ownerHost, t.ownerPid),
     check(
       "ck_interaction_source",
-      sql`(${t.source} = 'cli' AND ${t.applicationId} IS NULL AND ${t.sourceMessageId} IS NULL) OR (${t.source} = 'discord' AND ${t.applicationId} IS NOT NULL AND ${t.sourceMessageId} IS NOT NULL)`
+      sql`(${t.source} IN ('cli','runtime') AND ${t.applicationId} IS NULL AND ${t.sourceMessageId} IS NULL) OR (${t.source} = 'discord' AND ${t.applicationId} IS NOT NULL AND ${t.sourceMessageId} IS NOT NULL)`
     )
   ]
 );
@@ -220,6 +221,27 @@ export const codingJobs = sqliteTable("coding_job", {
     .references(() => runs.id),
   status: text("status").notNull(),
   data: text("data", { mode: "json" }).$type<CodingJob>().notNull()
+});
+export const codingExecutions = sqliteTable("coding_execution", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id")
+    .notNull()
+    .unique()
+    .references(() => codingJobs.id),
+  conversationId: integer("conversation_id"),
+  taskId: integer("task_id"),
+  task: text("task").notNull(),
+  profileFingerprint: text("profile_fingerprint").notNull(),
+  deadlineAt: text("deadline_at").notNull(),
+  fence: integer("fence").notNull().default(0),
+  ownerToken: text("owner_token"),
+  ownerPid: integer("owner_pid"),
+  ownerHost: text("owner_host"),
+  activeRunId: integer("active_run_id").references(() => runs.id),
+  terminalRunId: integer("terminal_run_id").references(() => runs.id),
+  phase: text("phase").$type<CodingExecution["phase"]>().notNull(),
+  resumeCount: integer("resume_count").notNull().default(0),
+  updatedAt: text("updated_at").notNull()
 });
 export const codingProposals = sqliteTable("coding_proposal", {
   id: text("id").primaryKey(),

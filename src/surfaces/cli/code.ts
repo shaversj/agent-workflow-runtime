@@ -12,7 +12,8 @@ import {
   GITHUB_PUBLICATION_WRITE_CREDENTIAL,
   githubPublicationTool
 } from "../../plugins/github/tools.js";
-import { codingDecision, inspectCoding, recoverCoding } from "../../workflows/coding-approval.js";
+import { codingDecision, inspectCoding } from "../../workflows/coding-approval.js";
+import { cleanupLegacyCodingWorkers, resumeCoding } from "../../workflows/code.js";
 import { normalizeCliArgs } from "./args.js";
 
 const SelectorSchema = Type.Object(
@@ -23,7 +24,7 @@ const SelectorSchema = Type.Object(
       Type.Literal("reject"),
       Type.Literal("cancel"),
       Type.Literal("expire"),
-      Type.Literal("recover"),
+      Type.Literal("resume"),
       Type.Literal("reconcile")
     ]),
     jobId: Type.String({ pattern: "^[a-zA-Z0-9-]{1,128}$" }),
@@ -69,6 +70,8 @@ export function parseCodingCli(args: string[]) {
 
 export async function runCodingCli(args: string[]): Promise<void> {
   const request = parseCodingCli(args);
+  if (request.action === "prepare" || request.action === "resume")
+    await cleanupLegacyCodingWorkers();
   const principal = `cli:${process.getuid?.() ?? "unsupported"}`;
   const policy = loadCodingPolicy();
   const controller = new AbortController();
@@ -104,13 +107,14 @@ export async function runCodingCli(args: string[]): Promise<void> {
         controller.signal
       );
       output = result.text;
-    } else if (request.action === "recover") {
-      output = await recoverCoding(request.jobId, principal, policy, recording);
+    } else if (request.action === "resume") {
+      const job = await resumeCoding(request.jobId, principal, policy, recording);
+      output = inspectCoding(job.id, principal, policy, recording).inspection;
     } else if (request.action === "approve" || request.action === "reconcile") {
       const details = inspectCoding(request.jobId, principal, policy, recording);
       if (!process.stdin.isTTY || !process.stdout.isTTY)
         throw new Error("coding_human_terminal_required");
-      console.log(details.display);
+      console.log(details.inspection);
       const terminal = readline.createInterface({ input: process.stdin, output: process.stdout });
       let answer: string;
       try {
@@ -150,7 +154,7 @@ export async function runCodingCli(args: string[]): Promise<void> {
         request.action === "show"
           ? request.json
             ? redactApplicationText(JSON.stringify(details, null, 2))
-            : details.display
+            : details.inspection
           : codingDecision(
               { action: request.action, jobId: request.jobId },
               principal,

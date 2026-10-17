@@ -14,6 +14,7 @@ import type { InteractionRecorder } from "../../../harness/interaction.js";
 import { externalErrorAsError, projectExternalError } from "../../../harness/external-error.js";
 import { logger } from "../../../logger.js";
 import { beginChatInteraction } from "../../../workflows/chat-agent.js";
+import { cleanupLegacyCodingWorkers } from "../../../workflows/code.js";
 import { createChatRequestContext } from "../request-context.js";
 import { handleChatMessage } from "../runner.js";
 import type { ChatHandlerOptions } from "../types.js";
@@ -24,7 +25,7 @@ import {
   type DiscordInboundMessage
 } from "./adapter.js";
 import type { DiscordBotConfig } from "./config.js";
-import { handleDiscordCoding } from "./coding.js";
+import { handleDiscordCoding, resumeDiscordCodingJobs } from "./coding.js";
 import { DiscordLifecycle } from "./lifecycle.js";
 
 interface DiscordMessagePolicyInput {
@@ -65,6 +66,15 @@ export function createDiscordClient(config: DiscordBotConfig, options: DiscordBo
         bot_username: readyClient.user.username
       },
       "discord_bot.ready"
+    );
+    lifecycle.run(
+      async (signal) => {
+        const cleaned = await cleanupLegacyCodingWorkers({ signal });
+        logger.info({ surface: "discord", cleaned_jobs: cleaned }, "coding.legacy_cleanup_scanned");
+        const resumed = resumeDiscordCodingJobs(readyClient, config, lifecycle);
+        logger.info({ surface: "discord", scheduled_jobs: resumed }, "coding.resume_scanned");
+      },
+      () => logger.error({ surface: "discord" }, "coding.startup_recovery_failed")
     );
   });
 

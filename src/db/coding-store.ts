@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import os from "node:os";
 
 import type Database from "better-sqlite3";
 import { and, eq } from "drizzle-orm";
@@ -8,15 +9,28 @@ import { captureHistoryMetadata } from "../harness/history-capture.js";
 import * as c from "../plugins/coding/schemas.js";
 import {
   codingJobs,
+  codingExecutions,
   codingProposals,
   codingApprovals,
   codingPublications,
   runs
 } from "./schema.js";
 
+export const codingExecutionSql = `
+CREATE TABLE coding_execution (
+ id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE REFERENCES coding_job(id),
+ conversation_id INTEGER, task_id INTEGER, task TEXT NOT NULL, profile_fingerprint TEXT NOT NULL,
+ deadline_at TEXT NOT NULL, fence INTEGER NOT NULL DEFAULT 0,
+ owner_token TEXT, owner_pid INTEGER, owner_host TEXT,
+ active_run_id INTEGER REFERENCES run(id), terminal_run_id INTEGER REFERENCES run(id), phase TEXT NOT NULL,
+ resume_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+);
+`;
+
 export const codingBootstrapSql = `
 CREATE TABLE coding_job (id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES run(id),
  status TEXT NOT NULL, data TEXT NOT NULL CHECK(json_valid(data)));
+${codingExecutionSql}
 CREATE TABLE coding_proposal (id TEXT PRIMARY KEY, job_id TEXT NOT NULL UNIQUE REFERENCES coding_job(id),
  data TEXT NOT NULL CHECK(json_valid(data)));
 CREATE TABLE coding_approval (id TEXT PRIMARY KEY, job_id TEXT NOT NULL REFERENCES coding_job(id),
@@ -35,7 +49,8 @@ export class CodingStore {
   constructor(
     private readonly sqlite: Database.Database,
     private readonly runId: number,
-    private readonly assertActive: () => void
+    private readonly assertActive: () => void,
+    private readonly owner: Readonly<{ token: string; pid: number; host: string }>
   ) {
     this.db = drizzle(sqlite);
   }
@@ -61,8 +76,22 @@ export class CodingStore {
     if (!job) throw new CodingDecisionError("coding_job_not_found");
     return job;
   }
-  create(input: unknown): c.CodingJob {
+  create(
+    input: unknown,
+    execution: { profileFingerprint: string; deadlineAt: string; task: string }
+  ): c.CodingJob {
     const job = c.parseCoding(c.CodingJobSchema, input);
+    const preparedExecution = c.parseCoding(c.CodingExecutionSchema, {
+      id: crypto.randomUUID(),
+      jobId: job.id,
+      task: execution.task,
+      profileFingerprint: execution.profileFingerprint,
+      deadlineAt: execution.deadlineAt,
+      fence: 0,
+      phase: "waiting-runtime",
+      resumeCount: 0,
+      updatedAt: new Date().toISOString()
+    });
     if (job.runId !== this.runId || job.status !== "preparing")
       throw new Error("coding_job_invalid_start");
     return this.write(() => {
@@ -70,7 +99,188 @@ export class CodingStore {
         .insert(codingJobs)
         .values({ id: job.id, runId: this.runId, status: job.status, data: job })
         .run();
+      this.db.insert(codingExecutions).values(preparedExecution).run();
       return job;
+    });
+  }
+  execution(id: string, principal: string): c.CodingExecution {
+    this.required(id, principal);
+    const row = this.db.select().from(codingExecutions).where(eq(codingExecutions.jobId, id)).get();
+    if (!row) throw new CodingDecisionError("coding_execution_not_found");
+    return c.parseCoding(c.CodingExecutionSchema, compactExecution(row));
+  }
+  claimExecution(
+    id: string,
+    principal: string,
+    options: { allowCancelled?: boolean } = {}
+  ): c.CodingExecution {
+    return this.write(() => {
+      const job = this.required(id, principal);
+      if (job.status !== "preparing" || (job.cancelRequested && !options.allowCancelled))
+        throw new CodingDecisionError("coding_execution_unavailable");
+      const current = this.execution(id, principal);
+      if (current.ownerToken === this.owner.token) {
+        if (current.activeRunId === this.runId) return current;
+        throw new CodingDecisionError("coding_execution_owned");
+      }
+      if (current.ownerToken && !ownerIsProvablyAbsent(current))
+        throw new CodingDecisionError("coding_execution_owned");
+      const next = c.parseCoding(c.CodingExecutionSchema, {
+        ...current,
+        fence: current.fence + 1,
+        ownerToken: this.owner.token,
+        ownerPid: this.owner.pid,
+        ownerHost: this.owner.host,
+        activeRunId: this.runId,
+        phase: "preparing",
+        resumeCount: current.fence === 0 ? 0 : current.resumeCount + 1,
+        updatedAt: new Date().toISOString()
+      });
+      const updated = this.db
+        .update(codingExecutions)
+        .set(next)
+        .where(and(eq(codingExecutions.id, current.id), eq(codingExecutions.fence, current.fence)))
+        .run();
+      if (updated.changes !== 1) throw new Error("coding_execution_conflict");
+      return next;
+    });
+  }
+  updateExecution(
+    id: string,
+    fence: number,
+    principal: string,
+    changes: Pick<c.CodingExecution, "phase"> &
+      Partial<Pick<c.CodingExecution, "conversationId" | "taskId" | "terminalRunId">>
+  ): c.CodingExecution {
+    return this.write(() => {
+      const current = this.execution(id, principal);
+      assertExecutionOwner(current, fence, this.owner.token);
+      const next = c.parseCoding(c.CodingExecutionSchema, {
+        ...current,
+        ...changes,
+        updatedAt: new Date().toISOString()
+      });
+      const updated = this.db
+        .update(codingExecutions)
+        .set(next)
+        .where(
+          and(
+            eq(codingExecutions.id, current.id),
+            eq(codingExecutions.fence, fence),
+            eq(codingExecutions.ownerToken, this.owner.token)
+          )
+        )
+        .run();
+      if (updated.changes !== 1) throw new Error("coding_execution_ownership_lost");
+      return next;
+    });
+  }
+  releaseExecution(id: string, fence: number, principal: string): c.CodingExecution {
+    return this.write(() => {
+      const current = this.execution(id, principal);
+      assertExecutionOwner(current, fence, this.owner.token);
+      const next = c.parseCoding(c.CodingExecutionSchema, {
+        ...current,
+        ownerToken: undefined,
+        ownerPid: undefined,
+        ownerHost: undefined,
+        activeRunId: undefined,
+        phase: current.phase === "terminal" ? "terminal" : "waiting-runtime",
+        updatedAt: new Date().toISOString()
+      });
+      const updated = this.db
+        .update(codingExecutions)
+        .set({
+          ownerToken: null,
+          ownerPid: null,
+          ownerHost: null,
+          activeRunId: null,
+          phase: next.phase,
+          updatedAt: next.updatedAt
+        })
+        .where(
+          and(
+            eq(codingExecutions.id, current.id),
+            eq(codingExecutions.fence, fence),
+            eq(codingExecutions.ownerToken, this.owner.token)
+          )
+        )
+        .run();
+      if (updated.changes !== 1) throw new Error("coding_execution_ownership_lost");
+      return next;
+    });
+  }
+  claimLegacyCleanup(id: string, principal: string): c.CodingExecution {
+    return this.write(() => {
+      const job = this.required(id, principal);
+      const current = this.execution(id, principal);
+      if (
+        job.status !== "interrupted" ||
+        job.reason !== "coding_legacy_interrupted" ||
+        current.profileFingerprint !== "0".repeat(64) ||
+        !["blocked", "preparing"].includes(current.phase) ||
+        (current.ownerToken && !ownerIsProvablyAbsent(current))
+      )
+        throw new CodingDecisionError("coding_legacy_cleanup_unavailable");
+      const next = c.parseCoding(c.CodingExecutionSchema, {
+        ...current,
+        fence: current.fence + 1,
+        ownerToken: this.owner.token,
+        ownerPid: this.owner.pid,
+        ownerHost: this.owner.host,
+        activeRunId: this.runId,
+        phase: "preparing",
+        updatedAt: new Date().toISOString()
+      });
+      const updated = this.db
+        .update(codingExecutions)
+        .set(next)
+        .where(and(eq(codingExecutions.id, current.id), eq(codingExecutions.fence, current.fence)))
+        .run();
+      if (updated.changes !== 1) throw new Error("coding_execution_conflict");
+      return next;
+    });
+  }
+  finishLegacyCleanup(
+    id: string,
+    fence: number,
+    principal: string,
+    completed: boolean
+  ): c.CodingExecution {
+    return this.write(() => {
+      const current = this.execution(id, principal);
+      assertExecutionOwner(current, fence, this.owner.token);
+      const next = c.parseCoding(c.CodingExecutionSchema, {
+        ...current,
+        ownerToken: undefined,
+        ownerPid: undefined,
+        ownerHost: undefined,
+        activeRunId: undefined,
+        terminalRunId: completed ? this.runId : current.terminalRunId,
+        phase: completed ? "terminal" : "blocked",
+        updatedAt: new Date().toISOString()
+      });
+      const updated = this.db
+        .update(codingExecutions)
+        .set({
+          ownerToken: null,
+          ownerPid: null,
+          ownerHost: null,
+          activeRunId: null,
+          terminalRunId: next.terminalRunId ?? null,
+          phase: next.phase,
+          updatedAt: next.updatedAt
+        })
+        .where(
+          and(
+            eq(codingExecutions.id, current.id),
+            eq(codingExecutions.fence, fence),
+            eq(codingExecutions.ownerToken, this.owner.token)
+          )
+        )
+        .run();
+      if (updated.changes !== 1) throw new Error("coding_execution_ownership_lost");
+      return next;
     });
   }
   proposal(id: string, principal: string): c.CodingProposal {
@@ -99,14 +309,27 @@ export class CodingStore {
     if (updated.changes !== 1) throw new Error("coding_lifecycle_conflict");
     return data;
   }
-  seal(id: string, input: unknown, principal: string): c.CodingJob {
+  sealOrLoad(id: string, input: unknown, principal: string): c.CodingJob {
     const proposal = c.parseCoding(c.CodingProposalSchema, input);
     return this.write(() => {
       const job = this.required(id, principal);
+      const existing = this.db
+        .select()
+        .from(codingProposals)
+        .where(eq(codingProposals.jobId, id))
+        .get();
+      if (existing) {
+        const stored = c.parseCoding(c.CodingProposalSchema, existing.data);
+        if (JSON.stringify(stored) !== JSON.stringify(proposal) || job.proposalId !== stored.id)
+          throw new Error("coding_proposal_conflict");
+        return job;
+      }
       if (job.cancelRequested) throw new CodingDecisionError("coding_cancelled");
+      const execution = this.execution(id, principal);
       if (
         job.status !== "preparing" ||
-        job.runId !== this.runId ||
+        execution.activeRunId !== this.runId ||
+        execution.ownerToken !== this.owner.token ||
         proposal.jobId !== job.id ||
         proposal.repository !== job.repository ||
         proposal.baseCommit !== job.baseCommit ||
@@ -127,15 +350,19 @@ export class CodingStore {
       });
     });
   }
+  seal(id: string, input: unknown, principal: string): c.CodingJob {
+    return this.sealOrLoad(id, input, principal);
+  }
   approve(id: string, digest: string, principal: string): c.CodingApproval {
     return this.write(() => {
       const job = this.required(id, principal),
         proposal = this.proposal(id, principal);
       if (proposal.digest !== digest) throw new CodingDecisionError("coding_digest_mismatch");
+      const execution = this.execution(id, principal);
       const prepared = this.db
         .select({ status: runs.status })
         .from(runs)
-        .where(eq(runs.id, job.runId))
+        .where(eq(runs.id, execution.terminalRunId ?? job.runId))
         .get();
       if (
         job.status !== "proposal-ready" ||
@@ -258,6 +485,11 @@ export class CodingStore {
       return this.update(job, { cancelRequested: true });
     });
   }
+  assertExecutionRemovable(id: string, principal: string): void {
+    const execution = this.execution(id, principal);
+    if (execution.ownerToken && !ownerIsProvablyAbsent(execution))
+      throw new CodingDecisionError("coding_cleanup_active");
+  }
   resumePublication(id: string, principal: string): c.Publication {
     return this.write(() => {
       const operation = this.publication(id, principal);
@@ -321,22 +553,49 @@ export class CodingStore {
       this.db.delete(codingProposals).where(eq(codingProposals.jobId, id)).run();
     });
   }
-  recover(id: string, principal: string): c.CodingJob {
-    return this.write(() => {
-      const job = this.required(id, principal);
-      const run = this.db
-        .select({ status: runs.status })
-        .from(runs)
-        .where(eq(runs.id, job.runId))
-        .get();
-      if (
-        !run ||
-        run.status === "running" ||
-        !["preparing", "interrupted", "failed"].includes(job.status)
-      )
-        throw new CodingDecisionError("coding_recovery_unavailable");
-      if (job.status !== "preparing") return job;
-      return this.update(job, { status: "interrupted", reason: "coding_owner_stopped" });
-    });
+}
+
+export function compactExecution(row: typeof codingExecutions.$inferSelect): c.CodingExecution {
+  return {
+    id: row.id,
+    jobId: row.jobId,
+    task: row.task,
+    profileFingerprint: row.profileFingerprint,
+    deadlineAt: row.deadlineAt,
+    fence: row.fence,
+    phase: row.phase,
+    resumeCount: row.resumeCount,
+    updatedAt: row.updatedAt,
+    ...(row.conversationId === null ? {} : { conversationId: row.conversationId }),
+    ...(row.taskId === null ? {} : { taskId: row.taskId }),
+    ...(row.ownerToken === null ? {} : { ownerToken: row.ownerToken }),
+    ...(row.ownerPid === null ? {} : { ownerPid: row.ownerPid }),
+    ...(row.ownerHost === null ? {} : { ownerHost: row.ownerHost }),
+    ...(row.activeRunId === null ? {} : { activeRunId: row.activeRunId }),
+    ...(row.terminalRunId === null ? {} : { terminalRunId: row.terminalRunId })
+  };
+}
+
+function assertExecutionOwner(
+  execution: c.CodingExecution,
+  fence: number,
+  ownerToken: string
+): void {
+  if (execution.fence !== fence || execution.ownerToken !== ownerToken)
+    throw new Error("coding_execution_ownership_lost");
+}
+
+function ownerIsProvablyAbsent(execution: c.CodingExecution): boolean {
+  if (
+    execution.ownerHost !== os.hostname() ||
+    execution.ownerPid === undefined ||
+    execution.ownerPid === process.pid
+  )
+    return false;
+  try {
+    process.kill(execution.ownerPid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
   }
 }
