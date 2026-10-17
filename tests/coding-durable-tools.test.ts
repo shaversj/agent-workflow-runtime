@@ -28,7 +28,130 @@ import { checkpointCandidate, restoreCandidate } from "../src/plugins/coding/pro
 import type { SourceFile } from "../src/plugins/coding/schemas.js";
 import type { DockerWorker } from "../src/workspaces/docker.js";
 
+interface DurableHookTransaction {
+  doc(token: { definition: { kind: string } }): Promise<Record<string, unknown>>;
+}
+
+interface DurableHookConversation {
+  id: number;
+  commit(
+    change: (transaction: DurableHookTransaction) => Promise<void>,
+    context: typeof BACKGROUND_CONTEXT
+  ): Promise<void>;
+}
+
+function durableHookControl(documents: Record<string, Record<string, unknown>>) {
+  const conversation: DurableHookConversation = {
+    id: 1,
+    async commit(change) {
+      await change({
+        doc(token) {
+          return Promise.resolve(structuredClone(documents[token.definition.kind] ?? {}));
+        }
+      });
+    }
+  };
+  return {
+    conversation,
+    control: {
+      conversation: () => conversation,
+      recording: { assertHealthy: vi.fn() },
+      policy: { maxModelCalls: 2, maxTokens: 10_000 },
+      model: "MiniMax-M3",
+      instructions: "Test durable boundaries."
+    }
+  };
+}
+
+function durableHooks(documents: Record<string, Record<string, unknown>>) {
+  const { control } = durableHookControl(documents);
+  const extension = checkpointedCodingExtension(
+    {
+      baseline: [],
+      profile: {
+        image: `node@sha256:${"a".repeat(64)}`,
+        requiredChecks: [],
+        ignore: [],
+        principal: "cli:test"
+      },
+      assertOwned: vi.fn(),
+      execute: vi.fn()
+    },
+    control as Parameters<typeof checkpointedCodingExtension>[1]
+  );
+  const generation = extension.hooks?.find(({ task }) => task === "pi.generation")?.handlers as
+    | {
+        beforeRequest(
+          request: { messages: [] },
+          api: { taskId: number },
+          context: typeof BACKGROUND_CONTEXT
+        ): Promise<unknown>;
+      }
+    | undefined;
+  const tool = extension.hooks?.find(({ task }) => task === "pi.tool")?.handlers as
+    | {
+        beforeTool(
+          call: Record<string, never>,
+          api: { taskId: number },
+          context: typeof BACKGROUND_CONTEXT
+        ): Promise<unknown>;
+      }
+    | undefined;
+  if (!generation || !tool) throw new Error("coding_hooks_missing");
+  return { generation, tool };
+}
+
 describe("checkpointed durable coding tools", () => {
+  it("rejects malformed durable model reservations before reserving budget", async () => {
+    const { generation } = durableHooks({
+      "agent-ops.coding-model-reservation": {
+        reserved: "yes",
+        tokenBound: null,
+        reconciled: false
+      }
+    });
+
+    await expect(
+      generation.beforeRequest({ messages: [] }, { taskId: 1 }, BACKGROUND_CONTEXT)
+    ).rejects.toThrow("invalid_coding_contract");
+  });
+
+  it("rejects malformed durable budgets before model and tool accounting", async () => {
+    const documents = {
+      "agent-ops.coding-model-reservation": {
+        reserved: false,
+        tokenBound: null,
+        reconciled: false
+      },
+      "agent-ops.coding-tool-reservation": { reserved: false },
+      "agent-ops.coding-budget": {
+        modelCalls: -1,
+        tokens: 0,
+        toolCalls: 0,
+        repairAttempts: 0,
+        deadlineAt: new Date(Date.now() + 30_000).toISOString()
+      }
+    };
+    const { generation, tool } = durableHooks(documents);
+
+    await expect(
+      generation.beforeRequest({ messages: [] }, { taskId: 1 }, BACKGROUND_CONTEXT)
+    ).rejects.toThrow("invalid_coding_contract");
+    await expect(tool.beforeTool({}, { taskId: 2 }, BACKGROUND_CONTEXT)).rejects.toThrow(
+      "invalid_coding_contract"
+    );
+  });
+
+  it("rejects malformed durable tool reservations before reserving budget", async () => {
+    const { tool } = durableHooks({
+      "agent-ops.coding-tool-reservation": { reserved: 1 }
+    });
+
+    await expect(tool.beforeTool({}, { taskId: 1 }, BACKGROUND_CONTEXT)).rejects.toThrow(
+      "invalid_coding_contract"
+    );
+  });
+
   it("reuses committed verification results after reopening the execution store", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "coding-durable-verification-"));
     const databasePath = path.join(home, "execution.sqlite");

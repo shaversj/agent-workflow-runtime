@@ -17,11 +17,12 @@ import {
 } from "@earendil-works/pi-durable";
 import type { Conversation, ToolRegistration } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 
 import type { CodingProfile } from "../workspaces/execution.js";
 import { DockerWorker } from "../workspaces/docker.js";
 import {
+  candidateDeltaDigest,
   checkpointCandidate,
   restoreCandidate,
   sourceManifestDigest
@@ -64,23 +65,36 @@ const CodingMutationReceiptDoc = defineDoc<MutationReceipt>({
   initial: () => ({ committed: false })
 });
 
-interface DurableBudgetState extends Record<string, string | number> {
-  modelCalls: number;
-  tokens: number;
-  toolCalls: number;
-  repairAttempts: number;
-  deadlineAt: string;
-}
+const DurableBudgetStateSchema = Type.Object(
+  {
+    modelCalls: Type.Integer({ minimum: 0 }),
+    tokens: Type.Integer({ minimum: 0 }),
+    toolCalls: Type.Integer({ minimum: 0 }),
+    repairAttempts: Type.Integer({ minimum: 0 }),
+    deadlineAt: Type.String({
+      pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    })
+  },
+  { additionalProperties: false }
+);
+type DurableBudgetState = Static<typeof DurableBudgetStateSchema> & Record<string, string | number>;
 
-interface ModelReservation extends Record<string, boolean | number | null> {
-  reserved: boolean;
-  tokenBound: number | null;
-  reconciled: boolean;
-}
+const ModelReservationSchema = Type.Object(
+  {
+    reserved: Type.Boolean(),
+    tokenBound: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    reconciled: Type.Boolean()
+  },
+  { additionalProperties: false }
+);
+type ModelReservation = Static<typeof ModelReservationSchema> &
+  Record<string, boolean | number | null>;
 
-interface ToolReservation extends Record<string, boolean> {
-  reserved: boolean;
-}
+const ToolReservationSchema = Type.Object(
+  { reserved: Type.Boolean() },
+  { additionalProperties: false }
+);
+type ToolReservation = Static<typeof ToolReservationSchema> & Record<string, boolean>;
 
 const CodingBudgetDoc = defineDoc<DurableBudgetState>({
   kind: "agent-ops.coding-budget",
@@ -190,7 +204,10 @@ export async function initializeCodingCandidate(
     revision: 0
   });
   await conversation.commit(async (transaction) => {
-    const candidate = await transaction.doc(CodingCandidateDoc, conversation.id);
+    const candidate = parseCoding(
+      CandidateDeltaSchema,
+      await transaction.doc(CodingCandidateDoc, conversation.id)
+    );
     if (
       candidate.baselineDigest !== "0".repeat(64) &&
       candidate.baselineDigest !== initial.baselineDigest
@@ -226,13 +243,12 @@ export async function validateDurableCodingExecution(
   databasePath: string,
   signal: AbortSignal
 ): Promise<void> {
-  const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(databasePath),
+  await withCodingHarness(
+    databasePath,
+    signal,
     { models: createModels(), registry: createRegistry() },
-    context
+    () => Promise.resolve()
   );
-  await harness.close(BACKGROUND_CONTEXT);
 }
 
 interface DurableCodingTurnResult {
@@ -285,9 +301,9 @@ export async function runDurableCodingTurn(
     instructions: options.instructions
   });
   registry.install(extension);
-  const context = withAbortSignal(options.signal, BACKGROUND_CONTEXT);
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(options.databasePath),
+  return withCodingHarness(
+    options.databasePath,
+    options.signal,
     {
       models,
       registry,
@@ -301,68 +317,71 @@ export async function runDurableCodingTurn(
         }
       }
     },
-    context
-  );
-  const abort = () => {
-    if (conversation)
-      void conversation.abort(BACKGROUND_CONTEXT, { background: true }).catch(() => {});
-  };
-  options.signal.addEventListener("abort", abort, { once: true });
-  try {
-    conversation = await harness.root(context, {
-      agent: {
-        model: { provider: "minimax", modelId: options.model },
-        thinkingLevel: "off",
-        extensions: [extension],
-        tools: extension.tools,
-        modelTools: extension.tools,
-        cwd: "/workspace"
+    async (harness, context) => {
+      const abort = () => {
+        if (conversation)
+          void conversation.abort(BACKGROUND_CONTEXT, { background: true }).catch(() => {});
+      };
+      options.signal.addEventListener("abort", abort, { once: true });
+      try {
+        conversation = await harness.root(context, {
+          agent: {
+            model: { provider: "minimax", modelId: options.model },
+            thinkingLevel: "off",
+            extensions: [extension],
+            tools: extension.tools,
+            modelTools: extension.tools,
+            cwd: "/workspace"
+          }
+        });
+        await initializeCodingCandidate(conversation, options.baseline, context);
+        await initializeCodingBudget(conversation, options.deadlineAt, context);
+        const repairAttempt = options.repairAttempt;
+        if (repairAttempt !== undefined) {
+          await conversation.commit(async (transaction) => {
+            const budget = parseCoding(
+              DurableBudgetStateSchema,
+              await transaction.doc(CodingBudgetDoc, conversation!.id)
+            );
+            assertBudgetDeadline(budget);
+            const allowed = options.policy.maxRepairAttempts ?? 1;
+            if (repairAttempt > allowed || repairAttempt > budget.repairAttempts + 1)
+              throw new Error("coding_repair_budget_exhausted");
+            budget.repairAttempts = Math.max(budget.repairAttempts, repairAttempt);
+          }, context);
+        }
+        options.assertOwned();
+        const submission = await conversation.submit(
+          {
+            type: "input",
+            content: redactApplicationText(options.task).slice(0, 32768),
+            requestId: options.requestId
+          },
+          context
+        );
+        const settled = await submission.wait(context);
+        if (settled.status !== "done") throw new Error("coding_model_failed");
+        const view = await conversation.context(context);
+        const last = [...view.messages]
+          .reverse()
+          .find((message): message is AssistantMessage => message.role === "assistant");
+        if (!last || ["error", "aborted", "pending"].includes(last.stopReason))
+          throw new Error("coding_model_failed");
+        const candidate = parseCoding(
+          CandidateDeltaSchema,
+          await harness.snapshot(CodingCandidateDoc, conversation.id, context)
+        );
+        return {
+          conversationId: conversation.id,
+          submissionId: submission.id,
+          summary: redactApplicationText(assistantText(last)).slice(0, 8000),
+          candidate
+        };
+      } finally {
+        options.signal.removeEventListener("abort", abort);
       }
-    });
-    await initializeCodingCandidate(conversation, options.baseline, context);
-    await initializeCodingBudget(conversation, options.deadlineAt, context);
-    const repairAttempt = options.repairAttempt;
-    if (repairAttempt !== undefined) {
-      await conversation.commit(async (transaction) => {
-        const budget = await transaction.doc(CodingBudgetDoc, conversation!.id);
-        assertBudgetDeadline(budget);
-        const allowed = options.policy.maxRepairAttempts ?? 1;
-        if (repairAttempt > allowed || repairAttempt > budget.repairAttempts + 1)
-          throw new Error("coding_repair_budget_exhausted");
-        budget.repairAttempts = Math.max(budget.repairAttempts, repairAttempt);
-      }, context);
     }
-    options.assertOwned();
-    const submission = await conversation.submit(
-      {
-        type: "input",
-        content: redactApplicationText(options.task).slice(0, 32768),
-        requestId: options.requestId
-      },
-      context
-    );
-    const settled = await submission.wait(context);
-    if (settled.status !== "done") throw new Error("coding_model_failed");
-    const view = await conversation.context(context);
-    const last = [...view.messages]
-      .reverse()
-      .find((message): message is AssistantMessage => message.role === "assistant");
-    if (!last || ["error", "aborted", "pending"].includes(last.stopReason))
-      throw new Error("coding_model_failed");
-    const candidate = parseCoding(
-      CandidateDeltaSchema,
-      await harness.snapshot(CodingCandidateDoc, conversation.id, context)
-    );
-    return {
-      conversationId: conversation.id,
-      submissionId: submission.id,
-      summary: redactApplicationText(assistantText(last)).slice(0, 8000),
-      candidate
-    };
-  } finally {
-    options.signal.removeEventListener("abort", abort);
-    await harness.close(BACKGROUND_CONTEXT);
-  }
+  );
 }
 
 interface DurableCodingVerificationOptions {
@@ -383,133 +402,136 @@ export async function runDurableCodingVerification(
 ): Promise<CodingProposal["checks"]> {
   options.assertOwned();
   const registry = createRegistry();
-  const context = withAbortSignal(options.signal, BACKGROUND_CONTEXT);
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(options.databasePath),
+  return withCodingHarness(
+    options.databasePath,
+    options.signal,
     { models: createModels(), registry },
-    context
-  );
-  try {
-    const conversation = await harness.root(context);
-    await initializeCodingCandidate(conversation, options.baseline, context);
-    let storedCandidate = parseCoding(
-      CandidateDeltaSchema,
-      await harness.snapshot(CodingCandidateDoc, conversation.id, context)
-    );
-    if (JSON.stringify(storedCandidate) !== JSON.stringify(options.candidate)) {
-      const restored = restoreCandidate(options.baseline, options.candidate);
-      const validated = checkpointCandidate(
-        options.profile,
-        options.baseline,
-        restored,
-        options.candidate.revision
+    async (harness, context) => {
+      const conversation = await harness.root(context);
+      await initializeCodingCandidate(conversation, options.baseline, context);
+      let storedCandidate = parseCoding(
+        CandidateDeltaSchema,
+        await harness.snapshot(CodingCandidateDoc, conversation.id, context)
       );
-      if (
-        JSON.stringify(validated) !== JSON.stringify(options.candidate) ||
-        storedCandidate.revision > options.candidate.revision
-      )
-        throw new Error("coding_candidate_conflict");
-      await conversation.commit(async (transaction) => {
-        options.assertOwned();
-        const durable = await transaction.doc(CodingCandidateDoc, conversation.id);
-        if (durable.revision !== storedCandidate.revision)
-          throw new Error("coding_candidate_conflict");
-        Object.assign(durable, validated);
-      }, context);
-      storedCandidate = validated;
-    }
-    const candidate = restoreCandidate(options.baseline, storedCandidate);
-    const candidateDigest = crypto
-      .createHash("sha256")
-      .update(JSON.stringify(storedCandidate))
-      .digest("hex");
-    const checks: CodingProposal["checks"] = [];
-    for (const [index, command] of options.profile.requiredChecks.entries()) {
-      options.assertOwned();
-      options.signal.throwIfAborted();
-      const key = crypto
-        .createHash("sha256")
-        .update(`${candidateDigest}\0${index}\0${command}`)
-        .digest("hex");
-      const checkpoint = parseCoding(
-        VerificationCheckpointSchema,
-        (await harness.snapshot(CodingVerificationDoc, conversation.id, context)) ?? { records: [] }
-      );
-      const existing = checkpoint.records.find((record) => record.key === key);
-      if (existing) {
-        options.recording.recordTool(
-          {
-            name: "coding.verify_checkpoint",
-            source: "coding",
-            kind: "workflow",
-            input: { command, candidateDigest }
-          },
-          () => ({ command, exitCode: existing.check.exitCode, reused: true }),
-          options.signal
+      const requestedCandidateDigest = candidateDeltaDigest(options.candidate);
+      if (candidateDeltaDigest(storedCandidate) !== requestedCandidateDigest) {
+        const restored = restoreCandidate(options.baseline, options.candidate);
+        const validated = checkpointCandidate(
+          options.profile,
+          options.baseline,
+          restored,
+          options.candidate.revision
         );
-        checks.push(existing.check);
-        continue;
-      }
-      const check = parseCoding(
-        VerificationSchema,
-        await options.recording.recordTool(
-          { name: "coding.verify", source: "coding", kind: "capability", input: { command } },
-          async () => {
-            const worker = await (options.start ?? DockerWorker.start)(
-              options.profile,
-              options.signal,
-              options.jobId,
-              true,
-              options.fence
-            );
-            try {
-              options.assertOwned();
-              await worker.importFiles(candidate);
-              await worker.freeze();
-              const sealed = await worker.snapshot();
-              const result = await worker.command(command, options.signal);
-              const after = await worker.snapshot();
-              if (sourceManifestDigest(sealed) !== sourceManifestDigest(after))
-                throw new Error("coding_verification_mutated_snapshot");
-              if (result.command !== command) throw new Error("coding_verification_mismatch");
-              const check = parseCoding(VerificationSchema, {
-                ...result,
-                output: redactApplicationText(result.output)
-              });
-              await conversation.commit(async (transaction) => {
-                options.assertOwned();
-                const durableCandidate = await transaction.doc(CodingCandidateDoc, conversation.id);
-                if (JSON.stringify(durableCandidate) !== JSON.stringify(storedCandidate))
-                  throw new Error("coding_candidate_conflict");
-                const durable = await transaction.doc(CodingVerificationDoc, conversation.id);
-                const current = parseCoding(VerificationCheckpointSchema, durable);
-                const committed = current.records.find((record) => record.key === key);
-                if (committed) {
-                  if (JSON.stringify(committed.check) !== JSON.stringify(check))
-                    throw new Error("coding_verification_conflict");
-                  return;
-                }
-                Object.assign(
-                  durable,
-                  parseCoding(VerificationCheckpointSchema, {
-                    records: [...current.records, { key, candidateDigest, check }]
-                  })
-                );
-              }, context);
-              return check;
-            } finally {
-              await worker.close();
-            }
-          },
-          options.signal
+        if (
+          candidateDeltaDigest(validated) !== requestedCandidateDigest ||
+          storedCandidate.revision > options.candidate.revision
         )
-      );
-      checks.push(check);
+          throw new Error("coding_candidate_conflict");
+        await conversation.commit(async (transaction) => {
+          options.assertOwned();
+          const durable = parseCoding(
+            CandidateDeltaSchema,
+            await transaction.doc(CodingCandidateDoc, conversation.id)
+          );
+          if (durable.revision !== storedCandidate.revision)
+            throw new Error("coding_candidate_conflict");
+          Object.assign(durable, validated);
+        }, context);
+        storedCandidate = validated;
+      }
+      const candidate = restoreCandidate(options.baseline, storedCandidate);
+      const candidateDigest = candidateDeltaDigest(storedCandidate);
+      const checks: CodingProposal["checks"] = [];
+      for (const [index, command] of options.profile.requiredChecks.entries()) {
+        options.assertOwned();
+        options.signal.throwIfAborted();
+        const key = crypto
+          .createHash("sha256")
+          .update(`${candidateDigest}\0${index}\0${command}`)
+          .digest("hex");
+        const checkpoint = parseCoding(
+          VerificationCheckpointSchema,
+          (await harness.snapshot(CodingVerificationDoc, conversation.id, context)) ?? {
+            records: []
+          }
+        );
+        const existing = checkpoint.records.find((record) => record.key === key);
+        if (existing) {
+          options.recording.recordTool(
+            {
+              name: "coding.verify_checkpoint",
+              source: "coding",
+              kind: "workflow",
+              input: { command, candidateDigest }
+            },
+            () => ({ command, exitCode: existing.check.exitCode, reused: true }),
+            options.signal
+          );
+          checks.push(existing.check);
+          continue;
+        }
+        const check = parseCoding(
+          VerificationSchema,
+          await options.recording.recordTool(
+            { name: "coding.verify", source: "coding", kind: "capability", input: { command } },
+            async () => {
+              const worker = await (options.start ?? DockerWorker.start)(
+                options.profile,
+                options.signal,
+                options.jobId,
+                true,
+                options.fence
+              );
+              try {
+                options.assertOwned();
+                await worker.importFiles(candidate);
+                await worker.freeze();
+                const sealed = await worker.snapshot();
+                const result = await worker.command(command, options.signal);
+                const after = await worker.snapshot();
+                if (sourceManifestDigest(sealed) !== sourceManifestDigest(after))
+                  throw new Error("coding_verification_mutated_snapshot");
+                if (result.command !== command) throw new Error("coding_verification_mismatch");
+                const check = parseCoding(VerificationSchema, {
+                  ...result,
+                  output: redactApplicationText(result.output)
+                });
+                await conversation.commit(async (transaction) => {
+                  options.assertOwned();
+                  const durableCandidate = parseCoding(
+                    CandidateDeltaSchema,
+                    await transaction.doc(CodingCandidateDoc, conversation.id)
+                  );
+                  if (candidateDeltaDigest(durableCandidate) !== candidateDigest)
+                    throw new Error("coding_candidate_conflict");
+                  const durable = await transaction.doc(CodingVerificationDoc, conversation.id);
+                  const current = parseCoding(VerificationCheckpointSchema, durable);
+                  const committed = current.records.find((record) => record.key === key);
+                  if (committed) {
+                    if (JSON.stringify(committed.check) !== JSON.stringify(check))
+                      throw new Error("coding_verification_conflict");
+                    return;
+                  }
+                  Object.assign(
+                    durable,
+                    parseCoding(VerificationCheckpointSchema, {
+                      records: [...current.records, { key, candidateDigest, check }]
+                    })
+                  );
+                }, context);
+                return check;
+              } finally {
+                await worker.close();
+              }
+            },
+            options.signal
+          )
+        );
+        checks.push(check);
+      }
+      return checks;
     }
-    return checks;
-  } finally {
-    await harness.close(BACKGROUND_CONTEXT);
-  }
+  );
 }
 
 export async function checkpointDurableCodingProposal(options: {
@@ -519,30 +541,27 @@ export async function checkpointDurableCodingProposal(options: {
   assertOwned: () => void;
 }): Promise<CodingProposal> {
   options.assertOwned();
-  const context = withAbortSignal(options.signal, BACKGROUND_CONTEXT);
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(options.databasePath),
+  return withCodingHarness(
+    options.databasePath,
+    options.signal,
     { models: createModels(), registry: createRegistry() },
-    context
+    async (harness, context) => {
+      const conversation = await harness.root(context);
+      const proposal = parseCoding(CodingProposalSchema, options.proposal);
+      await conversation.commit(async (transaction) => {
+        options.assertOwned();
+        const durable = await transaction.doc(CodingProposalCheckpointDoc, conversation.id);
+        const checkpoint = parseCoding(CodingProposalCheckpointSchema, durable);
+        if (checkpoint.proposal) {
+          if (JSON.stringify(checkpoint.proposal) !== JSON.stringify(proposal))
+            throw new Error("coding_proposal_conflict");
+          return;
+        }
+        Object.assign(durable, parseCoding(CodingProposalCheckpointSchema, { proposal }));
+      }, context);
+      return proposal;
+    }
   );
-  try {
-    const conversation = await harness.root(context);
-    const proposal = parseCoding(CodingProposalSchema, options.proposal);
-    await conversation.commit(async (transaction) => {
-      options.assertOwned();
-      const durable = await transaction.doc(CodingProposalCheckpointDoc, conversation.id);
-      const checkpoint = parseCoding(CodingProposalCheckpointSchema, durable);
-      if (checkpoint.proposal) {
-        if (JSON.stringify(checkpoint.proposal) !== JSON.stringify(proposal))
-          throw new Error("coding_proposal_conflict");
-        return;
-      }
-      Object.assign(durable, parseCoding(CodingProposalCheckpointSchema, { proposal }));
-    }, context);
-    return proposal;
-  } finally {
-    await harness.close(BACKGROUND_CONTEXT);
-  }
 }
 
 async function initializeCodingBudget(
@@ -551,7 +570,10 @@ async function initializeCodingBudget(
   context: Parameters<Conversation["commit"]>[1]
 ): Promise<void> {
   await conversation.commit(async (transaction) => {
-    const budget = await transaction.doc(CodingBudgetDoc, conversation.id);
+    const budget = parseCoding(
+      DurableBudgetStateSchema,
+      await transaction.doc(CodingBudgetDoc, conversation.id)
+    );
     if (budget.deadlineAt !== new Date(0).toISOString() && budget.deadlineAt !== deadlineAt)
       throw new Error("coding_budget_conflict");
     budget.deadlineAt = deadlineAt;
@@ -623,16 +645,23 @@ export function checkpointedCodingExtension(
             committed: true,
             tool: tool.name,
             output,
-            deltaDigest: crypto.createHash("sha256").update(JSON.stringify(next)).digest("hex"),
+            deltaDigest: candidateDeltaDigest(next),
             revision: next.revision
           });
           await api.commit(async (transaction) => {
             runtime.assertOwned();
-            const candidate = await transaction.doc(CodingCandidateDoc, api.conversationId);
+            const candidate = parseCoding(
+              CandidateDeltaSchema,
+              await transaction.doc(CodingCandidateDoc, api.conversationId)
+            );
             if (candidate.revision !== current.revision)
               throw new Error("coding_candidate_conflict");
             Object.assign(candidate, next);
-            Object.assign(await transaction.doc(CodingMutationReceiptDoc, api.taskId), receipt);
+            const durableReceipt = parseCoding(
+              MutationReceiptSchema,
+              await transaction.doc(CodingMutationReceiptDoc, api.taskId)
+            );
+            Object.assign(durableReceipt, receipt);
           }, context);
           return { tool: tool.name, revision: current.revision + 1 };
         };
@@ -736,9 +765,15 @@ export function checkpointedCodingExtension(
             control.recording.assertHealthy();
             const tokenBound = Buffer.byteLength(JSON.stringify(messages)) + 8192;
             await control.conversation().commit(async (transaction) => {
-              const reservation = await transaction.doc(CodingModelReservationDoc, api.taskId);
+              const reservation = parseCoding(
+                ModelReservationSchema,
+                await transaction.doc(CodingModelReservationDoc, api.taskId)
+              );
               if (!reservation.reserved) {
-                const budget = await transaction.doc(CodingBudgetDoc, control.conversation().id);
+                const budget = parseCoding(
+                  DurableBudgetStateSchema,
+                  await transaction.doc(CodingBudgetDoc, control.conversation().id)
+                );
                 assertBudgetDeadline(budget);
                 if (
                   budget.modelCalls >= control.policy.maxModelCalls ||
@@ -761,9 +796,15 @@ export function checkpointedCodingExtension(
             const usage = observedModelUsage(message);
             if (!usage) throw new Error("coding_usage_unknown");
             await control.conversation().commit(async (transaction) => {
-              const reservation = await transaction.doc(CodingModelReservationDoc, api.taskId);
+              const reservation = parseCoding(
+                ModelReservationSchema,
+                await transaction.doc(CodingModelReservationDoc, api.taskId)
+              );
               if (!reservation.reconciled) {
-                const budget = await transaction.doc(CodingBudgetDoc, control.conversation().id);
+                const budget = parseCoding(
+                  DurableBudgetStateSchema,
+                  await transaction.doc(CodingBudgetDoc, control.conversation().id)
+                );
                 budget.tokens = Math.max(0, budget.tokens - (reservation.tokenBound ?? 0));
                 budget.tokens += usage.totalTokens;
                 reservation.reconciled = true;
@@ -788,9 +829,15 @@ export function checkpointedCodingExtension(
           beforeTool: async (_call, api, context) => {
             control.recording.assertHealthy();
             await control.conversation().commit(async (transaction) => {
-              const reservation = await transaction.doc(CodingToolReservationDoc, api.taskId);
+              const reservation = parseCoding(
+                ToolReservationSchema,
+                await transaction.doc(CodingToolReservationDoc, api.taskId)
+              );
               if (!reservation.reserved) {
-                const budget = await transaction.doc(CodingBudgetDoc, control.conversation().id);
+                const budget = parseCoding(
+                  DurableBudgetStateSchema,
+                  await transaction.doc(CodingBudgetDoc, control.conversation().id)
+                );
                 assertBudgetDeadline(budget);
                 if (budget.toolCalls >= 128) throw new Error("coding_tool_budget_exhausted");
                 ++budget.toolCalls;
@@ -818,6 +865,24 @@ export function checkpointedCodingExtension(
 
 function assertBudgetDeadline(budget: DurableBudgetState): void {
   if (Date.parse(budget.deadlineAt) <= Date.now()) throw new Error("coding_deadline_exceeded");
+}
+
+async function withCodingHarness<T>(
+  databasePath: string,
+  signal: AbortSignal,
+  options: Parameters<typeof Harness.open>[1],
+  operation: (
+    harness: Awaited<ReturnType<typeof Harness.open>>,
+    context: Parameters<typeof Harness.open>[2]
+  ) => Promise<T>
+): Promise<T> {
+  const context = withAbortSignal(signal, BACKGROUND_CONTEXT);
+  const harness = await Harness.open(await openNodeSqliteStorage(databasePath), options, context);
+  try {
+    return await operation(harness, context);
+  } finally {
+    await harness.close(BACKGROUND_CONTEXT);
+  }
 }
 
 function durableToolAuditInput(name: string, args: object): object {
