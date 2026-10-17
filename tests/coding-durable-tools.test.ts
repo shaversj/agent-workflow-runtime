@@ -158,6 +158,20 @@ describe("checkpointed durable coding tools", () => {
     ).rejects.toThrow("invalid_coding_contract");
   });
 
+  it.each([
+    { reserved: true, tokenBound: null, reconciled: false },
+    { reserved: false, tokenBound: 100, reconciled: false },
+    { reserved: false, tokenBound: null, reconciled: true }
+  ])("rejects inconsistent durable model reservation state", async (reservation) => {
+    const { generation } = durableHooks({
+      "agent-ops.coding-model-reservation": reservation
+    });
+
+    await expect(
+      generation.beforeRequest({ messages: [] }, { taskId: 1 }, BACKGROUND_CONTEXT)
+    ).rejects.toThrow("invalid_coding_contract");
+  });
+
   it("rejects malformed durable budgets before model and tool accounting", async () => {
     const documents = {
       "agent-ops.coding-model-reservation": {

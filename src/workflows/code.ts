@@ -365,16 +365,16 @@ export async function prepareCoding(
         start,
         apiKey: process.env.MINIMAX_API_KEY
       });
-      recording.assertHealthy();
-      signal.throwIfAborted();
-      const final = restoreCandidate(baseline, result.candidate);
-      validateSource(final);
-      assertCandidateChangePolicy(profile, baseline, final);
       updateExecution({
         phase: "verifying",
         conversationId: result.conversationId,
         taskId: result.submissionId
       });
+      recording.assertHealthy();
+      signal.throwIfAborted();
+      const final = restoreCandidate(baseline, result.candidate);
+      validateSource(final);
+      assertCandidateChangePolicy(profile, baseline, final);
       return { summary: result.summary, final, checks: await durableVerify(result.candidate) };
     };
     let attemptResult = await runAttempt({

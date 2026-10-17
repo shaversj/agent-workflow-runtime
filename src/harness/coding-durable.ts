@@ -79,14 +79,26 @@ const DurableBudgetStateSchema = Type.Object(
 );
 type DurableBudgetState = Static<typeof DurableBudgetStateSchema> & Record<string, string | number>;
 
-const ModelReservationSchema = Type.Object(
+const UnreservedModelReservationSchema = Type.Object(
   {
-    reserved: Type.Boolean(),
-    tokenBound: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+    reserved: Type.Literal(false),
+    tokenBound: Type.Null(),
+    reconciled: Type.Literal(false)
+  },
+  { additionalProperties: false }
+);
+const ActiveModelReservationSchema = Type.Object(
+  {
+    reserved: Type.Literal(true),
+    tokenBound: Type.Integer({ minimum: 0 }),
     reconciled: Type.Boolean()
   },
   { additionalProperties: false }
 );
+const ModelReservationSchema = Type.Union([
+  UnreservedModelReservationSchema,
+  ActiveModelReservationSchema
+]);
 type ModelReservation = Static<typeof ModelReservationSchema> &
   Record<string, boolean | number | null>;
 
@@ -782,8 +794,14 @@ export function checkpointedCodingExtension(
                   throw new Error("coding_model_budget_exhausted");
                 ++budget.modelCalls;
                 budget.tokens += tokenBound;
-                reservation.reserved = true;
-                reservation.tokenBound = tokenBound;
+                Object.assign(
+                  reservation,
+                  parseCoding(ModelReservationSchema, {
+                    reserved: true,
+                    tokenBound,
+                    reconciled: false
+                  })
+                );
               }
             }, context);
             modelCalls.set(
@@ -797,7 +815,7 @@ export function checkpointedCodingExtension(
             if (!usage) throw new Error("coding_usage_unknown");
             await control.conversation().commit(async (transaction) => {
               const reservation = parseCoding(
-                ModelReservationSchema,
+                ActiveModelReservationSchema,
                 await transaction.doc(CodingModelReservationDoc, api.taskId)
               );
               if (!reservation.reconciled) {
