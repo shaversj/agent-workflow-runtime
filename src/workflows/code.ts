@@ -320,40 +320,12 @@ export async function prepareCoding(
     const baseline = base;
     const turn =
       dependencies.turn ?? (await import("../harness/coding-durable.js")).runDurableCodingTurn;
-    updateExecution({ phase: "preparing" });
-    let turnResult = await turn({
-      databasePath,
-      baseline,
-      profile,
-      jobId: job.id,
-      fence,
-      task: task.task,
-      instructions: codingInstructions(baseline),
-      requestId: "initial",
-      deadlineAt: execution.deadlineAt,
-      policy,
-      model: policy.model,
-      recording,
-      signal,
-      assertOwned,
-      start,
-      apiKey: process.env.MINIMAX_API_KEY
-    });
-    updateExecution({
-      phase: "verifying",
-      conversationId: turnResult.conversationId,
-      taskId: turnResult.submissionId
-    });
-    let summary = turnResult.summary;
-    recording.assertHealthy();
-    signal.throwIfAborted();
-    let final = restoreCandidate(baseline, turnResult.candidate);
-    validateSource(final);
-    assertCandidateChangePolicy(profile, baseline, final);
     const verify =
       dependencies.verify ??
       (await import("../harness/coding-durable.js")).runDurableCodingVerification;
-    const durableVerify = (candidate: typeof turnResult.candidate) =>
+    const durableVerify = (
+      candidate: Awaited<ReturnType<typeof runDurableCodingTurn>>["candidate"]
+    ) =>
       verify({
         databasePath,
         baseline,
@@ -366,29 +338,26 @@ export async function prepareCoding(
         assertOwned,
         start
       });
-    let checks = await durableVerify(turnResult.candidate);
-    for (
-      let attempt = 1;
-      attempt <= (policy.maxRepairAttempts ?? 1) && repairable(checks);
-      attempt++
-    ) {
-      logger.info(
-        { run_id: recording.runId, job_id: job.id, repair_attempt: attempt },
-        "coding.repair_started"
-      );
-      updateExecution({ phase: "repairing" });
-      turnResult = await turn({
+    const instructions = codingInstructions(baseline);
+    const runAttempt = async (attempt: {
+      phase: "preparing" | "repairing";
+      task: string;
+      requestId: string;
+      repairAttempt?: number;
+    }) => {
+      updateExecution({ phase: attempt.phase });
+      const result = await turn({
         databasePath,
         baseline,
         profile,
-        jobId: job.id,
-        fence,
-        task: repairTask(task.task, checks),
-        instructions: codingInstructions(baseline),
-        requestId: `repair-${attempt}`,
+        jobId: job!.id,
+        fence: fence!,
+        task: attempt.task,
+        instructions,
+        requestId: attempt.requestId,
         deadlineAt: execution.deadlineAt,
         policy,
-        repairAttempt: attempt,
+        ...(attempt.repairAttempt === undefined ? {} : { repairAttempt: attempt.repairAttempt }),
         model: policy.model,
         recording,
         signal,
@@ -396,18 +365,34 @@ export async function prepareCoding(
         start,
         apiKey: process.env.MINIMAX_API_KEY
       });
-      summary = turnResult.summary;
       recording.assertHealthy();
       signal.throwIfAborted();
-      final = restoreCandidate(baseline, turnResult.candidate);
+      const final = restoreCandidate(baseline, result.candidate);
       validateSource(final);
       assertCandidateChangePolicy(profile, baseline, final);
       updateExecution({
         phase: "verifying",
-        conversationId: turnResult.conversationId,
-        taskId: turnResult.submissionId
+        conversationId: result.conversationId,
+        taskId: result.submissionId
       });
-      checks = await durableVerify(turnResult.candidate);
+      return { summary: result.summary, final, checks: await durableVerify(result.candidate) };
+    };
+    let attempt = await runAttempt({ phase: "preparing", task: task.task, requestId: "initial" });
+    for (
+      let repairAttempt = 1;
+      repairAttempt <= (policy.maxRepairAttempts ?? 1) && repairable(attempt.checks);
+      repairAttempt++
+    ) {
+      logger.info(
+        { run_id: recording.runId, job_id: job.id, repair_attempt: repairAttempt },
+        "coding.repair_started"
+      );
+      attempt = await runAttempt({
+        phase: "repairing",
+        task: repairTask(task.task, attempt.checks),
+        requestId: `repair-${repairAttempt}`,
+        repairAttempt
+      });
     }
     updateExecution({ phase: "sealing" });
     const proposal = freezeProposal(
@@ -418,12 +403,12 @@ export async function prepareCoding(
         baseBranch: task.baseBranch,
         baseCommit,
         task: task.task,
-        summary,
+        summary: attempt.summary,
         createdAt: job.createdAt
       },
       baseline,
-      final,
-      checks
+      attempt.final,
+      attempt.checks
     );
     const checkpointProposal =
       dependencies.checkpointProposal ??

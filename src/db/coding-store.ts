@@ -105,6 +105,9 @@ export class CodingStore {
   }
   execution(id: string, principal: string): c.CodingExecution {
     this.required(id, principal);
+    return this.executionRecord(id);
+  }
+  private executionRecord(id: string): c.CodingExecution {
     const row = this.db.select().from(codingExecutions).where(eq(codingExecutions.jobId, id)).get();
     if (!row) throw new CodingDecisionError("coding_execution_not_found");
     return c.parseCoding(c.CodingExecutionSchema, compactExecution(row));
@@ -118,7 +121,7 @@ export class CodingStore {
       const job = this.required(id, principal);
       if (job.status !== "preparing" || (job.cancelRequested && !options.allowCancelled))
         throw new CodingDecisionError("coding_execution_unavailable");
-      const current = this.execution(id, principal);
+      const current = this.executionRecord(id);
       if (current.ownerToken === this.owner.token) {
         if (current.activeRunId === this.runId) return current;
         throw new CodingDecisionError("coding_execution_owned");
@@ -153,7 +156,8 @@ export class CodingStore {
       Partial<Pick<c.CodingExecution, "conversationId" | "taskId" | "terminalRunId">>
   ): c.CodingExecution {
     return this.write(() => {
-      const current = this.execution(id, principal);
+      this.required(id, principal);
+      const current = this.executionRecord(id);
       assertExecutionOwner(current, fence, this.owner.token);
       const next = c.parseCoding(c.CodingExecutionSchema, {
         ...current,
@@ -177,7 +181,8 @@ export class CodingStore {
   }
   releaseExecution(id: string, fence: number, principal: string): c.CodingExecution {
     return this.write(() => {
-      const current = this.execution(id, principal);
+      this.required(id, principal);
+      const current = this.executionRecord(id);
       assertExecutionOwner(current, fence, this.owner.token);
       const next = c.parseCoding(c.CodingExecutionSchema, {
         ...current,
@@ -213,7 +218,7 @@ export class CodingStore {
   claimLegacyCleanup(id: string, principal: string): c.CodingExecution {
     return this.write(() => {
       const job = this.required(id, principal);
-      const current = this.execution(id, principal);
+      const current = this.executionRecord(id);
       if (
         job.status !== "interrupted" ||
         job.reason !== "coding_legacy_interrupted" ||
@@ -248,7 +253,8 @@ export class CodingStore {
     completed: boolean
   ): c.CodingExecution {
     return this.write(() => {
-      const current = this.execution(id, principal);
+      this.required(id, principal);
+      const current = this.executionRecord(id);
       assertExecutionOwner(current, fence, this.owner.token);
       const next = c.parseCoding(c.CodingExecutionSchema, {
         ...current,
@@ -325,7 +331,7 @@ export class CodingStore {
         return job;
       }
       if (job.cancelRequested) throw new CodingDecisionError("coding_cancelled");
-      const execution = this.execution(id, principal);
+      const execution = this.executionRecord(id);
       if (
         job.status !== "preparing" ||
         execution.activeRunId !== this.runId ||
@@ -358,7 +364,7 @@ export class CodingStore {
       const job = this.required(id, principal),
         proposal = this.proposal(id, principal);
       if (proposal.digest !== digest) throw new CodingDecisionError("coding_digest_mismatch");
-      const execution = this.execution(id, principal);
+      const execution = this.executionRecord(id);
       const prepared = this.db
         .select({ status: runs.status })
         .from(runs)
