@@ -42,6 +42,23 @@ describe("frozen coding proposals", () => {
     expect(candidateDeltaDigest({ ...canonical, revision: 2 })).not.toBe(
       candidateDeltaDigest(canonical)
     );
+    expect(
+      candidateDeltaDigest({
+        ...canonical,
+        files: [{ ...canonical.files[0]!, content: "changed\n" }]
+      })
+    ).not.toBe(candidateDeltaDigest(canonical));
+    expect(
+      candidateDeltaDigest({
+        ...canonical,
+        deleted: ["second.js", "old.js"]
+      })
+    ).not.toBe(
+      candidateDeltaDigest({
+        ...canonical,
+        deleted: ["old.js", "second.js"]
+      })
+    );
     expect(() => candidateDeltaDigest({ ...canonical, extra: true } as never)).toThrow(
       "invalid_coding_contract"
     );

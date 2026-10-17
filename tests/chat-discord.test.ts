@@ -33,21 +33,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Discord chat surface", () => {
-  it.each([
-    ChannelType.PublicThread,
-    ChannelType.PrivateThread,
-    ChannelType.AnnouncementThread
-  ])("normalizes Discord thread type %s to its parent channel", (type) => {
-    const message = {
-      channelId: "thread-1",
-      channel: { type, parentId: "channel-1" }
-    } as unknown as Message;
+  it.each([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread])(
+    "normalizes Discord thread type %s to its parent channel",
+    (type) => {
+      const message = {
+        channelId: "thread-1",
+        channel: { type, parentId: "channel-1" }
+      } as unknown as Message;
 
-    expect(discordChannelContext(message)).toEqual({
-      channelId: "channel-1",
-      threadId: "thread-1"
-    });
-  });
+      expect(discordChannelContext(message)).toEqual({
+        channelId: "channel-1",
+        threadId: "thread-1"
+      });
+    }
+  );
 
   it("falls back to the thread channel when Discord omits its parent", () => {
     const message = {

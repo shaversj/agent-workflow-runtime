@@ -136,7 +136,7 @@ describe("checkpointed durable coding tools", () => {
           signal: abortOnOpen.signal,
           assertOwned: vi.fn()
         })
-      ).rejects.toThrow();
+      ).rejects.toThrow("coding_cancelled");
       expect(closed).toBe(3);
     } finally {
       open.mockRestore();

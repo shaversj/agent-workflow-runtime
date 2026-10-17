@@ -291,7 +291,14 @@ export class CodingStore {
   }
   proposal(id: string, principal: string): c.CodingProposal {
     const job = this.required(id, principal);
-    const row = this.db.select().from(codingProposals).where(eq(codingProposals.jobId, id)).get();
+    return this.proposalRecord(job);
+  }
+  private proposalRecord(job: c.CodingJob): c.CodingProposal {
+    const row = this.db
+      .select()
+      .from(codingProposals)
+      .where(eq(codingProposals.jobId, job.id))
+      .get();
     if (!row) throw new CodingDecisionError("coding_proposal_not_found");
     const proposal = c.parseCoding(c.CodingProposalSchema, row.data);
     if (
@@ -362,7 +369,7 @@ export class CodingStore {
   approve(id: string, digest: string, principal: string): c.CodingApproval {
     return this.write(() => {
       const job = this.required(id, principal),
-        proposal = this.proposal(id, principal);
+        proposal = this.proposalRecord(job);
       if (proposal.digest !== digest) throw new CodingDecisionError("coding_digest_mismatch");
       const execution = this.executionRecord(id);
       const prepared = this.db
@@ -410,7 +417,7 @@ export class CodingStore {
       )
         throw new Error("coding_store_integrity_failed");
       const job = this.required(approval.jobId, principal),
-        proposal = this.proposal(job.id, principal);
+        proposal = this.proposalRecord(job);
       if (
         approval.principal !== principal ||
         approval.consumed ||
@@ -447,6 +454,9 @@ export class CodingStore {
   }
   publication(id: string, principal: string): c.Publication | undefined {
     this.required(id, principal);
+    return this.publicationRecord(id);
+  }
+  private publicationRecord(id: string): c.Publication | undefined {
     const row = this.db
       .select()
       .from(codingPublications)
@@ -461,8 +471,8 @@ export class CodingStore {
   publicationResult(id: string, input: unknown, principal: string): c.Publication {
     const operation = c.parseCoding(c.PublicationSchema, input);
     return this.write(() => {
-      const current = this.publication(id, principal),
-        job = this.required(id, principal);
+      const job = this.required(id, principal),
+        current = this.publicationRecord(id);
       if (
         !current ||
         current.id !== operation.id ||
@@ -498,8 +508,8 @@ export class CodingStore {
   }
   resumePublication(id: string, principal: string): c.Publication {
     return this.write(() => {
-      const operation = this.publication(id, principal);
       const job = this.required(id, principal);
+      const operation = this.publicationRecord(id);
       if (
         !operation ||
         !["publishing", "publication-uncertain"].includes(job.status) ||

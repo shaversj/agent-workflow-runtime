@@ -108,10 +108,10 @@ export async function handleDiscordMessage(
   const botUser = message.client.user;
   if (!botUser) return;
 
-  const policyInput = discordPolicyInput(message, botUser.id);
+  const inbound = buildDiscordInboundMessage(message, botUser.id);
+  const policyInput = discordPolicyInput(message, botUser.id, inbound.channelId);
   if (!shouldAcceptDiscordMessage(policyInput, botConfig)) return;
 
-  const inbound = buildDiscordInboundMessage(message, botUser.id);
   const chatMessage = normalizeDiscordMessage(inbound);
   if (!chatMessage) return;
   if (/^code(?:\s|$)/.test(chatMessage.text)) {
@@ -376,13 +376,17 @@ function buildDiscordInboundMessage(message: Message, botUserId: string): Discor
   };
 }
 
-function discordPolicyInput(message: Message, botUserId: string): DiscordMessagePolicyInput {
+function discordPolicyInput(
+  message: Message,
+  botUserId: string,
+  channelId: string
+): DiscordMessagePolicyInput {
   return {
     isBot: message.author.bot,
     isWebhook: Boolean(message.webhookId),
     authorId: message.author.id,
     guildId: message.guildId ?? undefined,
-    channelId: discordChannelContext(message).channelId,
+    channelId,
     mentionedUserIds: new Set(message.mentions.users.map((user) => user.id)),
     botUserId
   };

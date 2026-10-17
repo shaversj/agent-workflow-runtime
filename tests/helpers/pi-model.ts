@@ -7,7 +7,7 @@ interface ModelIdentity {
   id: string;
 }
 
-export function modelUsage(input: number = 2, output: number = 2): Usage {
+function modelUsage(input: number = 2, output: number = 2): Usage {
   return {
     input,
     output,

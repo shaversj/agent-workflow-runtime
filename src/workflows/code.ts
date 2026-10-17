@@ -339,25 +339,25 @@ export async function prepareCoding(
         start
       });
     const instructions = codingInstructions(baseline);
-    const runAttempt = async (attempt: {
+    const runAttempt = async (request: {
       phase: "preparing" | "repairing";
       task: string;
       requestId: string;
       repairAttempt?: number;
     }) => {
-      updateExecution({ phase: attempt.phase });
+      updateExecution({ phase: request.phase });
       const result = await turn({
         databasePath,
         baseline,
         profile,
         jobId: job!.id,
         fence: fence!,
-        task: attempt.task,
+        task: request.task,
         instructions,
-        requestId: attempt.requestId,
+        requestId: request.requestId,
         deadlineAt: execution.deadlineAt,
         policy,
-        ...(attempt.repairAttempt === undefined ? {} : { repairAttempt: attempt.repairAttempt }),
+        ...(request.repairAttempt === undefined ? {} : { repairAttempt: request.repairAttempt }),
         model: policy.model,
         recording,
         signal,
@@ -377,19 +377,23 @@ export async function prepareCoding(
       });
       return { summary: result.summary, final, checks: await durableVerify(result.candidate) };
     };
-    let attempt = await runAttempt({ phase: "preparing", task: task.task, requestId: "initial" });
+    let attemptResult = await runAttempt({
+      phase: "preparing",
+      task: task.task,
+      requestId: "initial"
+    });
     for (
       let repairAttempt = 1;
-      repairAttempt <= (policy.maxRepairAttempts ?? 1) && repairable(attempt.checks);
+      repairAttempt <= (policy.maxRepairAttempts ?? 1) && repairable(attemptResult.checks);
       repairAttempt++
     ) {
       logger.info(
         { run_id: recording.runId, job_id: job.id, repair_attempt: repairAttempt },
         "coding.repair_started"
       );
-      attempt = await runAttempt({
+      attemptResult = await runAttempt({
         phase: "repairing",
-        task: repairTask(task.task, attempt.checks),
+        task: repairTask(task.task, attemptResult.checks),
         requestId: `repair-${repairAttempt}`,
         repairAttempt
       });
@@ -403,12 +407,12 @@ export async function prepareCoding(
         baseBranch: task.baseBranch,
         baseCommit,
         task: task.task,
-        summary: attempt.summary,
+        summary: attemptResult.summary,
         createdAt: job.createdAt
       },
       baseline,
-      attempt.final,
-      attempt.checks
+      attemptResult.final,
+      attemptResult.checks
     );
     const checkpointProposal =
       dependencies.checkpointProposal ??
